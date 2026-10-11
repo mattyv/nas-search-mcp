@@ -1,0 +1,55 @@
+name: Verify and test
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned Dafny
+        run: |
+          mkdir -p .tools
+          curl -fL -o .tools/dafny.zip https://github.com/dafny-lang/dafny/releases/download/v4.11.0/dafny-4.11.0-x64-ubuntu-22.04.zip
+          echo 'a46a9ff7cdd720f7955854c78e95df13f4cfe6b80691b05f8654fe19e8267179  .tools/dafny.zip' | sha256sum -c -
+          unzip -q .tools/dafny.zip -d .tools
+          GOBIN="$PWD/.tools/bin" go install golang.org/x/tools/cmd/goimports@v0.42.0
+      - name: Install adapter test dependencies
+        run: pip install -r requirements.lock pytest
+      - name: Verify and regenerate Dafny core
+        run: scripts/build-core.sh
+      - name: Reject stale generated code
+        run: git diff --exit-code -- generated/
+      - name: Test adapters and integration
+        run: |
+          export NAS_PYTHON=python
+          export NAS_VEC_EXTENSION="$(python -c 'import sqlite_vec; print(sqlite_vec.loadable_path()+".so")')"
+          go test -race -tags sqlite_fts5 ./...
+          python -m pytest tests_worker -q
+      - name: Build container
+        run: docker build -t nas-search-mcp:test .
+  publish:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/mattyv/nas-search-mcp:latest
+            ghcr.io/mattyv/nas-search-mcp:${{ github.sha }}
