@@ -2,7 +2,7 @@
 
 Read-only keyword and semantic search for a Synology DS220+ with 2 GB RAM. The service, index, and free embedding models run on the NAS. Original files stay in their shared folders. No second computer or paid AI API is required for search.
 
-**Status: first deployable pilot, not yet deployed or tested on the NAS.** Start with a small folder. A container smoke test passed with the supplied 1 GiB/one-core limits and read-only filesystem: a meaning query returned the correct sample document using hybrid search. J4025 CPU compatibility, NAS memory use, and desktop client connections still need target-device validation.
+**Status: document pilot running on the DS220+.** On 2026-10-11, text indexing and hybrid search passed on the NAS, with six indexed files and no reported indexing errors. Missing authentication returned HTTP 401. The kernel enforced the 1 GiB memory limit and CPU affinity to CPU 0. See [NAS validation evidence](docs/benchmarks/nas-pilot.json). Photo embeddings and desktop client connections remain untested on the NAS.
 
 ## Try it on your NAS
 
@@ -32,7 +32,7 @@ Text search uses BGE-small English embeddings plus SQLite FTS5, with SQLite `sql
 
 The application core is written in [Dafny](core/Core.dfy) and compiled to Go. It specifies bounded chunking and reconstruction, lexical relative-path validation, result-limit clamping, deterministic ordering/top-k, ranking properties, and abstract replacement/removal properties. These proofs do **not** prove filesystem confinement, SQLite transactions, MCP transport/authentication, document parsers, embeddings, or deployment. Those Go/Python boundaries are tested separately. See [AGENTS.md](AGENTS.md) for development rules.
 
-Real embedding smoke tests passed on the development computer, using serialized CPU workers. **NAS performance and model compatibility remain unmeasured.** The container caps aggregate memory at 1 GiB and CPU at one core; exceeding the cap can terminate it. Models load in short-lived processes, so each request includes loading overhead.
+Real embedding smoke tests passed on the development computer, using serialized CPU workers. The text model also passed the NAS document pilot; photo models remain untested there. The container caps aggregate memory at 1 GiB and restricts CPU affinity to one CPU; exceeding the memory cap can terminate it. Models load in short-lived processes, so each request includes loading overhead.
 
 The [recorded development benchmark](docs/benchmarks/development.json) includes machine identity, dependency versions, timestamp, and per-process measurements. Reproduce it with the project's Python environment:
 

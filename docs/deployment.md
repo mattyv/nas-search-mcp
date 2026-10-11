@@ -1,6 +1,6 @@
 # Deploy with Synology Container Manager
 
-Start with a small document/code folder, not your whole 2.3 TB library. This version has not yet run on the NAS.
+Start with a small document/code folder, not your whole 2.3 TB library. A small document pilot has passed on the DS220+; photo models and larger collections still need validation.
 
 ## Prepare the project
 

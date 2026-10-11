@@ -28,7 +28,6 @@ services:
     memswap_limit: 1g
     # Synology's kernel lacks CFS quotas; confine execution to one CPU instead.
     cpuset: "${NAS_CPUSET:-0}"
-    pids_limit: 64
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
