@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/mattyv/nas-search-mcp/internal/policy"
@@ -151,7 +152,8 @@ func (a *App) openFile(relative string) (*os.File, error) {
 		return nil, err
 	}
 	defer root.Close()
-	f, err := root.Open(filepath.FromSlash(relative))
+	// Nonblocking open prevents a raced-in FIFO from waiting for a writer before Stat.
+	f, err := root.OpenFile(filepath.FromSlash(relative), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +168,9 @@ func (a *App) openFile(relative string) (*os.File, error) {
 	return f, nil
 }
 func (a *App) ReadFile(relative string, limit int) (string, error) {
+	if limit < 0 {
+		return "", errors.New("max_bytes must be nonnegative")
+	}
 	f, err := a.openFile(relative)
 	if err != nil {
 		return "", err
@@ -454,6 +459,36 @@ func (a *App) Search(ctx context.Context, query, prefix string, photos bool, lim
 
 	return result, nil
 }
+
+// Browse filters stale entries immediately, while the next scan reconciles the index.
+// Candidate reads are bounded; heavy stale indexes can temporarily return fewer files.
+func (a *App) Browse(prefix string, limit int) ([]store.File, error) {
+	if len(prefix) > 4096 {
+		return nil, errors.New("prefix too long")
+	}
+	if limit == 0 {
+		limit = 50
+	}
+	limit = policy.ClampLimit(limit, 100)
+	candidates, err := a.Store.List(prefix, limit+100)
+	if err != nil {
+		return nil, err
+	}
+	files := []store.File{}
+	for _, candidate := range candidates {
+		f, err := a.openFile(candidate.Path)
+		if err != nil {
+			continue
+		}
+		f.Close()
+		files = append(files, candidate)
+		if len(files) == limit {
+			break
+		}
+	}
+	return files, nil
+}
+
 func (a *App) Status() (map[string]any, error) {
 	stats, err := a.Store.Status()
 	if err != nil {

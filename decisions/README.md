@@ -116,15 +116,23 @@ Provide separate installers for clients and NAS deployment. Register a private, 
 
 ## D015 — Read complete documents, retrieve originals, and index scans with OCR
 
-**Date:** 2026-10-11 · **Status:** Accepted; new features await NAS rollout
+**Date:** 2026-10-11 · **Status:** Accepted; document reading, original download, and OCR tested on the NAS
 
 The user requires entire document contents, including scanned PDFs. Add bounded `read_document` continuation batches and `fetch_file` byte batches with source-version checks. Retain the 32 MiB source limit, distinguish OCR text from original bytes, and make client attachment limitations explicit.
 
 Use free English Tesseract OCR with bounded Poppler page rendering when PDFs have no embedded text, both for indexing and reading. Keep OCR serialized and expose missing-text metadata/errors. The existing index extraction cap stays bounded; full-document reading bypasses it using pagination. Relevance cutoff calibration remains in [TODO.md](../TODO.md), rather than assigning an arbitrary threshold to rank-fusion scores.
 
+## D016 — Hide obsolete browse paths and reject blocking file types
+
+**Date:** 2026-10-11 · **Status:** Accepted; local regression tests pass, NAS rollout pending
+
+Filter browse results through root-confined file opens, so paths retained from a previous mount no longer appear as readable files. Bound the candidate query to keep browsing inexpensive; many obsolete entries can temporarily shorten the result list until scanning reconciles the index. Reject negative `read_file` byte limits consistently with the other reading tools.
+
+Open files without blocking before checking that they are regular files. This prevents a file replaced by a named pipe from hanging a browse or read request on the Linux NAS. Regression tests reproduced the failures before these fixes. Python extraction still needs the separate concurrent-replacement protection recorded in [TODO.md](../TODO.md).
+
 ## Open decisions
 
-**2026-10-11 collection update:** The user selected Documents and Code together. Prepare `/volume1/Matthew/Documents` as `Matthew/` and `/volume1/Matthew/Code` as `Code/`; the running pilot stays unchanged until the NAS update. Avoid mounting the complete Matthew share alongside the separate Code mount, which would index code twice.
+**2026-10-11 collection update:** The user selected Documents and Code together. The NAS now mounts `/volume1/Matthew/Documents` as `Matthew/` and `/volume1/Matthew/Code` as `Code/`. The first scan is still running. Avoid mounting the complete Matthew share alongside the separate Code mount, which would index code twice. Paths retained from the narrower pilot are obsolete; the new browse check hides inaccessible entries while the successful scan reconciles the index. A document formerly called `Matthew/Melody.pdf` is now `Matthew/Berklee/Week 10/Melody.pdf`.
 
 - When to expand the pilot to the full authorized sources, based on indexing time and search latency.
 - Whether CLIP photo inference fits comfortably on this NAS alongside its existing services.

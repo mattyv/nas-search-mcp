@@ -46,6 +46,8 @@ The helper reassembles exact original bytes into a private local file. For extra
 
 Ask your assistant: **“Use nas-search to check index_status, then find documents about …”** Results include source paths, page or section locations, and passages. Documents appear under `Matthew/`; code appears under `Code/`.
 
+Search returns ranked candidates, including possible unrelated matches. Scores describe ranking, not confidence or relevance probabilities. Ask your assistant to read the passages and source document before drawing conclusions. A calibrated relevance cutoff remains unfinished.
+
 The six MCP tools are `search`, `browse`, `read_file`, `read_document`, `fetch_file`, and `index_status`. Use `read_document` for extracted text and `fetch_file` for original bytes. Scans run at startup and every five minutes. During initial indexing, semantic search and document reading can wait behind the worker queue; status checks and original-file retrieval avoid that queue.
 
 ## Coverage and limits

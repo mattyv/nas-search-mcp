@@ -47,6 +47,9 @@ func TestMCPHTTPTools(t *testing.T) {
 	if e = a.Store.Replace(store.File{Path: "doc.txt", Fingerprint: "test", Kind: "document"}, []store.Chunk{{Location: "text:1", Text: "kitchen renovation"}}, nil); e != nil {
 		t.Fatal(e)
 	}
+	if e = a.Store.Replace(store.File{Path: "obsolete.pdf", Kind: "document"}, nil, nil); e != nil {
+		t.Fatal(e)
+	}
 	token := "integration-test-token-at-least-24"
 	ts := httptest.NewServer(buildHTTPHandler(a, token))
 	defer ts.Close()
@@ -142,6 +145,10 @@ func TestMCPHTTPTools(t *testing.T) {
 	status := call("index_status", map[string]any{})
 	if status["index"] == nil {
 		t.Fatal(status)
+	}
+	negative, e := session.CallTool(ctx, &mcp.CallToolParams{Name: "read_file", Arguments: map[string]any{"path": "doc.txt", "max_bytes": -1}})
+	if e != nil || !negative.IsError {
+		t.Fatalf("negative max_bytes must be a tool error: %v %v", negative, e)
 	}
 	result, e := session.CallTool(ctx, &mcp.CallToolParams{Name: "read_file", Arguments: map[string]any{"path": "../secret"}})
 	if e != nil || !result.IsError {

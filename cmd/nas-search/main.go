@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/mattyv/nas-search-mcp/internal/app"
-	"github.com/mattyv/nas-search-mcp/internal/policy"
 	"github.com/mattyv/nas-search-mcp/internal/store"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -133,7 +132,7 @@ func buildHTTPHandler(a *app.App, token string) http.Handler {
 		if in.Limit == 0 {
 			in.Limit = 50
 		}
-		files, err := a.Store.List(in.Prefix, policy.ClampLimit(in.Limit, 100))
+		files, err := a.Browse(in.Prefix, in.Limit)
 		return nil, BrowseOutput{Files: files}, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "read_file", Description: "Read up to 65536 bytes from a text/code file inside configured NAS shares. Use read_document for full extracted PDF/Office content or fetch_file for original bytes. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in ReadInput) (*mcp.CallToolResult, ReadOutput, error) {
