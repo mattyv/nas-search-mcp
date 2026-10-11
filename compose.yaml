@@ -23,7 +23,8 @@ services:
       HOME: /data
       HF_HOME: /data/models/huggingface
     volumes:
-      - "${NAS_DOCUMENTS_PATH:-/volume1/shared}:/files/Documents:ro"
+      - "${NAS_DOCUMENTS_PATH:-/volume1/shared-documents}:/files/Documents:ro"
+      - "${NAS_CODE_PATH:-/volume1/shared-code}:/files/Code:ro"
       - "${NAS_PHOTOS_PATH:-/volume1/shared-photos}:/files/Photos:ro"
       - "${NAS_INDEX_PATH:-/volume1/docker/nas-search/data}:/data"
     mem_limit: 1g
