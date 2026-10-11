@@ -124,6 +124,8 @@ Use free English Tesseract OCR with bounded Poppler page rendering when PDFs hav
 
 ## Open decisions
 
+**2026-10-11 collection update:** The user selected Documents and Code together. Prepare `/volume1/Matthew/Documents` as `Matthew/` and `/volume1/Matthew/Code` as `Code/`; the running pilot stays unchanged until the NAS update. Avoid mounting the complete Matthew share alongside the separate Code mount, which would index code twice.
+
 - When to expand the pilot to the full authorized sources, based on indexing time and search latency.
 - Whether CLIP photo inference fits comfortably on this NAS alongside its existing services.
 - How to extend OCR languages, unsupported formats, archives, and backups within the resource budget.

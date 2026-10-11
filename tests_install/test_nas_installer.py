@@ -27,8 +27,10 @@ esac
     photos = tmp_path / 'Photos'
     matt.mkdir()
     photos.mkdir()
+    code = tmp_path / 'Code'
+    code.mkdir()
     env = dict(os.environ, PATH=str(binaries) + ':' + os.environ['PATH'], DOCKER_LOG=str(log), SUDO_UID='1026', SUDO_GID='100')
-    args = ['sh', str(SCRIPT), '--image', 'ghcr.io/mattyv/nas-search-mcp:abc123', '--install-dir', str(tmp_path / 'install'), '--matthew-path', str(matt), '--photos-path', str(photos), '--data-path', str(tmp_path / 'index'), '--bind-ip', '192.168.1.4']
+    args = ['sh', str(SCRIPT), '--image', 'ghcr.io/mattyv/nas-search-mcp:abc123', '--install-dir', str(tmp_path / 'install'), '--matthew-path', str(matt), '--photos-path', str(photos), '--code-path', str(code), '--data-path', str(tmp_path / 'index'), '--bind-ip', '192.168.1.4']
     return args, env, log
 
 
@@ -143,3 +145,13 @@ def test_existing_env_permissions_and_symlink_refusal(tmp_path):
     secret.symlink_to(moved)
     assert subprocess.run(args, env=env, capture_output=True).returncode != 0
     assert moved.read_bytes() == original
+
+
+def test_code_source_mount_and_env(tmp_path):
+    args, env, log = setup(tmp_path)
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert f"NAS_CODE_PATH='{tmp_path / 'Code'}'" in (tmp_path / 'install' / '.env').read_text()
+    assert f"{tmp_path / 'Code'}:/check-code:ro" in log.read_text()
+    (tmp_path / 'Code').rmdir()
+    assert subprocess.run(args, env=env, capture_output=True).returncode != 0

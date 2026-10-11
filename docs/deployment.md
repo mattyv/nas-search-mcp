@@ -12,6 +12,7 @@ From a complete project checkout on the NAS, after the desired commit's CI image
 sudo sh scripts/install-nas.sh \
   --image ghcr.io/mattyv/nas-search-mcp:COMMIT_SHA \
   --matthew-path '/volume1/Matthew/Documents/Berklee/Week 10' \
+  --code-path /volume1/Matthew/Code \
   --photos-path /volume1/docker/nas-search/pilot-photos \
   --data-path /volume1/docker/nas-search/data \
   --bind-ip 192.168.1.4
@@ -35,6 +36,7 @@ Copy `.env.example` to `.env`. Set:
 
 - `NAS_TOKEN`: generate a random token locally with `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`. Minimum 24 characters. Keep `.env` private.
 - `NAS_MATTHEW_PATH`: an existing pilot subfolder under `/volume1/Matthew`, for example `/volume1/Matthew/SearchPilot`. Confirm the volume/share path first. The pilot folder still appears to clients as `Matthew/`.
+- `NAS_CODE_PATH`: `/volume1/Matthew/Code`, mounted separately as `Code/`. When searching Documents and Code together, set `NAS_MATTHEW_PATH=/volume1/Matthew/Documents` so code is not mounted twice under the full Matthew share.
 - `NAS_PHOTOS_PATH`: confirm `/volume1/homes/matt/Photos` exists. It is mounted read-only; with photo embeddings disabled, image metadata is still catalogued. To keep the first pilot small, choose a small subfolder here too.
 - `NAS_INDEX_PATH`: `/volume1/docker/nas-search/data`. Create this directory. It must be outside the source folders.
 - `NAS_UID` and `NAS_GID`: numeric IDs of the DSM account used to read your sources and write the index. Defaults are placeholders. With SSH, `id matt` shows the actual IDs. In DSM grant this account read access to sources and write access to the data folder; verify permissions work for that numeric container user.

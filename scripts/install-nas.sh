@@ -3,17 +3,17 @@
 set -eu
 umask 077
 fail() { printf '%s\n' "$*" >&2; exit 1; }
-image= install_dir=/volume1/docker/nas-search matthew= photos= data= bind=127.0.0.1 dry=false
+image= install_dir=/volume1/docker/nas-search matthew= photos= code=/volume1/Matthew/Code data= bind=127.0.0.1 dry=false
 uid=${SUDO_UID:-$(id -u)}
 gid=${SUDO_GID:-$(id -g)}
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --dry-run) dry=true; shift ;;
-        --image|--install-dir|--matthew-path|--photos-path|--data-path|--bind-ip|--uid|--gid)
+        --image|--install-dir|--matthew-path|--photos-path|--code-path|--data-path|--bind-ip|--uid|--gid)
             [ "$#" -ge 2 ] || fail "Missing value for $1"
             case "$1" in
                 --image) image=$2;; --install-dir) install_dir=$2;; --matthew-path) matthew=$2;;
-                --photos-path) photos=$2;; --data-path) data=$2;; --bind-ip) bind=$2;; --uid) uid=$2;; --gid) gid=$2;;
+                --photos-path) photos=$2;; --code-path) code=$2;; --data-path) data=$2;; --bind-ip) bind=$2;; --uid) uid=$2;; --gid) gid=$2;;
             esac
             shift 2 ;;
         *) fail "Unknown option: $1" ;;
@@ -24,12 +24,12 @@ case "$image" in *:latest|*[!a-zA-Z0-9._/:@-]*|*:|*@) fail 'Use an explicit vers
 case "${image##*/}" in *:*|*@sha256:*) :;; *) fail 'Image needs an explicit versioned tag or digest';; esac
 case "$uid:$gid" in *[!0-9:]*|:*|*:) fail 'UID/GID must be numeric';; esac
 case "$bind" in ''|*[!0-9.]* ) fail 'Bind address must be an explicit IPv4 address';; esac
-for path in "$install_dir" "$matthew" "$photos" "$data"; do
+for path in "$install_dir" "$matthew" "$photos" "$code" "$data"; do
     case "$path" in /*) :;; *) fail 'All source/install/data paths must be explicit absolute paths';; esac
     case "$path" in */../*|*/..|*/./*|*/.) fail 'Paths must not contain dot traversal segments';; esac
     case "$path" in *[!a-zA-Z0-9_./\ -]*) fail 'Paths must use letters, digits, spaces, underscores, dots, slashes, or hyphens';; esac
 done
-[ -d "$matthew" ] && [ -d "$photos" ] || fail 'Selected source directories must already exist'
+[ -d "$matthew" ] && [ -d "$photos" ] && [ -d "$code" ] || fail 'Selected source directories must already exist'
 # Resolve symlinked existing ancestors without creating anything during preflight.
 canonical() {
     if [ -e "$1" ] || [ -L "$1" ]; then
@@ -48,17 +48,20 @@ if [ -f "$install_dir/.env" ]; then
     field() { awk -v key="$1" 'index($0,key "=")==1 {print substr($0,length(key)+2); exit}' "$install_dir/.env" | tr -d "\"'"; }
     matthew=$(field NAS_MATTHEW_PATH)
     photos=$(field NAS_PHOTOS_PATH)
+    saved_code=$(field NAS_CODE_PATH)
+    code=${saved_code:-/volume1/Matthew/Code}
     data=$(field NAS_INDEX_PATH)
     uid=$(field NAS_UID)
     gid=$(field NAS_GID)
-    [ -d "$matthew" ] && [ -d "$photos" ] && [ -d "$data" ] || fail 'Existing .env source and index directories must exist; refusing automatic recreation'
+    [ -d "$matthew" ] && [ -d "$photos" ] && [ -d "$code" ] && [ -d "$data" ] || fail 'Existing .env source and index directories must exist; refusing automatic recreation'
     case "$uid:$gid" in *[!0-9:]*|:*|*:) fail 'Existing .env UID/GID must be numeric';; esac
 fi
 matthew=$(canonical "$matthew") || fail 'Cannot resolve Matthew source'
 photos=$(canonical "$photos") || fail 'Cannot resolve Photos source'
+code=$(canonical "$code") || fail 'Cannot resolve Code source'
 data=$(canonical "$data") || fail 'Cannot resolve index path'
 install_dir=$(canonical "$install_dir") || fail 'Cannot resolve install path'
-for source in "$matthew" "$photos"; do
+for source in "$matthew" "$photos" "$code"; do
     case "$data/" in "$source/"*) fail 'Index data must be outside source directories';; esac
     case "$install_dir/" in "$source/"*) fail 'Installer state must be outside source directories';; esac
 done
@@ -88,7 +91,7 @@ if [ ! -f "$install_dir/.env" ]; then
     [ "${#token}" -eq 64 ] || fail 'Unable to generate a private random token'
     {
         printf 'NAS_TOKEN=%s\n' "$token"
-        printf "NAS_MATTHEW_PATH='%s'\nNAS_PHOTOS_PATH='%s'\nNAS_INDEX_PATH='%s'\n" "$matthew" "$photos" "$data"
+        printf "NAS_MATTHEW_PATH='%s'\nNAS_PHOTOS_PATH='%s'\nNAS_CODE_PATH='%s'\nNAS_INDEX_PATH='%s'\n" "$matthew" "$photos" "$code" "$data"
         printf 'NAS_UID=%s\nNAS_GID=%s\nNAS_BIND_IP=%s\nNAS_CPUSET=0\nNAS_PHOTOS=false\n' "$uid" "$gid" "$bind"
     } > "$install_dir/.env"
     unset token
@@ -103,8 +106,8 @@ fi
 # Verify mount access as the actual container user. Probe only the index directory
 # using a temporary file that is removed immediately; original sources stay read-only.
 docker run --rm --user "$uid:$gid" --memory 1g --memory-swap 1g --cpuset-cpus 0 \
-    -v "$matthew:/check-matthew:ro" -v "$photos:/check-photos:ro" -v "$data:/check-data" \
-    --entrypoint python3 "$image" -c 'import os,tempfile; assert os.access("/check-matthew",os.R_OK|os.X_OK); assert os.access("/check-photos",os.R_OK|os.X_OK); f=tempfile.NamedTemporaryFile(dir="/check-data"); f.write(b"probe"); f.flush(); f.close()' \
+    -v "$matthew:/check-matthew:ro" -v "$photos:/check-photos:ro" -v "$code:/check-code:ro" -v "$data:/check-data" \
+    --entrypoint python3 "$image" -c 'import os,tempfile; assert os.access("/check-matthew",os.R_OK|os.X_OK); assert os.access("/check-photos",os.R_OK|os.X_OK); assert os.access("/check-code",os.R_OK|os.X_OK); f=tempfile.NamedTemporaryFile(dir="/check-data"); f.write(b"probe"); f.flush(); f.close()' \
     || fail 'Container user cannot read selected sources or write index data; fix DSM permissions before deployment'
 # The deployment copy is pull-only; upstream resource and security defaults remain.
 previous_compose=
