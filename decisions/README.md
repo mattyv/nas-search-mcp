@@ -130,6 +130,16 @@ Filter browse results through root-confined file opens, so paths retained from a
 
 Open files without blocking before checking that they are regular files. This prevents a file replaced by a named pipe from hanging a browse or read request on the Linux NAS. Regression tests reproduced the failures before these fixes. Python extraction still needs the separate concurrent-replacement protection recorded in [TODO.md](../TODO.md).
 
+## D017 — Retry unusable PDF text layers with OCR
+
+**Date:** 2026-10-11 · **Status:** Accepted; local tests and the Melody PDF validation pass, NAS rollout pending
+
+Add `force_ocr` to PDF document reading so a caller can bypass a broken embedded text layer. Require OCR to be enabled and keep the option unchanged across continuation calls. Mark suspicious glyph-heavy source text and automatically try OCR for those pages when enabled, both for indexing and reading. Preserve embedded text when automatic OCR provides no useful replacement.
+
+The text-quality check is a conservative heuristic, not a guarantee of readable content. OCR can recover printed titles and labels; interpreting sheet music requires visual analysis. Parser and OCR behavior remain tested adapters outside the Dafny proof boundary. Updating extraction behavior refreshes the index and can prolong the initial scan.
+
+Expose the current scan file, processing stage, and start times through `index_status`. Counts only increase after a complete file is committed; a long extraction or multiple embedding batches can leave them unchanged while work continues. These diagnostics do not estimate overall completion or distinguish active processing from waiting for the shared worker.
+
 ## Open decisions
 
 **2026-10-11 collection update:** The user selected Documents and Code together. The NAS now mounts `/volume1/Matthew/Documents` as `Matthew/` and `/volume1/Matthew/Code` as `Code/`. The first scan is still running. Avoid mounting the complete Matthew share alongside the separate Code mount, which would index code twice. Paths retained from the narrower pilot are obsolete; the new browse check hides inaccessible entries while the successful scan reconciles the index. A document formerly called `Matthew/Melody.pdf` is now `Matthew/Berklee/Week 10/Melody.pdf`.

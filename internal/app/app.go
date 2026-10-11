@@ -37,6 +37,10 @@ type App struct {
 	scanning                   bool
 	lastScan                   string
 	scanError                  string
+	currentFile                string
+	scanStage                  string
+	fileStartedAt              string
+	scanStartedAt              string
 }
 type DocumentSection struct {
 	Location string `json:"location"`
@@ -290,6 +294,18 @@ func (a *App) FetchFile(relative string, offset int64, maxBytes int, expectedVer
 // ReadDocument reads a window of the full extracted document, independently of the index's text cap.
 // Python extraction is a trusted boundary; its path open is not part of Dafny verification.
 func (a *App) ReadDocument(ctx context.Context, relative string, offset int64, maxChars int) (DocumentResult, error) {
+	return a.ReadDocumentWithOCR(ctx, relative, offset, maxChars, false)
+}
+
+// ReadDocumentWithOCR requests forced PDF OCR while retaining the worker's configured OCR limits.
+func (a *App) ReadDocumentWithOCR(ctx context.Context, relative string, offset int64, maxChars int, forceOCR bool) (DocumentResult, error) {
+	if forceOCR && !ocrEnabled() {
+		return DocumentResult{}, errors.New("forced OCR is disabled by NAS_OCR; enable NAS_OCR=true to retry")
+	}
+	if forceOCR && !strings.EqualFold(filepath.Ext(relative), ".pdf") {
+		return DocumentResult{}, errors.New("force_ocr is PDF-only; omit it for other file types")
+	}
+
 	out := DocumentResult{Path: relative, Offset: offset, Sections: []DocumentSection{}, Metadata: map[string]any{}}
 	if offset < 0 || maxChars < 0 {
 		return out, errors.New("offset and max_chars must be nonnegative")
@@ -309,7 +325,7 @@ func (a *App) ReadDocument(ctx context.Context, relative string, offset int64, m
 	if info.Size() > sourceLimit {
 		return out, errors.New("file exceeds 32 MiB source limit")
 	}
-	result, err := a.worker(ctx, map[string]any{"operation": "read_document", "path": full, "offset": offset, "max_chars": maxChars, "max_bytes": sourceLimit})
+	result, err := a.worker(ctx, map[string]any{"operation": "read_document", "path": full, "offset": offset, "max_chars": maxChars, "max_bytes": sourceLimit, "force_ocr": forceOCR})
 	if err != nil {
 		return out, err
 	}
@@ -334,9 +350,12 @@ func (a *App) ReadDocument(ctx context.Context, relative string, offset int64, m
 	return out, nil
 }
 
-func extractionRevision() string {
+func ocrEnabled() bool {
 	ocr := os.Getenv("NAS_OCR")
-	return fmt.Sprintf("v2;ocr=%t", ocr == "" || strings.EqualFold(ocr, "true"))
+	return ocr == "" || strings.EqualFold(ocr, "true")
+}
+func extractionRevision() string {
+	return fmt.Sprintf("v3;ocr=%t", ocrEnabled())
 }
 func (a *App) markExtractionRevision(revision string) error {
 	f, err := os.CreateTemp(a.Data, ".extraction-revision-")
@@ -496,7 +515,7 @@ func (a *App) Status() (map[string]any, error) {
 	}
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
-	return map[string]any{"index": stats, "scanning": a.scanning, "last_scan": a.lastScan, "scan_error": a.scanError, "semantic": a.Semantic, "photos": a.Photos, "ocr": extractionRevision() == "v2;ocr=true"}, nil
+	return map[string]any{"index": stats, "scanning": a.scanning, "last_scan": a.lastScan, "scan_error": a.scanError, "semantic": a.Semantic, "photos": a.Photos, "ocr": ocrEnabled(), "current_file": a.currentFile, "scan_stage": a.scanStage, "file_started_at": a.fileStartedAt, "scan_started_at": a.scanStartedAt}, nil
 }
 
 var excluded = map[string]bool{"node_modules": true, "vendor": true, "build": true, "dist": true, "__pycache__": true, "WDTimeMachine": true, "Time Machine": true, "@eaDir": true, "@Recycle": true}
@@ -517,6 +536,22 @@ func fingerprint(path string) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
+func (a *App) setScanProgress(path, stage string) {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	if !a.scanning {
+		return
+	}
+	if path != a.currentFile {
+		a.currentFile = path
+		if path == "" {
+			a.fileStartedAt = ""
+		} else {
+			a.fileStartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+	}
+	a.scanStage = stage
+}
 func (a *App) Scan(ctx context.Context) error {
 	if !a.scanMu.TryLock() {
 		return errors.New("scan already running")
@@ -524,11 +559,18 @@ func (a *App) Scan(ctx context.Context) error {
 	defer a.scanMu.Unlock()
 	a.stateMu.Lock()
 	a.scanning = true
+	a.scanStartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	a.currentFile = ""
+	a.fileStartedAt = ""
+	a.scanStage = "walking"
 	a.scanError = ""
 	a.stateMu.Unlock()
 	defer func() {
 		a.stateMu.Lock()
 		a.scanning = false
+		a.currentFile = ""
+		a.fileStartedAt = ""
+		a.scanStage = ""
 		a.lastScan = time.Now().UTC().Format(time.RFC3339)
 		a.stateMu.Unlock()
 	}()
@@ -564,6 +606,8 @@ func (a *App) Scan(ctx context.Context) error {
 			return e
 		}
 		rel = filepath.ToSlash(rel)
+		a.setScanProgress(rel, "checking")
+		defer a.setScanProgress("", "walking")
 		if _, e = a.safeFile(rel); e != nil {
 			return nil
 		}
@@ -605,6 +649,7 @@ func (a *App) Scan(ctx context.Context) error {
 		}
 	}
 	if err == nil {
+		a.setScanProgress("", "saving_revision")
 		err = a.markExtractionRevision(revision)
 	}
 	if err != nil {
@@ -615,6 +660,7 @@ func (a *App) Scan(ctx context.Context) error {
 	return err
 }
 func (a *App) indexFile(ctx context.Context, full, relative, hash string) error {
+	a.setScanProgress(relative, "extracting")
 	extract, err := a.worker(ctx, map[string]any{"operation": "extract", "path": full, "max_bytes": 32 * 1024 * 1024, "max_chars": 200000})
 	if err != nil {
 		return err
@@ -635,6 +681,7 @@ func (a *App) indexFile(ctx context.Context, full, relative, hash string) error 
 		encoded, _ := json.Marshal(metadata)
 		chunks = []store.Chunk{{Location: "photo", Text: relative + " " + string(encoded)}}
 		if a.Photos && a.Semantic {
+			a.setScanProgress(relative, "embedding_photo")
 			r, e := a.worker(ctx, map[string]any{"operation": "image_embed", "path": full, "max_bytes": 32 * 1024 * 1024})
 			if e != nil {
 				return e
@@ -642,6 +689,7 @@ func (a *App) indexFile(ctx context.Context, full, relative, hash string) error 
 			vectors = r.Vectors
 		}
 	} else if a.Semantic && len(chunks) > 0 {
+		a.setScanProgress(relative, "embedding")
 		for start := 0; start < len(chunks); start += 16 {
 			end := start + 16
 			if end > len(chunks) {
@@ -670,5 +718,6 @@ func (a *App) indexFile(ctx context.Context, full, relative, hash string) error 
 	if err != nil {
 		return err
 	}
+	a.setScanProgress(relative, "storing")
 	return a.Store.Replace(store.File{Path: relative, Fingerprint: hash, Kind: extract.Kind, Metadata: string(encoded)}, chunks, vectors)
 }

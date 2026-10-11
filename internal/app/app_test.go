@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"fmt"
 	"github.com/mattyv/nas-search-mcp/internal/store"
 	"net/http"
 	"net/http/httptest"
@@ -488,5 +489,137 @@ func TestOpenFileRejectsFIFOWithoutBlocking(t *testing.T) {
 			t.Fatal("FIFO cleanup did not release reader")
 		}
 		t.Fatal("FIFO read open blocked before regular-file validation")
+	}
+}
+
+func TestReadDocumentForwardsForcedOCRAndDefaults(t *testing.T) {
+	t.Setenv("NAS_OCR", "true")
+	a := scanApp(t)
+	write(t, filepath.Join(a.Root, "a.PDF"), "source")
+	worker := filepath.Join(t.TempDir(), "capture.py")
+	script := `import json,sys
+request=json.load(sys.stdin)
+force=request['force_ocr']
+assert isinstance(force,bool)
+json.dump({'kind':'document','text':'forced' if force else 'automatic','sections':[],'offset':request['offset'],'next_offset':None,'complete':True,'metadata':{'received_force_ocr':force}},sys.stdout)
+`
+	if e := os.WriteFile(worker, []byte(script), 0600); e != nil {
+		t.Fatal(e)
+	}
+	a.Worker = worker
+	out, e := a.ReadDocumentWithOCR(context.Background(), "a.PDF", 0, 20, true)
+	if e != nil || out.Text != "forced" || out.Metadata["received_force_ocr"] != true {
+		t.Fatal(out, e)
+	}
+	out, e = a.ReadDocument(context.Background(), "a.PDF", 0, 20)
+	if e != nil || out.Text != "automatic" || out.Metadata["received_force_ocr"] != false {
+		t.Fatal(out, e)
+	}
+}
+func TestOCRStatusAndRevisionStayConsistent(t *testing.T) {
+	a := scanApp(t)
+	for _, tc := range []struct {
+		setting string
+		enabled bool
+	}{{"", true}, {"true", true}, {"TRUE", true}, {"false", false}} {
+		t.Setenv("NAS_OCR", tc.setting)
+		status, e := a.Status()
+		if e != nil || status["ocr"] != tc.enabled {
+			t.Fatal(status, e)
+		}
+		want := fmt.Sprintf("v3;ocr=%t", tc.enabled)
+		if revision := extractionRevision(); revision != want {
+			t.Fatalf("revision=%s want %s", revision, want)
+		}
+	}
+}
+
+func TestForcedOCRRejectsDisabledAndNonPDFBeforeWorker(t *testing.T) {
+	a := scanApp(t)
+	write(t, filepath.Join(a.Root, "a.pdf"), "source")
+	write(t, filepath.Join(a.Root, "a.txt"), "source")
+	a.Worker = filepath.Join(t.TempDir(), "missing-worker.py")
+	t.Setenv("NAS_OCR", "false")
+	if _, e := a.ReadDocumentWithOCR(context.Background(), "a.pdf", 0, 20, true); e == nil || !strings.Contains(e.Error(), "NAS_OCR") {
+		t.Fatalf("expected OCR configuration error, got %v", e)
+	}
+	t.Setenv("NAS_OCR", "true")
+	if _, e := a.ReadDocumentWithOCR(context.Background(), "a.txt", 0, 20, true); e == nil || !strings.Contains(e.Error(), "PDF-only") {
+		t.Fatalf("expected PDF-only error, got %v", e)
+	}
+}
+
+func TestScanStatusIdentifiesActiveFileAndStage(t *testing.T) {
+	a := scanApp(t)
+	write(t, filepath.Join(a.Root, "a.txt"), "needle")
+	marker := filepath.Join(t.TempDir(), "started")
+	worker := filepath.Join(t.TempDir(), "slow.py")
+	script := fmt.Sprintf(`import json,sys,time
+from pathlib import Path
+request=json.load(sys.stdin)
+Path(%q).write_text('started')
+time.sleep(0.3)
+json.dump({'kind':'document','sections':[{'location':'text','text':'needle'}],'metadata':{}},sys.stdout)
+`, marker)
+	if e := os.WriteFile(worker, []byte(script), 0600); e != nil {
+		t.Fatal(e)
+	}
+	a.Worker = worker
+	done := make(chan error, 1)
+	go func() { done <- a.Scan(context.Background()) }()
+	// Always let the scan finish, including when assertions fail.
+	t.Cleanup(func() {
+		select {
+		case e := <-done:
+			if e != nil {
+				t.Error(e)
+			}
+		case <-time.After(3 * time.Second):
+			t.Error("scan did not finish")
+		}
+	})
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, e := os.Stat(marker); e == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("worker did not start")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	status, e := a.Status()
+	if e != nil {
+		t.Fatal(e)
+	}
+	if status["scanning"] != true || status["current_file"] != "a.txt" || status["scan_stage"] != "extracting" {
+		t.Fatal(status)
+	}
+	for _, field := range []string{"scan_started_at", "file_started_at"} {
+		value, ok := status[field].(string)
+		if !ok || value == "" {
+			t.Fatal(field, status)
+		}
+		if _, e := time.Parse(time.RFC3339Nano, value); e != nil {
+			t.Fatal(field, value, e)
+		}
+	}
+	// Read final state after completion without consuming the cleanup's channel.
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		status, e = a.Status()
+		if e != nil {
+			t.Fatal(e)
+		}
+		if status["scanning"] == false {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("scan stayed active")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if status["current_file"] != "" || status["scan_stage"] != "" || status["file_started_at"] != "" {
+		t.Fatal("active progress retained after scan", status)
 	}
 }
