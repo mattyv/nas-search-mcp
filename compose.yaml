@@ -26,7 +26,8 @@ services:
       - "${NAS_INDEX_PATH:-/volume1/docker/nas-search/data}:/data"
     mem_limit: 1g
     memswap_limit: 1g
-    cpus: 1.0
+    # Synology's kernel lacks CFS quotas; confine execution to one CPU instead.
+    cpuset: "${NAS_CPUSET:-0}"
     pids_limit: 64
     read_only: true
     cap_drop: [ALL]
