@@ -1,5 +1,7 @@
 # NAS Search MCP
 
+Project choices and unresolved questions are recorded in the [decisions log](decisions/README.md).
+
 Read-only keyword and semantic search for a Synology DS220+ with 2 GB RAM. The service, index, and free embedding models run on the NAS. Original files stay in their shared folders. No second computer or paid AI API is required for search.
 
 **Status: document pilot running on the DS220+.** On 2026-10-11, text indexing and hybrid search passed on the NAS, with six indexed files and no reported indexing errors. Missing authentication returned HTTP 401. The kernel enforced the 1 GiB memory limit and CPU affinity to CPU 0. See [NAS validation evidence](docs/benchmarks/nas-pilot.json). Photo embeddings and desktop client connections remain untested on the NAS.

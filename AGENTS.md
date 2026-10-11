@@ -2,6 +2,7 @@
 
 ## Development
 
+- Record material technical and product decisions in `decisions/README.md`, including reasons, status, consequences, and evidence. Preserve superseded choices and distinguish accepted choices from unvalidated assumptions.
 - Use test-driven development for behavior changes: write a meaningful failing test, implement the behavior, and run the relevant tests. Record red-to-green evidence when practical. Do not claim TDD for tests written after implementation.
 - Write application logic in Dafny wherever practical. Use as much formal verification as possible: specify preconditions, postconditions, invariants, termination, and relevant safety properties.
 - Prefer compiled Dafny for performance-sensitive logic. Keep handwritten Go and Python focused on protocol, operating-system, database, extraction, and model adapters that Dafny cannot practically implement.
