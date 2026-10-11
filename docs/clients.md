@@ -12,11 +12,11 @@ python3 scripts/install-mcp.py --client codex \
   --token-file build/nas-deployment/.env
 ```
 
-Use `--client claude-code` for Claude CLI or `--client claude-desktop` for Claude Desktop. For the existing Linux desktop installation, also pass `--config "$HOME/.config/Claude/claude_desktop_config.json"`; automatic desktop paths cover macOS and Windows. The token source may instead be a token-only file. Never paste its value into a command.
+Use `--client claude-code` for Claude CLI or `--client claude-desktop` for Claude Desktop. For the existing Linux desktop installation, also pass `--config "$HOME/.config/Claude/claude_desktop_config.json"`; automatic desktop paths cover macOS and Windows. The `build/nas-deployment/.env` path is a private local deployment file; it is not included in the repository. Substitute your own NAS `.env` copy or a token-only file. Keep it outside source control and omit the token value from commands.
 
 The installer checks the MCP handshake and tools before writing settings. It copies a dependency-free stdio bridge and token into `~/.config/nas-search`, protects them with owner-only permissions, and uses the CLI's supported registration command or merges desktop JSON. Existing entries with the same name are refused unless `--replace` is supplied. Backups are retained: `.nas-search.bak` for CLI configuration and `.bak` for desktop JSON. Failed configuration changes restore the prior configuration and credential files. `--dry-run` makes no changes or network requests; `--skip-check` is only for deliberately offline setup.
 
-Start a new CLI session or fully restart the desktop app. The installed bridge supports this project's stateless HTTP server; it is not a general bridge for server-initiated requests or resumable event streams. You do not need Node.js or a shell-exported token with this installer. Manual native HTTP and third-party bridge alternatives remain below.
+Start a new CLI session or fully restart the desktop app. Config installation and SDK tool calls have passed; conversations inside the client GUIs still need testing. The installed bridge supports this project's stateless HTTP server; it is not a general bridge for server-initiated requests or resumable event streams. You do not need Node.js or a shell-exported token with this installer. Manual native HTTP alternatives follow.
 
 ## Read complete documents and retrieve originals
 
@@ -32,7 +32,11 @@ python3 scripts/fetch-file.py --url http://192.0.2.10:8080/mcp \
 
 The helper uses authenticated MCP and writes a private local file. Existing output files are preserved unless `--replace` is explicit. PDFs are not converted to Markdown, and original NAS files stay read-only.
 
-## Claude CLI / Claude Code
+## Manual native HTTP setup
+
+Use these alternatives if you prefer native HTTP to the bundled bridge.
+
+### Claude CLI / Claude Code
 
 Set `NAS_SEARCH_TOKEN` to the same token as the NAS `.env`, then run:
 
@@ -45,7 +49,7 @@ claude mcp list
 
 Restart Claude Code and check `/mcp`. This command stores the configured credential in your client configuration; protect that file and avoid exposing the token in screenshots or shell history. These flags follow [official Claude Code documentation](https://code.claude.com/docs/en/mcp).
 
-## Codex CLI
+### Codex CLI
 
 Add this table to your existing `~/.codex/config.toml`; keep existing entries:
 
@@ -58,29 +62,6 @@ tool_timeout_sec = 600
 ```
 
 Export `NAS_SEARCH_TOKEN` in the environment that launches Codex, then restart it and run `codex mcp list`. The token value belongs in your environment, not in this TOML snippet. This follows [official OpenAI MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
-
-## Claude Desktop
-
-Use the [`mcp-remote` stdio-to-HTTP bridge](https://github.com/punkpeye/mcp-remote) if your desktop client does not offer direct HTTP servers with static headers. Install Node.js on the client computer; the NAS does not need it.
-
-Open Claude Desktop **Settings → Developer → Edit Config**, merge the following entry into `mcpServers`, and replace the token placeholder. Use an absolute path to `npx` if the desktop app cannot find it:
-
-```json
-{
-  "mcpServers": {
-    "nas-search": {
-      "command": "npx",
-      "args": [
-        "-y", "mcp-remote", "http://192.0.2.10:8080/mcp",
-        "--allow-http", "--header", "Authorization:${NAS_AUTH_HEADER}"
-      ],
-      "env": {"NAS_AUTH_HEADER": "Bearer REPLACE_WITH_YOUR_TOKEN"}
-    }
-  }
-}
-```
-
-The header format uses the bridge's documented workaround for spaces in desktop argument handling. `--allow-http` is for trusted private-network HTTP only. Keep the config private and restart Claude Desktop fully. This bridge configuration has not yet been tested against this project in Claude Desktop.
 
 ## ChatGPT Desktop and ChatGPT cloud
 
@@ -99,4 +80,4 @@ Ask your client to:
 3. Browse `Documents/` and read a known small text/code file.
 4. After photo indexing is enabled, search with `photos=true` for a description of a known image.
 
-A successful health check alone does not validate these operations. Search results come from a periodically updated index; validate important answers against the source file.
+Initial indexing shares its worker with semantic search and document extraction, so those calls can wait. Status checks and original-file retrieval avoid the worker queue. A health check confirms only that HTTP is running. Search results come from a periodically updated index; validate important answers against the source file.
