@@ -1,0 +1,144 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/mattyv/nas-search-mcp/internal/app"
+	"github.com/mattyv/nas-search-mcp/internal/policy"
+	"github.com/mattyv/nas-search-mcp/internal/store"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+func env(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+func enabled(key string, fallback bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	return strings.EqualFold(value, "true")
+}
+
+type SearchInput struct {
+	Query  string `json:"query"`
+	Prefix string `json:"prefix,omitempty"`
+	Photos bool   `json:"photos,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+type BrowseInput struct {
+	Prefix string `json:"prefix,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+type ReadInput struct {
+	Path     string `json:"path"`
+	MaxBytes int    `json:"max_bytes,omitempty"`
+}
+type BrowseOutput struct {
+	Files []store.File `json:"files"`
+}
+type ReadOutput struct {
+	Path string `json:"path"`
+	Text string `json:"text"`
+}
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "health" {
+		c := http.Client{Timeout: 3 * time.Second}
+		r, err := c.Get("http://127.0.0.1:8080/healthz")
+		if err != nil {
+			os.Exit(1)
+		}
+		r.Body.Close()
+		if r.StatusCode != 200 {
+			os.Exit(1)
+		}
+		return
+	}
+	token := os.Getenv("NAS_TOKEN")
+	if len(token) < 24 {
+		log.Fatal("NAS_TOKEN must contain at least 24 characters")
+	}
+	a, err := app.New(env("NAS_ROOT", "/files"), env("NAS_DATA", "/data"), env("NAS_PYTHON", "python3"), env("NAS_WORKER", "/app/worker/worker.py"), os.Getenv("NAS_VEC_EXTENSION"), enabled("NAS_SEMANTIC", true), enabled("NAS_PHOTOS", false))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer a.Store.Close()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	interval, err := strconv.Atoi(env("NAS_SCAN_INTERVAL", "300"))
+	if err != nil || interval < 30 {
+		log.Fatal("NAS_SCAN_INTERVAL must be an integer >=30")
+	}
+	go func() {
+		for {
+			if err := a.Scan(ctx); err != nil && ctx.Err() == nil {
+				log.Printf("scan failed: %v", err)
+			}
+			select {
+			case <-time.After(time.Duration(interval) * time.Second):
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	mux := buildHTTPHandler(a, token)
+	httpServer := &http.Server{Addr: env("NAS_LISTEN", ":8080"), Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+	go func() {
+		<-ctx.Done()
+		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		httpServer.Shutdown(shutdown)
+	}()
+	log.Printf("NAS search listening on %s (bearer authentication required)", httpServer.Addr)
+	if err = httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
+	}
+}
+
+func buildHTTPHandler(a *app.App, token string) http.Handler {
+	server := mcp.NewServer(&mcp.Implementation{Name: "nas-search", Version: "0.1.0"}, nil)
+	mcp.AddTool(server, &mcp.Tool{Name: "search", Description: "Search indexed NAS files using keywords and meaning. Set photos=true for visual photo search. Results include source paths and page/section locations. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, app.SearchResult, error) {
+		if in.Limit == 0 {
+			in.Limit = 10
+		}
+		out, err := a.Search(ctx, in.Query, in.Prefix, in.Photos, in.Limit)
+		return nil, out, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "browse", Description: "List indexed files and metadata. Prefix is a relative source path, such as Matthew/Documents/. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in BrowseInput) (*mcp.CallToolResult, BrowseOutput, error) {
+		if in.Limit == 0 {
+			in.Limit = 50
+		}
+		files, err := a.Store.List(in.Prefix, policy.ClampLimit(in.Limit, 100))
+		return nil, BrowseOutput{Files: files}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "read_file", Description: "Read up to 65536 bytes from a text/code file inside configured NAS shares. Use search for extracted PDF/Office content. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in ReadInput) (*mcp.CallToolResult, ReadOutput, error) {
+		if in.MaxBytes == 0 {
+			in.MaxBytes = 16384
+		}
+		text, err := a.ReadFile(in.Path, in.MaxBytes)
+		return nil, ReadOutput{in.Path, text}, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "index_status", Description: "Show scan progress, indexed file/chunk counts, and whether semantic/photo indexing is enabled."}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
+		out, err := a.Status()
+		return nil, out, err
+	})
+	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true})
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", app.Protect(token, handler))
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200); fmt.Fprint(w, "ok") })
+	return mux
+}

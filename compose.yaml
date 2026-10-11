@@ -1,0 +1,40 @@
+services:
+  nas-search:
+    build: .
+    image: nas-search-mcp:local
+    restart: unless-stopped
+    init: true
+    user: "${NAS_UID:-1026}:${NAS_GID:-100}"
+    ports:
+      - "${NAS_BIND_IP:-127.0.0.1}:8080:8080"
+    environment:
+      NAS_TOKEN: ${NAS_TOKEN:?Set a random token of at least 24 characters in .env}
+      NAS_ROOT: /files
+      NAS_DATA: /data
+      NAS_SEMANTIC: "true"
+      NAS_PHOTOS: "${NAS_PHOTOS:-false}"
+      NAS_SCAN_INTERVAL: "300"
+      NAS_VEC_EXTENSION: /opt/vec0.so
+      NAS_WORKER: /app/worker/worker.py
+      GOMEMLIMIT: 128MiB
+      GOMAXPROCS: "1"
+      HOME: /data
+      HF_HOME: /data/models/huggingface
+    volumes:
+      - "${NAS_MATTHEW_PATH:-/volume1/Matthew}:/files/Matthew:ro"
+      - "${NAS_PHOTOS_PATH:-/volume1/homes/matt/Photos}:/files/Photos:ro"
+      - "${NAS_INDEX_PATH:-/volume1/docker/nas-search/data}:/data"
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: 1.0
+    pids_limit: 64
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    healthcheck:
+      test: [CMD, /app/nas-search, health]
+      interval: 30s
+      timeout: 5s
+      retries: 3
