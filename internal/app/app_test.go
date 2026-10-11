@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"github.com/mattyv/nas-search-mcp/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestConfinement(t *testing.T) {
@@ -414,5 +417,76 @@ func TestReadDocumentPaginationAndCharacterCap(t *testing.T) {
 	out, e := a.ReadDocument(context.Background(), "cap.txt", 0, 50000)
 	if e != nil || len(out.Text) != 20000 || out.Complete || out.NextOffset == nil || *out.NextOffset != 20000 {
 		t.Fatal(len(out.Text), out, e)
+	}
+}
+
+func TestReadFileRejectsNegativeLimit(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "a.txt"), "abcdef")
+	a := &App{Root: root}
+	if _, e := a.ReadFile("a.txt", -1); e == nil {
+		t.Fatal("negative max_bytes accepted")
+	}
+	got, e := a.ReadFile("a.txt", 3)
+	if e != nil || got != "abc" {
+		t.Fatal(got, e)
+	}
+}
+func TestBrowseOmitsMissingAndEscapingFiles(t *testing.T) {
+	a := scanApp(t)
+	write(t, filepath.Join(a.Root, "present.txt"), "present")
+	for _, path := range []string{"missing.txt", "present.txt", "escape.txt"} {
+		if e := a.Store.Replace(store.File{Path: path, Kind: "text"}, nil, nil); e != nil {
+			t.Fatal(e)
+		}
+	}
+	outside := t.TempDir()
+	write(t, filepath.Join(outside, "secret.txt"), "secret")
+	if e := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(a.Root, "escape.txt")); e != nil {
+		t.Fatal(e)
+	}
+	files, e := a.Browse("", 100)
+	if e != nil || len(files) != 1 || files[0].Path != "present.txt" {
+		t.Fatal(files, e)
+	}
+	files, e = a.Browse("missing", 100)
+	if e != nil || len(files) != 0 {
+		t.Fatal(files, e)
+	}
+}
+
+func TestOpenFileRejectsFIFOWithoutBlocking(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "pipe.txt")
+	if e := syscall.Mkfifo(path, 0600); e != nil {
+		t.Fatal(e)
+	}
+	a := &App{Root: root}
+	done := make(chan error, 1)
+	go func() {
+		f, e := a.openFile("pipe.txt")
+		if f != nil {
+			f.Close()
+		}
+		done <- e
+	}()
+	select {
+	case e := <-done:
+		if e == nil {
+			t.Fatal("FIFO accepted as regular source")
+		}
+	case <-time.After(250 * time.Millisecond):
+		// Unblock the old implementation before failing, so no goroutine is left behind.
+		fd, e := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if e != nil {
+			t.Fatalf("FIFO open blocked; cleanup failed: %v", e)
+		}
+		syscall.Close(fd)
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("FIFO cleanup did not release reader")
+		}
+		t.Fatal("FIFO read open blocked before regular-file validation")
 	}
 }
