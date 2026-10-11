@@ -16,7 +16,7 @@ python3 scripts/install-mcp.py --client codex \
   --token-file build/nas-deployment/.env
 ```
 
-Replace `codex` with `claude-code` or `claude-desktop`. For the existing Linux Claude Desktop installation, add `--config "$HOME/.config/Claude/claude_desktop_config.json"`. Restart the client after installation. The token source is a private local file, not included in the repository; it can also be a token-only file. The installer preserves existing settings and keeps the token out of command arguments. See [client installation](docs/clients.md#install-the-mcp-connection).
+Replace `codex` with `claude-code`, `claude-desktop`, or `chatgpt-desktop`. ChatGPT Desktop uses the shared Codex config for local Codex connections; its cloud chats require a separate integration. On Linux, the installer detects an existing `Claude/claude_desktop_config.json` under `XDG_CONFIG_HOME`, or `~/.config` when unset. Use `--config` for another location. Fully quit and reopen Claude Desktop after installation. The token source is a private local file, not included in the repository; it can also be a token-only file. The installer preserves existing settings and keeps the token out of command arguments. See [client installation](docs/clients.md#install-the-mcp-connection).
 
 **Install or upgrade the NAS service** from a complete checkout on the NAS:
 

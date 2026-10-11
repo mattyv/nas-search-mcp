@@ -142,6 +142,10 @@ Expose the current scan file, processing stage, and start times through `index_s
 
 ## Open decisions
 
+**2026-10-11 Desktop installation repair:** Claude Desktop's configuration had an empty `mcpServers` object. Restoring `nas-search` passed the live installer connection check; the cause of the missing entry is unknown. Detect an existing Linux config under `XDG_CONFIG_HOME` or `~/.config` automatically, preserve other settings, and print the destination so users can check it. Require `--config` when no known Linux config exists. This simplifies installation and repair; it does not prevent another application from changing the file.
+
+**2026-10-11 ChatGPT Desktop installation:** Add `chatgpt-desktop` as an explicit installer client using the supported Codex CLI and shared config, including its backups and replacement checks. [Official documentation](https://learn.chatgpt.com/docs/extend/mcp) confirms sharing for the same local Codex host. The installed local entry is enabled; conversation use still needs checking after restart. Cloud Work uses a separate configuration and is outside this installer.
+
 **2026-10-11 collection update:** The user selected Documents and Code together. The NAS now mounts `/volume1/shared-documents` as `Documents/` and `/volume1/shared-code` as `Code/`. The first scan is still running. Avoid mounting the complete Documents share alongside the separate Code mount, which would index code twice. Paths retained from the narrower pilot are obsolete; the new browse check hides inaccessible entries while the successful scan reconciles the index. A document formerly called `Documents/Melody.pdf` is now `Documents/Course/Week 10/Melody.pdf`.
 
 - When to expand the pilot to the full authorized sources, based on indexing time and search latency.

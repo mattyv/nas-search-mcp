@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Install NAS search into Codex, Claude Code, or Claude Desktop without exposing tokens.
+"""Install NAS search into Codex, Claude Code, Claude Desktop, or ChatGPT Desktop locally.
 
 Uses a local stdio bridge and each CLI's supported configuration commands.
-Claude Desktop must be restarted after installation. ChatGPT is not configured.
+Desktop apps must restart after installation. ChatGPT cloud connections are separate.
 """
 import argparse
 import importlib.util
@@ -44,7 +44,13 @@ def desktop_path():
         return Path.home() / 'Library/Application Support/Claude/claude_desktop_config.json'
     if sys.platform == 'win32':
         return Path(os.environ.get('APPDATA', str(Path.home()))) / 'Claude/claude_desktop_config.json'
-    raise InstallError('Claude Desktop has no official Linux install; provide --config for your existing desktop client')
+    if sys.platform.startswith('linux'):
+        base = Path(os.environ.get('XDG_CONFIG_HOME') or str(Path.home() / '.config'))
+        existing = base / 'Claude/claude_desktop_config.json'
+        if existing.is_file():
+            return existing
+        raise InstallError('No existing Claude Desktop config found at ' + str(existing) + '; provide --config for your desktop client')
+    raise InstallError('Provide --config for your existing desktop client on this platform')
 
 def cli_config_path(client):
     if client == 'codex':
@@ -77,7 +83,7 @@ def probe(url, token):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--client', required=True, choices=['codex','claude-code','claude-desktop'])
+    parser.add_argument('--client', required=True, choices=['codex','claude-code','claude-desktop','chatgpt-desktop'])
     parser.add_argument('--url', required=True)
     parser.add_argument('--token-file', type=Path, required=True, help='token-only file or .env containing NAS_TOKEN')
     parser.add_argument('--name', default='nas-search')
@@ -86,6 +92,10 @@ def main(argv=None):
     parser.add_argument('--dry-run', action='store_true', help='show intended action; no endpoint request or writes')
     parser.add_argument('--skip-check', action='store_true', help='skip initialize/list-tools connectivity check')
     args = parser.parse_args(argv)
+    requested_client = args.client
+    if args.client == 'chatgpt-desktop':
+        # Official local desktop configuration is shared with Codex CLI.
+        args.client = 'codex'
     try:
         bridge.validate_url(args.url)
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}', args.name):
@@ -120,7 +130,8 @@ def main(argv=None):
         if exists and not args.replace:
             raise InstallError('MCP entry already exists; use --replace to change it')
         if args.dry_run:
-            print('Would install ' + args.name + ' for ' + args.client + ' using a protected local token file and stdio bridge.')
+            location = ' Config: ' + str(config_path) + '.' if config_path else ''
+            print('Would install ' + args.name + ' for ' + requested_client + ' using a protected local token file and stdio bridge.' + location)
             return 0
         if not args.skip_check:
             probe(args.url, token)
@@ -167,7 +178,12 @@ def main(argv=None):
                 else:
                     atomic_write(target,previous)
             raise
-        print('Installed ' + args.name + ' for ' + args.client + '. ' + ('Restart Claude Desktop.' if args.client == 'claude-desktop' else 'Start a new client session.'))
+        if args.client == 'claude-desktop':
+            print('Installed ' + args.name + ' for Claude Desktop. Config: ' + str(config_path) + '. Restart Claude Desktop: quit the app fully, then reopen it.')
+        elif requested_client == 'chatgpt-desktop':
+            print('Installed ' + args.name + ' for ChatGPT Desktop local connection via shared Codex configuration. Restart ChatGPT Desktop and start a new local chat. ChatGPT cloud connections need separate setup.')
+        else:
+            print('Installed ' + args.name + ' for ' + args.client + '. Start a new client session.')
         return 0
     except (InstallError, bridge.BridgeError, OSError) as exc:
         # Avoid printing subprocess output, token contents, or request bodies.

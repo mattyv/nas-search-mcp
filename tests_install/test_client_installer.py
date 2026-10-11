@@ -113,6 +113,104 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(token_file.read_text(),'previous-private-token-value')
         self.assertEqual(self.config.read_bytes(),before)
 
+    def test_linux_existing_default_config_auto_detected(self):
+        default = self.home / '.config/Claude/claude_desktop_config.json'
+        default.parent.mkdir(parents=True)
+        default.write_bytes(self.config.read_bytes())
+        args = self.args[:self.args.index('--config')] + ['--skip-check']
+        with patch.dict(os.environ, {'HOME':str(self.home), 'XDG_CONFIG_HOME':''}), patch.object(self.installer.sys,'platform','linux'), patch('sys.stdout',new_callable=io.StringIO) as output:
+            self.assertEqual(self.installer.main(args),0)
+            self.assertIn(str(default),output.getvalue())
+            self.assertIn('Restart Claude Desktop',output.getvalue())
+            self.assertNotIn(self.token,output.getvalue())
+        saved=json.loads(default.read_text())
+        self.assertTrue(saved['other']['keep'])
+        self.assertEqual(saved['mcpServers']['other-server']['command'],'keep')
+        self.assertIn('nas-search',saved['mcpServers'])
+        self.assertTrue(default.with_name(default.name+'.bak').exists())
+
+    def test_linux_xdg_existing_config_used(self):
+        xdg = self.home / 'custom-config'
+        target = xdg / 'Claude/claude_desktop_config.json'
+        target.parent.mkdir(parents=True)
+        target.write_bytes(self.config.read_bytes())
+        args = self.args[:self.args.index('--config')] + ['--skip-check']
+        with patch.dict(os.environ, {'HOME':str(self.home), 'XDG_CONFIG_HOME':str(xdg)}), patch.object(self.installer.sys,'platform','linux'):
+            self.assertEqual(self.installer.main(args),0)
+        self.assertIn('nas-search',json.loads(target.read_text())['mcpServers'])
+        self.assertFalse((self.home/'.config/Claude/claude_desktop_config.json').exists())
+
+    def test_linux_missing_auto_config_requires_override(self):
+        args = self.args[:self.args.index('--config')] + ['--skip-check']
+        with patch.dict(os.environ, {'HOME':str(self.home), 'XDG_CONFIG_HOME':''}), patch.object(self.installer.sys,'platform','linux'), patch('sys.stderr',new_callable=io.StringIO) as error:
+            self.assertEqual(self.installer.main(args),1)
+            self.assertIn('--config',error.getvalue())
+            self.assertNotIn(self.token,error.getvalue())
+        self.assertFalse((self.home/'.config/Claude').exists())
+        self.assertFalse((self.home/'.config/nas-search').exists())
+
+    def test_linux_auto_detect_replace_safety_and_dry_run(self):
+        target=self.home/'.config/Claude/claude_desktop_config.json'
+        target.parent.mkdir(parents=True)
+        target.write_bytes(self.config.read_bytes())
+        args=self.args[:self.args.index('--config')]+['--skip-check']
+        with patch.dict(os.environ,{'HOME':str(self.home),'XDG_CONFIG_HOME':''}),patch.object(self.installer.sys,'platform','linux'):
+            before=target.read_bytes()
+            self.assertEqual(self.installer.main(args+['--dry-run']),0)
+            self.assertEqual(target.read_bytes(),before)
+            self.assertEqual(self.installer.main(args),0)
+            before=target.read_bytes()
+            self.assertEqual(self.installer.main(args),1)
+            self.assertEqual(target.read_bytes(),before)
+            self.assertEqual(self.installer.main(args+['--replace']),0)
+
+    def test_linux_empty_servers_preserves_desktop_preferences(self):
+        target=self.home/'.config/Claude/claude_desktop_config.json'
+        target.parent.mkdir(parents=True)
+        preferences={'theme':'dark','windowBounds':{'width':1000},'mcpServers':{}}
+        target.write_text(json.dumps(preferences))
+        args=self.args[:self.args.index('--config')]+['--skip-check']
+        with patch.dict(os.environ,{'HOME':str(self.home),'XDG_CONFIG_HOME':''}),patch.object(self.installer.sys,'platform','linux'):
+            self.assertEqual(self.installer.main(args),0)
+        saved=json.loads(target.read_text())
+        self.assertEqual(saved['theme'],'dark')
+        self.assertEqual(saved['windowBounds'],preferences['windowBounds'])
+        self.assertIn('nas-search',saved['mcpServers'])
+        self.assertEqual(json.loads(target.with_name(target.name+'.bak').read_text()),preferences)
+
+    def test_chatgpt_desktop_uses_codex_registration_and_backup(self):
+        custom=self.home/'custom-codex'
+        custom.mkdir()
+        config=custom/'config.toml'
+        before=b'[unrelated]\nkeep = true\n'
+        config.write_bytes(before)
+        commands=[]
+        def run(command,**kwargs):
+            import subprocess
+            commands.append(command)
+            if 'get' in command:
+                return subprocess.CompletedProcess(command,0,stdout='',stderr='')
+            if 'add' in command:
+                config.write_bytes(before+b'# registered\n')
+            return subprocess.CompletedProcess(command,0,stdout='',stderr='')
+        args=['--client','chatgpt-desktop','--url','http://127.0.0.1:8080/mcp','--token-file',str(self.source),'--skip-check','--replace']
+        with patch.dict(os.environ,{'HOME':str(self.home),'CODEX_HOME':str(custom)}),patch.object(self.installer.subprocess,'run',side_effect=run),patch('sys.stdout',new_callable=io.StringIO) as output:
+            self.assertEqual(self.installer.main(args),0)
+            self.assertIn('ChatGPT Desktop local connection',output.getvalue())
+            self.assertIn('Restart ChatGPT Desktop',output.getvalue())
+            self.assertNotIn(self.token,output.getvalue())
+        self.assertTrue(all(command[0]=='codex' for command in commands))
+        self.assertTrue(any(command[:3]==['codex','mcp','add'] for command in commands))
+        self.assertEqual(config.with_name('config.toml.nas-search.bak').read_bytes(),before)
+        self.assertTrue(config.read_bytes().startswith(before))
+        self.assertFalse((self.home/'.claude.json').exists())
+
+    def test_chatgpt_desktop_dry_run_without_cli(self):
+        args=['--client','chatgpt-desktop','--url','http://127.0.0.1:8080/mcp','--token-file',str(self.source),'--dry-run']
+        with patch.dict(os.environ,{'HOME':str(self.home)}),patch.object(self.installer.subprocess,'run',side_effect=AssertionError('Dry run must not call CLI')):
+            self.assertEqual(self.installer.main(args),0)
+        self.assertFalse((self.home/'.config/nas-search').exists())
+
 class BridgeTests(unittest.TestCase):
     def setUp(self):
         self.bridge = load('bridge', 'mcp_bridge.py')
