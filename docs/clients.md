@@ -27,7 +27,7 @@ Start a new CLI session or fully restart the desktop app. Config installation an
 ```sh
 python3 scripts/fetch-file.py --url http://192.0.2.10:8080/mcp \
   --token-file build/nas-deployment/.env \
-  --path 'Documents/Melody.pdf' --output /tmp/nas-melody.pdf
+  --path 'Documents/Course/Week 10/Melody.pdf' --output /tmp/nas-melody.pdf
 ```
 
 The helper uses authenticated MCP and writes a private local file. Existing output files are preserved unless `--replace` is explicit. PDFs are not converted to Markdown, and original NAS files stay read-only.
