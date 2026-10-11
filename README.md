@@ -32,15 +32,15 @@ Text search uses BGE-small English embeddings plus SQLite FTS5, with SQLite `sql
 
 The application core is written in [Dafny](core/Core.dfy) and compiled to Go. It specifies bounded chunking and reconstruction, lexical relative-path validation, result-limit clamping, deterministic ordering/top-k, ranking properties, and abstract replacement/removal properties. These proofs do **not** prove filesystem confinement, SQLite transactions, MCP transport/authentication, document parsers, embeddings, or deployment. Those Go/Python boundaries are tested separately. See [AGENTS.md](AGENTS.md) for development rules.
 
-Real embedding smoke tests passed on the development computer, with CPU execution and one worker thread:
+Real embedding smoke tests passed on the development computer, using serialized CPU workers. **NAS performance and model compatibility remain unmeasured.** The container caps aggregate memory at 1 GiB and CPU at one core; exceeding the cap can terminate it. Models load in short-lived processes, so each request includes loading overhead.
 
-| Cached model operation | Dimensions | Elapsed | Peak process RSS |
-|---|---:|---:|---:|
-| BGE text | 384 | 0.56 s | 269 MiB |
-| CLIP vision | 512 | 0.85 s | 672 MiB |
-| CLIP text query | 512 | 0.77 s | 446 MiB |
+The [recorded development benchmark](docs/benchmarks/development.json) includes machine identity, dependency versions, timestamp, and per-process measurements. Reproduce it with the project's Python environment:
 
-Initial CLIP vision download/load peaked at 829 MiB. **These are not NAS benchmarks.** ONNX Runtime wheels and all model operations must be smoke-tested on the J4025. The container caps aggregate memory at 1 GiB and CPU at one core; exceeding the memory cap can terminate it. Models are loaded in serialized short-lived worker processes, so repeated inference includes loading overhead.
+```sh
+python3 scripts/benchmark-worker.py --data /path/to/data --output benchmark.json --label development
+```
+
+The data directory contains `models/`; missing weights download automatically. Use `--label nas` only when running on the actual NAS. These single-operation smoke measurements are not throughput estimates.
 
 Developer checks:
 
