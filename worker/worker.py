@@ -5,37 +5,96 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
+import tempfile
 
 TEXT_EXTENSIONS = {'.txt', '.md', '.rst', '.csv', '.tsv', '.json', '.jsonl', '.xml', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.log', '.py', '.go', '.rs', '.java', '.js', '.jsx', '.ts', '.tsx', '.c', '.h', '.cpp', '.hpp', '.cs', '.sh', '.bash', '.sql', '.dfy', '.css', '.scss', '.vue', '.svelte', '.rb', '.php', '.swift', '.kt', '.kts', '.r', '.tex'}
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tif', '.tiff'}
 
 
-def extract(request):
+def ocr_pdf_page(path, number):
+    """Rasterize only one bounded page, then recognize it with one CPU thread."""
+    environment = dict(os.environ, OMP_THREAD_LIMIT='1', OMP_NUM_THREADS='1')
+    with tempfile.TemporaryDirectory(prefix='nas-ocr-') as directory:
+        output = str(Path(directory) / 'page')
+        commands = [
+            ['pdftoppm', '-f', str(number), '-l', str(number), '-singlefile',
+             '-scale-to', '1600', '-png', str(path), output],
+            ['tesseract', output + '.png', 'stdout', '--psm', '3', '-l', 'eng'],
+        ]
+        text = ''
+        for command in commands:
+            try:
+                completed = subprocess.run(command, capture_output=True, text=True,
+                                           timeout=90, env=environment)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise ValueError('PDF OCR unavailable or timed out') from exc
+            if completed.returncode != 0:
+                raise ValueError('PDF OCR failed')
+            text = completed.stdout
+        return text
+
+
+def extract(request, document_window=False):
     path = Path(request['path'])
     max_bytes = int(request.get('max_bytes', 32 * 1024 * 1024))
     max_chars = int(request.get('max_chars', 200000))
+    offset = request.get('offset', 0) if document_window else 0
     if max_bytes <= 0 or max_chars <= 0:
         raise ValueError('max_bytes and max_chars must be positive')
     if path.stat().st_size > max_bytes:
         raise ValueError('file exceeds max_bytes')
     result = {'kind': 'document', 'sections': [], 'metadata': {}, 'truncated': False}
     remaining = max_chars
-    def add(location, text):
-        nonlocal remaining
+    skip = offset
+    section_seen = False
+    def add(location, text, continuation=False):
+        nonlocal remaining, skip, section_seen
         text = str(text)
+        if not text:
+            return remaining > 0
+        if document_window:
+            if section_seen and not continuation:
+                text = '\n' + text
+            section_seen = True
+            consumed = min(skip, len(text))
+            skip -= consumed
+            text = text[consumed:]
         if len(text) > remaining:
             result['truncated'] = True
         bounded = text[:remaining]
         if bounded:
-            result['sections'].append({'location': location, 'text': bounded})
+            if document_window and result['sections'] and result['sections'][-1]['location'] == location:
+                result['sections'][-1]['text'] += bounded
+            else:
+                result['sections'].append({'location': location, 'text': bounded})
         remaining -= len(bounded)
         return remaining > 0
     suffix = path.suffix.lower()
     if suffix in TEXT_EXTENSIONS:
-        # Limit before decoding; four bytes per Unicode code point plus one sentinel.
+        import codecs
+        decoder = codecs.getincrementaldecoder('utf-8')('strict')
+        text_parts = []
+        characters = 0
         with path.open('rb') as stream:
-            raw = stream.read(min(max_bytes, max_chars * 4 + 1))
-        add('text', raw.decode('utf-8', errors='replace'))
+            while True:
+                raw = stream.read(65536)
+                if any(b < 32 and b not in (9, 10, 13) for b in raw):
+                    raise ValueError('binary file disguised as text')
+                try:
+                    piece = decoder.decode(raw, final=not raw)
+                except UnicodeDecodeError as exc:
+                    raise ValueError('text file must contain valid UTF-8') from exc
+                if document_window:
+                    add('text', piece, continuation=True)
+                elif characters < max_chars:
+                    text_parts.append(piece[:max_chars - characters])
+                characters += len(piece)
+                if not raw:
+                    break
+        if not document_window:
+            add('text', ''.join(text_parts))
+            result['truncated'] = characters > max_chars
     elif suffix in {'.html', '.htm'}:
         from html.parser import HTMLParser
         class Parser(HTMLParser):
@@ -64,11 +123,17 @@ def extract(request):
         from pypdf import PdfReader
         reader = PdfReader(path)
         result['metadata']['pages'] = len(reader.pages)
-        result['metadata']['needs_ocr'] = False
+        result['metadata'].update(needs_ocr=False, ocr_pages=[], ocr_used=False, ocr_assessment_complete=False)
         for number, page in enumerate(reader.pages, 1):
             text = page.extract_text() or ''
             if not text.strip():
-                result['metadata']['needs_ocr'] = True
+                if os.environ.get('NAS_OCR', 'true').lower() == 'true':
+                    text = ocr_pdf_page(path, number)
+                    result['metadata']['ocr_pages'].append(number)
+                    result['metadata']['ocr_used'] = True
+                if not text.strip():
+                    result['metadata']['needs_ocr'] = True
+            result['metadata']['ocr_assessment_complete'] = number == len(reader.pages)
             if not add(f'page:{number}', text):
                 result['truncated'] |= number < len(reader.pages)
                 break
@@ -111,6 +176,8 @@ def extract(request):
             if image.width * image.height > Image.MAX_IMAGE_PIXELS:
                 raise ValueError('image exceeds pixel limit')
             result['kind'] = 'photo'
+            if document_window:
+                result['metadata']['text_extraction_supported'] = False
             result['metadata'].update(width=image.width, height=image.height, format=image.format)
             exif = image.getexif()
             for key, value in exif.items():
@@ -119,6 +186,30 @@ def extract(request):
                     result['metadata'][name] = str(value)[:1024]
     else:
         raise ValueError(f'unsupported file type: {suffix or "no extension"}')
+    return result
+
+
+def read_document(request):
+    offset = request.get('offset', 0)
+    limit = request.get('max_chars', 12000)
+    if type(offset) is not int or offset < 0:
+        raise ValueError('offset must be a nonnegative integer')
+    if type(limit) is not int or not 1 <= limit <= 20000:
+        raise ValueError('max_chars must be an integer from 1 to 20000')
+    # One extra Unicode character distinguishes exact EOF from another page.
+    window = dict(request, offset=offset, max_chars=limit + 1)
+    result = extract(window, document_window=True)
+    length = sum(len(section['text']) for section in result['sections'])
+    complete = length <= limit
+    if not complete:
+        result['sections'][-1]['text'] = result['sections'][-1]['text'][:-1]
+        if not result['sections'][-1]['text']:
+            result['sections'].pop()
+    text = ''.join(section['text'] for section in result['sections'])
+    result.pop('truncated')
+    result.update(text=text, offset=offset, complete=complete,
+                  next_offset=None if complete else offset + len(text))
+    result['metadata']['extracted_stream'] = 'nonempty sections joined by newline; plain text unchanged'
     return result
 
 
@@ -131,6 +222,8 @@ def handle(request):
     operation = request.get('operation', request.get('op'))
     if operation == 'extract':
         return extract(request)
+    if operation == 'read_document':
+        return read_document(request)
     if operation not in {'embed', 'image_embed', 'image_query'}:
         raise ValueError('unsupported operation')
     values = [request['path']] if operation == 'image_embed' else request['texts']

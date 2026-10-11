@@ -15,6 +15,11 @@ worker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(worker)
 
 
+@pytest.fixture(autouse=True)
+def disable_external_ocr(monkeypatch):
+    monkeypatch.setenv('NAS_OCR', 'false')
+
+
 def extract(path, **kw):
     return worker.handle({'operation': 'extract', 'path': str(path), 'max_bytes': 100000, 'max_chars': 1000, **kw})
 
@@ -28,6 +33,20 @@ def test_text_bounds(tmp_path):
     assert result['kind'] == 'document'
     with pytest.raises(ValueError, match='max_bytes'):
         extract(p, max_bytes=2)
+
+
+def test_binary_disguised_as_text_is_rejected(tmp_path):
+    p = tmp_path / 'project.cfg'
+    for content in [b'A\x00binary', b'ABC\x01\x02binary', b'\xff\xfeinvalid']:
+        p.write_bytes(content)
+        with pytest.raises(ValueError, match='binary|UTF-8'):
+            extract(p, max_chars=1)
+
+
+def test_unicode_text_is_preserved(tmp_path):
+    p = tmp_path / 'notes.txt'
+    p.write_text('Music 🎵 中文\n', encoding='utf-8')
+    assert extract(p)['sections'][0]['text'] == 'Music 🎵 中文\n'
 
 
 def test_docx(tmp_path):
@@ -122,3 +141,156 @@ def test_embedding_input_limit(monkeypatch):
         worker.handle({'operation': 'embed', 'texts': []})
     with pytest.raises(ValueError, match='character limit'):
         worker.handle({'operation': 'embed', 'texts': ['x' * 200001]})
+
+
+def read_document(path, offset=0, max_chars=20000):
+    return worker.handle({'operation': 'read_document', 'path': str(path), 'offset': offset, 'max_chars': max_chars})
+
+
+def test_document_pages_entire_large_unicode_text(tmp_path):
+    p = tmp_path / 'large.txt'
+    content = ('🎵中文abc\n' * 35000)
+    p.write_text(content, encoding='utf-8')
+    chunks = []
+    offset = 0
+    while True:
+        result = read_document(p, offset, 20000)
+        assert result['offset'] == offset
+        assert len(result['text']) <= 20000
+        assert result['text'] == ''.join(s['text'] for s in result['sections'])
+        chunks.append(result['text'])
+        if result['complete']:
+            assert result['next_offset'] is None
+            break
+        assert result['next_offset'] == offset + len(result['text'])
+        offset = result['next_offset']
+    assert ''.join(chunks) == content
+    assert len(content) > 200000
+    assert read_document(p, len(content), 1)['complete'] is True
+
+
+def test_document_bounds_and_exact_eof(tmp_path):
+    p = tmp_path / 'small.txt'
+    p.write_text('abc🎵')
+    result = read_document(p, 0, 4)
+    assert result['text'] == 'abc🎵'
+    assert result['complete'] is True
+    assert read_document(p, 500, 4)['text'] == ''
+    for offset, limit in [(-1, 5), (0, 0), (0, 20001), (True, 5), (0, 1.5)]:
+        with pytest.raises(ValueError, match='offset|max_chars'):
+            read_document(p, offset, limit)
+
+
+def test_document_docx_section_offsets(tmp_path):
+    p = tmp_path / 'whole.docx'
+    doc = Document()
+    doc.add_paragraph('Alpha🎵')
+    doc.add_paragraph('Beta')
+    doc.add_paragraph('Gamma')
+    doc.save(p)
+    full = 'Alpha🎵\nBeta\nGamma'
+    pages = [read_document(p, offset, 4) for offset in range(0, len(full), 4)]
+    assert ''.join(page['text'] for page in pages) == full
+    assert read_document(p, 7, 4)['sections'] == [{'location': 'block:2', 'text': 'Beta'}]
+
+
+def test_document_pdf_page_offsets_and_scanned_metadata(monkeypatch, tmp_path):
+    import pypdf
+    p = tmp_path / 'whole.pdf'
+    p.write_bytes(b'fake')
+    class Page:
+        def __init__(self, text): self.text = text
+        def extract_text(self): return self.text
+    class Reader:
+        def __init__(self, path): self.pages = [Page('First'), Page('Second'), Page('')]
+    monkeypatch.setattr(pypdf, 'PdfReader', Reader)
+    result = read_document(p, 4, 20)
+    assert result['text'] == 't\nSecond'
+    assert [s['location'] for s in result['sections']] == ['page:1', 'page:2']
+    assert result['metadata']['needs_ocr'] is True
+    assert result['complete'] is True
+    monkeypatch.setattr(pypdf, 'PdfReader', lambda path: type('Reader', (), {'pages': [Page(''), Page('')]})())
+    result = read_document(p)
+    assert result['text'] == '' and result['complete'] is True
+    assert result['metadata']['needs_ocr'] is True
+
+
+def test_document_photo_does_not_claim_text_extraction(tmp_path):
+    p = tmp_path / 'photo.jpg'
+    Image.new('RGB', (5, 7)).save(p)
+    result = read_document(p)
+    assert result['text'] == '' and result['kind'] == 'photo'
+    assert result['metadata']['text_extraction_supported'] is False
+
+
+def test_scanned_pdf_ocr_shared_with_index_and_read(monkeypatch, tmp_path):
+    import pypdf
+    p = tmp_path / 'scan.pdf'
+    p.write_bytes(b'fake')
+    class Page:
+        def __init__(self, text): self.text = text
+        def extract_text(self): return self.text
+    monkeypatch.setattr(pypdf, 'PdfReader', lambda path: type('Reader', (), {'pages': [Page('Embedded'), Page('')]})())
+    calls = []
+    monkeypatch.setattr(worker, 'ocr_pdf_page', lambda path, number: calls.append(number) or 'Scanned text')
+    monkeypatch.setenv('NAS_OCR', 'true')
+    for result in [extract(p), read_document(p)]:
+        assert result['metadata']['ocr_pages'] == [2]
+        assert result['metadata']['ocr_used'] is True
+        assert result['metadata']['needs_ocr'] is False
+        assert 'Scanned text' in str(result['sections'])
+    assert calls == [2, 2]
+    monkeypatch.setenv('NAS_OCR', 'false')
+    result = read_document(p)
+    assert result['metadata']['needs_ocr'] is True
+    assert calls == [2, 2]
+
+
+def test_pdf_ocr_commands_bound_raster_and_threads(monkeypatch, tmp_path):
+    calls = []
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout='OCR content' if command[0] == 'tesseract' else '', stderr='')
+    monkeypatch.setattr(worker.subprocess, 'run', run)
+    assert worker.ocr_pdf_page(tmp_path / 'scan.pdf', 7) == 'OCR content'
+    raster, recognizer = calls
+    assert raster[0][raster[0].index('-scale-to')+1] == '1600'
+    assert raster[0][raster[0].index('-f')+1] == '7'
+    assert raster[0][raster[0].index('-l')+1] == '7'
+    assert '-singlefile' in raster[0]
+    assert recognizer[0][-4:] == ['--psm', '3', '-l', 'eng']
+    assert all(call[1]['timeout'] == 90 for call in calls)
+    assert all(call[1]['env']['OMP_THREAD_LIMIT'] == '1' for call in calls)
+
+
+def test_pdf_ocr_failure_is_explicit(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker.subprocess, 'run', lambda command, **kwargs: subprocess.CompletedProcess(command, 1, stdout='', stderr='private document content'))
+    with pytest.raises(ValueError, match='OCR') as error:
+        worker.ocr_pdf_page(tmp_path / 'scan.pdf', 1)
+    assert 'private document content' not in str(error.value)
+
+
+def test_real_pdf_document_sections_and_eof(tmp_path):
+    from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
+    p = tmp_path / 'pages.pdf'
+    writer = PdfWriter()
+    font = DictionaryObject({NameObject('/Type'): NameObject('/Font'), NameObject('/Subtype'): NameObject('/Type1'), NameObject('/BaseFont'): NameObject('/Helvetica')})
+    for text in ['First page', 'Second page']:
+        page = writer.add_blank_page(width=200, height=200)
+        page[NameObject('/Resources')] = DictionaryObject({NameObject('/Font'): DictionaryObject({NameObject('/F1'): writer._add_object(font)})})
+        stream = DecodedStreamObject()
+        stream.set_data(('BT /F1 12 Tf 10 100 Td (' + text + ') Tj ET').encode())
+        page[NameObject('/Contents')] = writer._add_object(stream)
+    writer.write(p)
+    full = 'First page\nSecond page'
+    chunks = [read_document(p, offset, 5) for offset in range(0, len(full), 5)]
+    assert ''.join(chunk['text'] for chunk in chunks) == full
+    assert chunks[-1]['complete'] is True
+    assert read_document(p, 11, 11)['sections'] == [{'location': 'page:2', 'text': 'Second page'}]
+
+
+def test_document_read_rejects_binary_after_return_window(tmp_path):
+    p = tmp_path / 'late.txt'
+    p.write_bytes(b'A' * 70000 + b'\x00binary')
+    with pytest.raises(ValueError, match='binary'):
+        read_document(p, 0, 1)

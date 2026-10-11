@@ -13,20 +13,20 @@ Read-only keyword and semantic search for a Synology DS220+ with 2 GB RAM. The s
 3. Follow [client setup](docs/clients.md), then ask: **“Use nas-search to show index_status, then find documents about …”**
 4. Check Container Manager memory and logs before adding more files or enabling photo embeddings.
 
-The MCP tools are `search`, `browse`, `read_file`, and `index_status`. Search returns source paths, locations, and passages. `read_file` reads text/code only; use search for extracted PDF/Office contents. Scans run at startup and every five minutes; a large initial scan can take much longer.
+The MCP tools are `search`, `browse`, `read_file`, `read_document`, `fetch_file`, and `index_status`. Search returns source paths, locations, and passages. `read_document` reads complete extracted PDF/Office/text contents in bounded batches, including English OCR for scanned PDF pages. `fetch_file` retrieves original bytes in batches; [client setup](docs/clients.md) includes a complete-file download helper. `read_file` reads a bounded text/code prefix. Scans run at startup and every five minutes; a large initial scan can take much longer.
 
 ## Coverage and limits
 
 | Content | Current support |
 |---|---|
 | Text and common code formats | Keyword and semantic passage search |
-| PDFs | Embedded text, with page references; textless pages flagged as needing OCR |
+| PDFs | Embedded text and optional English OCR, with page references |
 | DOCX, XLSX/XLSM, PPTX | Paragraph/table, worksheet-row, and slide extraction |
 | HTML | Visible text, excluding scripts/styles |
 | JPEG, PNG, WebP, GIF, BMP, TIFF | Metadata; optional visual search using CLIP |
 | Archives, backups, legacy Office, audio/video, RAW/HEIC | Not indexed |
 
-Files above 32 MiB are skipped with an indexing error; extraction stops at 200,000 characters. Hidden files/directories, symlinks, dependencies, build outputs, Synology recycle/thumbnail folders, and known Time Machine folders are skipped. OCR, transcription, and automatic backup deduplication are not implemented. A blank PDF page can also trigger the OCR flag. This is not an all-format search engine.
+Files above 32 MiB are skipped with an indexing error; indexing extraction stops at 200,000 characters. Full-document reading uses continuation offsets instead of this index cap. Hidden files/directories, symlinks, dependencies, build outputs, Synology recycle/thumbnail folders, and known Time Machine folders are skipped. Binary files disguised as text are rejected. Transcription, photo OCR, and automatic backup deduplication are not implemented. Blank or unreadable PDF pages can still be flagged as needing OCR. This is not an all-format search engine.
 
 Text search uses BGE-small English embeddings plus SQLite FTS5, with SQLite `sqlite-vec` for vectors. Photo search uses CLIP vision/text models when enabled. Models download from Hugging Face on first use and are cached in the persistent data folder. Content is processed locally; search passages sent to your Claude/ChatGPT client are handled under that client's data policy. Photo indexing is disabled by default because it uses more memory.
 
@@ -49,7 +49,7 @@ Developer checks:
 ```sh
 scripts/build-core.sh
 go test -tags sqlite_fts5 ./...
-python3 -m pytest tests_worker -q
+python3 -m pytest tests_worker tests_install -q
 ```
 
 Use the project's Python virtual environment for worker tests. Dafny is expected at `.tools/dafny/dafny`, or set `DAFNY` to an installed binary. Compiled Go output is committed so container builds do not need Dafny. CI verifies and tests before publishing the image.

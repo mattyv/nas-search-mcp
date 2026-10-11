@@ -19,7 +19,10 @@ jobs:
           unzip -q .tools/dafny.zip -d .tools
           GOBIN="$PWD/.tools/bin" go install golang.org/x/tools/cmd/goimports@v0.42.0
       - name: Install adapter test dependencies
-        run: pip install -r requirements.lock pytest
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-eng
+          pip install -r requirements.lock pytest mcp==1.30.0
       - name: Verify and regenerate Dafny core
         run: scripts/build-core.sh
       - name: Reject stale generated code
@@ -29,7 +32,7 @@ jobs:
           export NAS_PYTHON=python
           export NAS_VEC_EXTENSION="$(python -c 'import sqlite_vec; print(sqlite_vec.loadable_path()+".so")')"
           go test -race -tags sqlite_fts5 ./...
-          python -m pytest tests_worker -q
+          python -m pytest tests_worker tests_install -q
       - name: Build container
         run: docker build -t nas-search-mcp:test .
   publish:

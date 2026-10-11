@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -35,16 +37,21 @@ type App struct {
 	lastScan                   string
 	scanError                  string
 }
+type DocumentSection struct {
+	Location string `json:"location"`
+	Text     string `json:"text"`
+}
 type WorkerResult struct {
-	Kind     string `json:"kind"`
-	Sections []struct {
-		Location string `json:"location"`
-		Text     string `json:"text"`
-	} `json:"sections"`
-	Metadata  map[string]any `json:"metadata"`
-	Truncated bool           `json:"truncated"`
-	Vectors   [][]float32    `json:"vectors"`
-	Error     string         `json:"error"`
+	Kind       string            `json:"kind"`
+	Sections   []DocumentSection `json:"sections"`
+	Text       string            `json:"text"`
+	Offset     int64             `json:"offset"`
+	NextOffset *int64            `json:"next_offset"`
+	Complete   bool              `json:"complete"`
+	Metadata   map[string]any    `json:"metadata"`
+	Truncated  bool              `json:"truncated"`
+	Vectors    [][]float32       `json:"vectors"`
+	Error      string            `json:"error"`
 }
 type Hit struct {
 	ID       int64  `json:"id"`
@@ -164,11 +171,187 @@ func (a *App) ReadFile(relative string, limit int) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, int64(policy.ClampLimit(limit, 65536))))
-	if bytes.Contains(b, []byte{0}) {
-		return "", errors.New("binary file: use search results and metadata")
+	// Inspect a fixed prefix independent of the requested output size.
+	b, err := io.ReadAll(io.LimitReader(f, 65536))
+	if err != nil {
+		return "", err
 	}
-	return strings.ToValidUTF8(string(b), "�"), err
+	for _, c := range b {
+		if c < 32 && c != '\t' && c != '\n' && c != '\r' {
+			return "", errors.New("binary file: use read_document for extracted text or fetch_file for original bytes")
+		}
+	}
+	end := policy.ClampLimit(limit, 65536)
+	if end > len(b) {
+		end = len(b)
+	}
+	return strings.ToValidUTF8(string(b[:end]), "�"), nil
+}
+
+type DocumentResult struct {
+	Path       string            `json:"path"`
+	Kind       string            `json:"kind"`
+	Text       string            `json:"text"`
+	Sections   []DocumentSection `json:"sections"`
+	Offset     int64             `json:"offset"`
+	NextOffset *int64            `json:"next_offset"`
+	Complete   bool              `json:"complete"`
+	Metadata   map[string]any    `json:"metadata"`
+}
+type FetchResult struct {
+	Path       string `json:"path"`
+	Data       string `json:"data"`
+	MIME       string `json:"mime"`
+	Size       int64  `json:"size"`
+	Offset     int64  `json:"offset"`
+	NextOffset *int64 `json:"next_offset"`
+	Complete   bool   `json:"complete"`
+	Version    string `json:"version"`
+}
+
+const sourceLimit = 32 * 1024 * 1024
+
+func fileVersion(info os.FileInfo) string {
+	return fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())
+}
+
+// FetchFile returns exact original bytes in bounded base64 batches, including binary files.
+func (a *App) FetchFile(relative string, offset int64, maxBytes int, expectedVersion string) (FetchResult, error) {
+	out := FetchResult{Path: relative, Offset: offset}
+	if offset < 0 || maxBytes < 0 {
+		return out, errors.New("offset and max_bytes must be nonnegative")
+	}
+	if offset > 0 && expectedVersion == "" {
+		return out, errors.New("expected_version is required after the first batch")
+	}
+	if maxBytes == 0 {
+		maxBytes = 65536
+	}
+	maxBytes = policy.ClampLimit(maxBytes, 262144)
+	f, err := a.openFile(relative)
+	if err != nil {
+		return out, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return out, err
+	}
+	if info.Size() > sourceLimit {
+		return out, errors.New("file exceeds 32 MiB source limit")
+	}
+	if offset > info.Size() {
+		return out, errors.New("offset exceeds file size")
+	}
+	out.Size = info.Size()
+	out.Version = fileVersion(info)
+	if expectedVersion != "" && expectedVersion != out.Version {
+		return out, errors.New("file changed; restart download at offset zero")
+	}
+	sample := make([]byte, 512)
+	n, err := f.ReadAt(sample, 0)
+	if err != nil && err != io.EOF {
+		return out, err
+	}
+	out.MIME = mime.TypeByExtension(strings.ToLower(filepath.Ext(relative)))
+	if out.MIME == "" {
+		out.MIME = http.DetectContentType(sample[:n])
+	}
+	remaining := info.Size() - offset
+	if int64(maxBytes) > remaining {
+		maxBytes = int(remaining)
+	}
+	content := make([]byte, maxBytes)
+	n, err = f.ReadAt(content, offset)
+	if err != nil && err != io.EOF {
+		return out, err
+	}
+	after, err := f.Stat()
+	if err != nil {
+		return out, err
+	}
+	if n != maxBytes || fileVersion(after) != out.Version {
+		return out, errors.New("file changed while fetching; restart download")
+	}
+	out.Data = base64.StdEncoding.EncodeToString(content[:n])
+	next := offset + int64(n)
+	out.Complete = next == out.Size
+	if !out.Complete {
+		out.NextOffset = &next
+	}
+	return out, nil
+}
+
+// ReadDocument reads a window of the full extracted document, independently of the index's text cap.
+// Python extraction is a trusted boundary; its path open is not part of Dafny verification.
+func (a *App) ReadDocument(ctx context.Context, relative string, offset int64, maxChars int) (DocumentResult, error) {
+	out := DocumentResult{Path: relative, Offset: offset, Sections: []DocumentSection{}, Metadata: map[string]any{}}
+	if offset < 0 || maxChars < 0 {
+		return out, errors.New("offset and max_chars must be nonnegative")
+	}
+	if maxChars == 0 {
+		maxChars = 12000
+	}
+	maxChars = policy.ClampLimit(maxChars, 20000)
+	full, err := a.safeFile(relative)
+	if err != nil {
+		return out, err
+	}
+	info, err := os.Stat(full)
+	if err != nil {
+		return out, err
+	}
+	if info.Size() > sourceLimit {
+		return out, errors.New("file exceeds 32 MiB source limit")
+	}
+	result, err := a.worker(ctx, map[string]any{"operation": "read_document", "path": full, "offset": offset, "max_chars": maxChars, "max_bytes": sourceLimit})
+	if err != nil {
+		return out, err
+	}
+	after, err := os.Stat(full)
+	if err != nil {
+		return out, err
+	}
+	if fileVersion(info) != fileVersion(after) {
+		return out, errors.New("file changed while reading; retry")
+	}
+	out.Kind = result.Kind
+	out.Text = result.Text
+	out.Sections = result.Sections
+	out.Offset = result.Offset
+	out.NextOffset = result.NextOffset
+	out.Complete = result.Complete
+	out.Metadata = result.Metadata
+	if out.Metadata == nil {
+		out.Metadata = map[string]any{}
+	}
+	out.Metadata["source_version"] = fileVersion(info)
+	return out, nil
+}
+
+func extractionRevision() string {
+	ocr := os.Getenv("NAS_OCR")
+	return fmt.Sprintf("v2;ocr=%t", ocr == "" || strings.EqualFold(ocr, "true"))
+}
+func (a *App) markExtractionRevision(revision string) error {
+	f, err := os.CreateTemp(a.Data, ".extraction-revision-")
+	if err != nil {
+		return err
+	}
+	temporary := f.Name()
+	defer os.Remove(temporary)
+	if _, err = f.WriteString(revision); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporary, filepath.Join(a.Data, "extraction-revision"))
 }
 
 // Protect authenticates every HTTP request. Token provisioning happens outside the app.
@@ -278,7 +461,7 @@ func (a *App) Status() (map[string]any, error) {
 	}
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
-	return map[string]any{"index": stats, "scanning": a.scanning, "last_scan": a.lastScan, "scan_error": a.scanError, "semantic": a.Semantic, "photos": a.Photos}, nil
+	return map[string]any{"index": stats, "scanning": a.scanning, "last_scan": a.lastScan, "scan_error": a.scanError, "semantic": a.Semantic, "photos": a.Photos, "ocr": extractionRevision() == "v2;ocr=true"}, nil
 }
 
 var excluded = map[string]bool{"node_modules": true, "vendor": true, "build": true, "dist": true, "__pycache__": true, "WDTimeMachine": true, "Time Machine": true, "@eaDir": true, "@Recycle": true}
@@ -318,6 +501,12 @@ func (a *App) Scan(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	revision := extractionRevision()
+	existingRevision, revisionErr := os.ReadFile(filepath.Join(a.Data, "extraction-revision"))
+	if revisionErr != nil && !os.IsNotExist(revisionErr) {
+		return revisionErr
+	}
+	forceRefresh := string(existingRevision) != revision
 	seen := map[string]bool{}
 	err = filepath.WalkDir(a.Root, func(full string, d fs.DirEntry, walkErr error) error {
 		if ctx.Err() != nil {
@@ -358,7 +547,7 @@ func (a *App) Scan(ctx context.Context) error {
 		if e != nil {
 			return e
 		}
-		if !policy.ShouldReplace(old[rel], hash) {
+		if !forceRefresh && !policy.ShouldReplace(old[rel], hash) {
 			return nil
 		}
 		if e = a.indexFile(ctx, full, rel, hash); e != nil {
@@ -379,6 +568,9 @@ func (a *App) Scan(ctx context.Context) error {
 				}
 			}
 		}
+	}
+	if err == nil {
+		err = a.markExtractionRevision(revision)
 	}
 	if err != nil {
 		a.stateMu.Lock()

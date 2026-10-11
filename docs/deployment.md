@@ -4,6 +4,27 @@ Start with a small document/code folder, not your whole 2.3 TB library. A small 
 
 ## Prepare the project
 
+### Scripted installation and upgrades
+
+From a complete project checkout on the NAS, after the desired commit's CI image publication succeeds:
+
+```sh
+sudo sh scripts/install-nas.sh \
+  --image ghcr.io/mattyv/nas-search-mcp:COMMIT_SHA \
+  --documents-path '/volume1/shared-documents/Course/Week 10' \
+  --photos-path /volume1/docker/nas-search/pilot-photos \
+  --data-path /volume1/docker/nas-search/data \
+  --bind-ip 192.0.2.10
+```
+
+Replace `COMMIT_SHA` with the complete published commit SHA. The installer rejects `latest`. Source folders must exist. `--install-dir` defaults to `/volume1/docker/nas-search`; UID/GID default to the user invoking `sudo`, with explicit `--uid`/`--gid` overrides. `--dry-run` inspects prerequisites without pulling an image or writing files; the actual install also probes kernel limits and mount permissions as the container user.
+
+Existing `.env` contents and index data are preserved, and existing deployment settings take precedence over command-line source settings. The installer secures `.env` permissions, writes pull-only Compose with a persisted image version, starts it, and checks HTTP health and authenticated MCP status. It does not claim initial indexing is finished. On a failed upgrade it restores the previous Compose configuration and restarts that image. This is an image/configuration rollback, not a database snapshot or schema rollback.
+
+To expand the collection, deliberately edit the existing `.env` mount paths before running the installer. Do not put index data inside a source mount. The existing pilot can keep the same token and database during this update; extraction-version changes trigger a refresh of unchanged source files.
+
+English PDF OCR is enabled by default (`NAS_OCR=true`) and uses Poppler plus Tesseract in the serialized worker queue. Set it to false to disable OCR. Photo OCR and additional recognition languages are not implemented. OCR and full-document reading still require target-device validation after the new image is installed.
+
 Create `/volume1/docker/nas-search` using DSM File Station. Put the repository files there, preserving `worker/`, `generated/`, `internal/`, and `cmd/`. Either download the repository ZIP and extract its contents, or clone it using SSH if you already use SSH:
 
 ```sh
