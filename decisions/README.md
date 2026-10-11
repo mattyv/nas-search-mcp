@@ -108,10 +108,24 @@ The user requested progress percentages and ETAs, then challenged unsupported-lo
 
 Do not describe estimated completion percentages as measured facts, or extrapolate pilot resource use into whole-library guarantees. See [benchmark evidence](../docs/benchmarks/).
 
+## D014 — Install MCP clients without shell token exports
+
+**Date:** 2026-10-11 · **Status:** Accepted
+
+Provide separate installers for clients and NAS deployment. Register a private, local stdio bridge for Codex, Claude Code, and Claude Desktop. Keep bearer tokens in protected files rather than command arguments or desktop environment assumptions. Preserve existing configuration, make replacements explicit, retain backups, and test rollback. The bridge serves this stateless NAS service, not every MCP streaming capability.
+
+## D015 — Read complete documents, retrieve originals, and index scans with OCR
+
+**Date:** 2026-10-11 · **Status:** Accepted; new features await NAS rollout
+
+The user requires entire document contents, including scanned PDFs. Add bounded `read_document` continuation batches and `fetch_file` byte batches with source-version checks. Retain the 32 MiB source limit, distinguish OCR text from original bytes, and make client attachment limitations explicit.
+
+Use free English Tesseract OCR with bounded Poppler page rendering when PDFs have no embedded text, both for indexing and reading. Keep OCR serialized and expose missing-text metadata/errors. The existing index extraction cap stays bounded; full-document reading bypasses it using pagination. Relevance cutoff calibration remains in [TODO.md](../TODO.md), rather than assigning an arbitrary threshold to rank-fusion scores.
+
 ## Open decisions
 
 - When to expand the pilot to the full authorized sources, based on indexing time and search latency.
 - Whether CLIP photo inference fits comfortably on this NAS alongside its existing services.
-- How to support OCR, unsupported formats, archives, and backups within the resource budget.
+- How to extend OCR languages, unsupported formats, archives, and backups within the resource budget.
 - Which remote-access and ChatGPT connectivity route to validate.
 - Whether scale measurements justify a different vector index or persistent model-worker strategy.

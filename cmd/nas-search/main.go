@@ -47,6 +47,17 @@ type ReadInput struct {
 	Path     string `json:"path"`
 	MaxBytes int    `json:"max_bytes,omitempty"`
 }
+type DocumentInput struct {
+	Path     string `json:"path"`
+	Offset   int64  `json:"offset,omitempty"`
+	MaxChars int    `json:"max_chars,omitempty"`
+}
+type FetchInput struct {
+	Path            string `json:"path"`
+	Offset          int64  `json:"offset,omitempty"`
+	MaxBytes        int    `json:"max_bytes,omitempty"`
+	ExpectedVersion string `json:"expected_version,omitempty"`
+}
 type BrowseOutput struct {
 	Files []store.File `json:"files"`
 }
@@ -125,12 +136,21 @@ func buildHTTPHandler(a *app.App, token string) http.Handler {
 		files, err := a.Store.List(in.Prefix, policy.ClampLimit(in.Limit, 100))
 		return nil, BrowseOutput{Files: files}, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "read_file", Description: "Read up to 65536 bytes from a text/code file inside configured NAS shares. Use search for extracted PDF/Office content. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in ReadInput) (*mcp.CallToolResult, ReadOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "read_file", Description: "Read up to 65536 bytes from a text/code file inside configured NAS shares. Use read_document for full extracted PDF/Office content or fetch_file for original bytes. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in ReadInput) (*mcp.CallToolResult, ReadOutput, error) {
 		if in.MaxBytes == 0 {
 			in.MaxBytes = 16384
 		}
 		text, err := a.ReadFile(in.Path, in.MaxBytes)
 		return nil, ReadOutput{in.Path, text}, err
+	})
+
+	mcp.AddTool(server, &mcp.Tool{Name: "read_document", Description: "Read the full extracted text of a PDF, Office document, or text/code file in character windows, including OCR of scanned PDF pages when enabled. offset is a Unicode character offset; max_chars defaults to 12000, capped at 20000. Follow next_offset until complete. Source files are limited to 32 MiB. metadata reports OCR status and source_version. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in DocumentInput) (*mcp.CallToolResult, app.DocumentResult, error) {
+		out, err := a.ReadDocument(ctx, in.Path, in.Offset, in.MaxChars)
+		return nil, out, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "fetch_file", Description: "Fetch exact original file bytes, including binary PDF/Office/image files, as base64 batches. max_bytes defaults to 65536, capped at 262144; source limit 32 MiB. Reassemble decoded data locally, following next_offset until complete. Send the first response's version as expected_version on every subsequent batch to reject changed files. This does not create a chat attachment automatically. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in FetchInput) (*mcp.CallToolResult, app.FetchResult, error) {
+		out, err := a.FetchFile(in.Path, in.Offset, in.MaxBytes, in.ExpectedVersion)
+		return nil, out, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "index_status", Description: "Show scan progress, indexed file/chunk counts, and whether semantic/photo indexing is enabled."}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
 		out, err := a.Status()

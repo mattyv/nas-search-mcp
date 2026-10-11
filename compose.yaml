@@ -13,6 +13,8 @@ services:
       NAS_DATA: /data
       NAS_SEMANTIC: "true"
       NAS_PHOTOS: "${NAS_PHOTOS:-false}"
+      NAS_OCR: "${NAS_OCR:-true}"
+      OMP_THREAD_LIMIT: "1"
       NAS_SCAN_INTERVAL: "300"
       NAS_VEC_EXTENSION: /opt/vec0.so
       NAS_WORKER: /app/worker/worker.py

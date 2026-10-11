@@ -2,6 +2,36 @@
 
 The service uses Streamable HTTP at `/mcp` with a static bearer token. For the LAN pilot the URL is `http://192.168.1.4:8080/mcp`. Substitute a reachable Tailscale/HTTPS address when configured. The server, index, and models remain on the NAS; a desktop bridge only forwards requests.
 
+## Install the MCP connection
+
+Run from the project checkout on your client computer (Python 3.10 or newer):
+
+```sh
+python3 scripts/install-mcp.py --client codex \
+  --url http://192.168.1.4:8080/mcp \
+  --token-file build/nas-deployment/.env
+```
+
+Use `--client claude-code` for Claude CLI or `--client claude-desktop` for Claude Desktop. For the existing Linux desktop installation, also pass `--config "$HOME/.config/Claude/claude_desktop_config.json"`; automatic desktop paths cover macOS and Windows. The token source may instead be a token-only file. Never paste its value into a command.
+
+The installer checks the MCP handshake and tools before writing settings. It copies a dependency-free stdio bridge and token into `~/.config/nas-search`, protects them with owner-only permissions, and uses the CLI's supported registration command or merges desktop JSON. Existing entries with the same name are refused unless `--replace` is supplied. Backups are retained: `.nas-search.bak` for CLI configuration and `.bak` for desktop JSON. Failed configuration changes restore the prior configuration and credential files. `--dry-run` makes no changes or network requests; `--skip-check` is only for deliberately offline setup.
+
+Start a new CLI session or fully restart the desktop app. The installed bridge supports this project's stateless HTTP server; it is not a general bridge for server-initiated requests or resumable event streams. You do not need Node.js or a shell-exported token with this installer. Manual native HTTP and third-party bridge alternatives remain below.
+
+## Read complete documents and retrieve originals
+
+`read_document` returns extracted text and page/section locations. Continue with its `next_offset` until `complete=true`; offsets count Unicode characters. This bypasses the search index's 200,000-character extraction cap, but source files still have a 32 MiB safety limit. English OCR is used for PDF pages without embedded text when `NAS_OCR=true`. Check OCR metadata; an unreadable scan can still contain missing text. Long scanned documents may repeat OCR of earlier pages during pagination, so reading can be slow.
+
+`fetch_file` returns original bytes in base64 batches, without conversion. For continuation calls, supply the first response's `version` as `expected_version`. A client must reassemble the bytes; receiving them does not establish that its model can interpret PDF/image attachments. To download the entire original to your computer:
+
+```sh
+python3 scripts/fetch-file.py --url http://192.168.1.4:8080/mcp \
+  --token-file build/nas-deployment/.env \
+  --path 'Matthew/Melody.pdf' --output /tmp/nas-melody.pdf
+```
+
+The helper uses authenticated MCP and writes a private local file. Existing output files are preserved unless `--replace` is explicit. PDFs are not converted to Markdown, and original NAS files stay read-only.
+
 ## Claude CLI / Claude Code
 
 Set `NAS_SEARCH_TOKEN` to the same token as the NAS `.env`, then run:

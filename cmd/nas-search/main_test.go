@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"github.com/mattyv/nas-search-mcp/internal/app"
 	"github.com/mattyv/nas-search-mcp/internal/store"
@@ -30,7 +31,15 @@ func TestMCPHTTPTools(t *testing.T) {
 	if e := os.WriteFile(filepath.Join(root, "doc.txt"), []byte("kitchen renovation"), 0600); e != nil {
 		t.Fatal(e)
 	}
-	a, e := app.New(root, t.TempDir(), "unused", "unused", "", false, false)
+	worker, e := filepath.Abs("../../worker/worker.py")
+	if e != nil {
+		t.Fatal(e)
+	}
+	python := os.Getenv("NAS_PYTHON")
+	if python == "" {
+		python = "python3"
+	}
+	a, e := app.New(root, t.TempDir(), python, worker, "", false, false)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -87,7 +96,7 @@ func TestMCPHTTPTools(t *testing.T) {
 			t.Fatalf("%s output schema must be object: %s (%v)", tool.Name, encoded, err)
 		}
 	}
-	if len(names) != 4 || !names["search"] || !names["browse"] || !names["read_file"] || !names["index_status"] {
+	if len(names) != 6 || !names["search"] || !names["browse"] || !names["read_file"] || !names["index_status"] || !names["read_document"] || !names["fetch_file"] {
 		t.Fatal(names)
 	}
 	call := func(name string, args map[string]any) map[string]any {
@@ -119,6 +128,16 @@ func TestMCPHTTPTools(t *testing.T) {
 	read := call("read_file", map[string]any{"path": "doc.txt", "max_bytes": 7})
 	if read["text"] != "kitchen" {
 		t.Fatal(read)
+	}
+
+	document := call("read_document", map[string]any{"path": "doc.txt", "offset": 8, "max_chars": 10})
+	if document["text"] != "renovation" || document["complete"] != true {
+		t.Fatal(document)
+	}
+	fetched := call("fetch_file", map[string]any{"path": "doc.txt", "max_bytes": 7})
+	decoded, e := base64.StdEncoding.DecodeString(fetched["data"].(string))
+	if e != nil || string(decoded) != "kitchen" || fetched["next_offset"] != float64(7) {
+		t.Fatal(fetched, e)
 	}
 	status := call("index_status", map[string]any{})
 	if status["index"] == nil {
