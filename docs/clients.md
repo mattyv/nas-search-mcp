@@ -4,6 +4,8 @@ The service uses Streamable HTTP at `/mcp` with a static bearer token. For the L
 
 ## Install the MCP connection
 
+Fully quit Claude Desktop before changing its configuration, then reopen it after installation. If the NAS tools disappear later, check whether the `nas-search` entry is still present in the config file printed by the installer. Rerunning the installer restores a missing entry; use `--replace` only when replacing an existing entry.
+
 Run from the project checkout on your client computer (Python 3.10 or newer):
 
 ```sh
@@ -12,7 +14,7 @@ python3 scripts/install-mcp.py --client codex \
   --token-file build/nas-deployment/.env
 ```
 
-Use `--client claude-code` for Claude CLI or `--client claude-desktop` for Claude Desktop. For the existing Linux desktop installation, also pass `--config "$HOME/.config/Claude/claude_desktop_config.json"`; automatic desktop paths cover macOS and Windows. The `build/nas-deployment/.env` path is a private local deployment file; it is not included in the repository. Substitute your own NAS `.env` copy or a token-only file. Keep it outside source control and omit the token value from commands.
+Use `--client claude-code` for Claude CLI or `--client claude-desktop` for Claude Desktop. On Linux, the installer uses an existing `Claude/claude_desktop_config.json` under `XDG_CONFIG_HOME`, or `~/.config` when unset. If that file does not exist, specify your client's path with `--config`; the installer does not create a guessed Linux config. Automatic desktop paths also cover macOS and Windows. The `build/nas-deployment/.env` path is a private local deployment file; it is not included in the repository. Substitute your own NAS `.env` copy or a token-only file. Keep it outside source control and omit the token value from commands.
 
 The installer checks the MCP handshake and tools before writing settings. It copies a dependency-free stdio bridge and token into `~/.config/nas-search`, protects them with owner-only permissions, and uses the CLI's supported registration command or merges desktop JSON. Existing entries with the same name are refused unless `--replace` is supplied. Backups are retained: `.nas-search.bak` for CLI configuration and `.bak` for desktop JSON. Failed configuration changes restore the prior configuration and credential files. `--dry-run` makes no changes or network requests; `--skip-check` is only for deliberately offline setup.
 
@@ -65,7 +67,9 @@ Export `NAS_SEARCH_TOKEN` in the environment that launches Codex, then restart i
 
 ## ChatGPT Desktop and ChatGPT cloud
 
-The current [OpenAI client documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) says ChatGPT Desktop, Codex CLI, and the IDE extension share the Codex MCP configuration. Where your installed desktop build supports that configuration, try the Codex entry above and ensure the desktop process receives `NAS_SEARCH_TOKEN`. This route remains untested for this project; desktop version/account capabilities must be checked.
+For ChatGPT Desktop's local Codex connection, run the client installer with `--client chatgpt-desktop`. This is an explicit alias for installing into the shared Codex configuration through `codex mcp`; the Codex CLI must be available. It uses the protected token file and stdio bridge, so no shell token export is needed. Existing entries require `--replace` to change them.
+
+[Official OpenAI documentation](https://learn.chatgpt.com/docs/extend/mcp) confirms that ChatGPT Desktop, Codex CLI, and the IDE extension share MCP configuration for the same Codex host. Restart the connection from Settings → MCP servers, start a new local Codex chat, and use `/mcp` to check availability. Desktop conversation use remains unverified here. Cloud Work chats do not load this local configuration, even when opened in the desktop app; see [developer settings](https://learn.chatgpt.com/docs/developer-settings).
 
 ChatGPT's **cloud** custom-MCP connection cannot directly reach a LAN address or your private Tailscale address. OpenAI documents [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels), which could run beside the server on the NAS and make an outbound connection. It requires a Platform tunnel identity, runtime API key, and relevant organization/workspace permissions. A publicly reachable HTTPS service is another route. Neither is configured in this pilot, and this server currently provides static bearer authentication rather than an OAuth authorization server.
 
