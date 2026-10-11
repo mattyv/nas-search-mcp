@@ -1,0 +1,64 @@
+{
+  "recorded_at_utc": "2026-10-11T12:33:35.135877+00:00",
+  "machine_role": "development",
+  "is_nas_measurement": false,
+  "platform": {
+    "system": "Linux",
+    "kernel": "6.17.0-1033-oem",
+    "architecture": "x86_64",
+    "cpu": "AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M",
+    "python": "3.14.6"
+  },
+  "dependencies": {
+    "fastembed": "0.7.4",
+    "onnxruntime": "1.31.0",
+    "numpy": "2.5.4",
+    "Pillow": "11.3.0"
+  },
+  "method": "One fresh subprocess per operation, serial execution, CPUExecutionProvider, threads=1, batch_size=1. Elapsed includes interpreter/model loading. Peak RSS from each subprocess RUSAGE_SELF, Linux KiB. Single samples, not throughput estimates.",
+  "cache": "Existing model cache if provided; downloads allowed when absent. Cache paths omitted.",
+  "operations": [
+    {
+      "operation": "embed",
+      "exit_code": 0,
+      "elapsed_seconds": 0.5248,
+      "result": {
+        "dimension": 384,
+        "model": "BAAI/bge-small-en-v1.5",
+        "vector_count": 1,
+        "vector_dimensions": [
+          384
+        ],
+        "peak_rss_kib": 274352
+      }
+    },
+    {
+      "operation": "image_embed",
+      "exit_code": 0,
+      "elapsed_seconds": 0.7502,
+      "result": {
+        "dimension": 512,
+        "model": "Qdrant/clip-ViT-B-32-vision",
+        "vector_count": 1,
+        "vector_dimensions": [
+          512
+        ],
+        "peak_rss_kib": 687572
+      }
+    },
+    {
+      "operation": "image_query",
+      "exit_code": 0,
+      "elapsed_seconds": 0.6411,
+      "result": {
+        "dimension": 512,
+        "model": "Qdrant/clip-ViT-B-32-text",
+        "vector_count": 1,
+        "vector_dimensions": [
+          512
+        ],
+        "peak_rss_kib": 456880
+      }
+    }
+  ]
+}
