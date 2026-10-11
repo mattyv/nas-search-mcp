@@ -2,9 +2,7 @@
 
 Start with a small document/code folder, not your whole 2.3 TB library. A small document pilot has passed on the DS220+; photo models and larger collections still need validation.
 
-## Prepare the project
-
-### Scripted installation and upgrades
+## Scripted installation and upgrades
 
 From a complete project checkout on the NAS, after the desired commit's CI image publication succeeds:
 
@@ -24,9 +22,11 @@ Existing `.env` contents and index data are preserved, and existing deployment s
 
 To expand the collection, deliberately edit the existing `.env` mount paths before running the installer. Do not put index data inside a source mount. The existing pilot can keep the same token and database during this update; extraction-version changes trigger a refresh of unchanged source files.
 
-English PDF OCR is enabled by default (`NAS_OCR=true`) and uses Poppler plus Tesseract in the serialized worker queue. Set it to false to disable OCR. Photo OCR and additional recognition languages are not implemented. OCR and full-document reading still require target-device validation after the new image is installed.
+English PDF OCR is enabled by default (`NAS_OCR=true`) and uses Poppler plus Tesseract in the serialized worker queue. Set it to false to disable OCR. Photo OCR and additional recognition languages are not implemented. A one-page scanned-PDF OCR fixture and complete PDF text retrieval have passed on the NAS. Larger scans still need testing.
 
-Create `/volume1/docker/nas-search` using DSM File Station. Put the repository files there, preserving `worker/`, `generated/`, `internal/`, and `cmd/`. Either download the repository ZIP and extract its contents, or clone it using SSH if you already use SSH:
+## Manual Container Manager setup
+
+Use this route if you prefer DSM to the installer. Create `/volume1/docker/nas-search` using DSM File Station. Put the repository files there, preserving `worker/`, `generated/`, `internal/`, and `cmd/`. Either download the repository ZIP and extract its contents, or clone it using SSH if you already use SSH:
 
 ```sh
 git clone https://github.com/mattyv/nas-search-mcp.git /volume1/docker/nas-search
@@ -52,14 +52,14 @@ After a successful main-branch CI run, the image is published at `ghcr.io/mattyv
 For a pull-only Container Manager project, change the service's image line to:
 
 ```yaml
-image: ghcr.io/mattyv/nas-search-mcp:latest
+image: ghcr.io/mattyv/nas-search-mcp:COMMIT_SHA
 ```
 
-Remove `build: .` from that deployment copy. Keep the rest of `compose.yaml`. If the image is unavailable, build from the supplied Dockerfile. For a repeatable deployment, use the published commit-SHA tag instead of `latest`.
+Replace `COMMIT_SHA` with a published commit whose CI passed and remove `build: .` from that deployment copy. Keep the remaining settings. If the image is unavailable, build from the supplied Dockerfile.
 
 ## Check the pilot
 
-In Container Manager, inspect logs and memory. First model use requires outbound internet access. Look for scan/extraction/model errors and wait for the initial scan to finish. On a computer that can reach the NAS:
+In Container Manager, inspect logs and memory. First model use requires outbound internet access. Check scan, extraction, and model errors. Initial indexing can queue semantic queries and full-document reads; status checks and original downloads remain available. On a computer that can reach the NAS:
 
 ```sh
 curl --fail http://192.168.1.4:8080/healthz

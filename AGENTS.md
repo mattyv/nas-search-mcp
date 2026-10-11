@@ -23,6 +23,7 @@
 ## Communication
 
 - Apply the `vibe-coding` skill throughout this project. The user describes desired behavior and tries the result; do not assume they read the code.
+- Apply `writing-clearly-and-concisely` to documentation and other prose. Lead with the useful outcome, use active voice and concrete language, remove needless words, and keep instructions easy to follow.
 - Explain outcomes, where to try them, and one clear next action. Keep code internals, architecture terminology, and lists of touched files out of routine updates unless explicitly requested.
 - Make routine technical decisions independently. Ask only product questions the user can answer from using the system. Explain trade-offs in terms of cost, speed, access, and user-visible limitations.
 - When something fails, describe what is broken for the user and what is being done to fix it. Do not use stack traces or code snippets as explanations; operational commands are appropriate when needed to try or deploy the result.

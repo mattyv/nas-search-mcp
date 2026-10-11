@@ -4,9 +4,7 @@ Project choices and unresolved questions are recorded in the [decisions log](dec
 
 Read-only keyword and semantic search for a Synology DS220+ with 2 GB RAM. The service, index, and free embedding models run on the NAS. Original files stay in their shared folders. No second computer or paid AI API is required for search.
 
-**Status: document pilot running on the DS220+.** On 2026-10-11, text indexing and hybrid search passed on the NAS, with six indexed files and no reported indexing errors. Missing authentication returned HTTP 401. The kernel enforced the 1 GiB memory limit and CPU affinity to CPU 0. See [NAS validation evidence](docs/benchmarks/nas-pilot.json). Photo embeddings and desktop client connections remain untested on the NAS.
-
-## Try it on your NAS
+**Status: running on the DS220+.** NAS checks passed for text indexing, hybrid search, authenticated MCP access, complete PDF text retrieval, original-file download, and a one-page scanned-PDF OCR fixture. Documents and Code are mounted separately. Initial indexing is still running; photo embeddings remain disabled. Client configurations are installed; GUI conversations still need testing. An indexed C++ source file also passed a text-read check. See [current NAS validation](docs/benchmarks/nas-update.json) and [initial pilot evidence](docs/benchmarks/nas-pilot.json).
 
 ## Install
 
@@ -44,14 +42,11 @@ python3 scripts/fetch-file.py --url http://192.168.1.4:8080/mcp \
 
 The helper reassembles exact original bytes into a private local file. For extracted text, ask your assistant to use `read_document` and follow `next_offset` until complete. Scanned PDF pages use English OCR when enabled.
 
-## Start with a pilot
+## Use it
 
-1. Follow [deployment instructions](docs/deployment.md) to create a Container Manager project. The authorized sources are the `Matthew` share and `homes/matt/Photos`; confirm their actual paths in DSM.
-2. Keep `NAS_PHOTOS=false` and mount a small document/code subfolder first. The first scan downloads the free text embedding model.
-3. Follow [client setup](docs/clients.md), then ask: **“Use nas-search to show index_status, then find documents about …”**
-4. Check Container Manager memory and logs before adding more files or enabling photo embeddings.
+Ask your assistant: **“Use nas-search to check index_status, then find documents about …”** Results include source paths, page or section locations, and passages. Documents appear under `Matthew/`; code appears under `Code/`.
 
-The MCP tools are `search`, `browse`, `read_file`, `read_document`, `fetch_file`, and `index_status`. Search returns source paths, locations, and passages. `read_document` reads complete extracted PDF/Office/text contents in bounded batches, including English OCR for scanned PDF pages. `fetch_file` retrieves original bytes in batches; [client setup](docs/clients.md) includes a complete-file download helper. `read_file` reads a bounded text/code prefix. Scans run at startup and every five minutes; a large initial scan can take much longer.
+The six MCP tools are `search`, `browse`, `read_file`, `read_document`, `fetch_file`, and `index_status`. Use `read_document` for extracted text and `fetch_file` for original bytes. Scans run at startup and every five minutes. During initial indexing, semantic search and document reading can wait behind the worker queue; status checks and original-file retrieval avoid that queue.
 
 ## Coverage and limits
 
@@ -64,7 +59,7 @@ The MCP tools are `search`, `browse`, `read_file`, `read_document`, `fetch_file`
 | JPEG, PNG, WebP, GIF, BMP, TIFF | Metadata; optional visual search using CLIP |
 | Archives, backups, legacy Office, audio/video, RAW/HEIC | Not indexed |
 
-Files above 32 MiB are skipped with an indexing error; indexing extraction stops at 200,000 characters. Full-document reading uses continuation offsets instead of this index cap. Hidden files/directories, symlinks, dependencies, build outputs, Synology recycle/thumbnail folders, and known Time Machine folders are skipped. Binary files disguised as text are rejected. Transcription, photo OCR, and automatic backup deduplication are not implemented. Blank or unreadable PDF pages can still be flagged as needing OCR. This is not an all-format search engine.
+Files above 32 MiB are skipped with an indexing error; indexing extraction stops at 200,000 characters. Full-document reading uses continuation offsets instead of this index cap. Hidden files/directories, symlinks, dependencies, build outputs, Synology recycle/thumbnail folders, and known Time Machine folders are skipped. Binary files disguised as text are rejected. Transcription, photo OCR, and automatic backup deduplication are not implemented. Blank or unreadable PDF pages can still be flagged as needing OCR. Support depends on the file format; the 32 MiB source limit also applies to reading and downloading.
 
 Text search uses BGE-small English embeddings plus SQLite FTS5, with SQLite `sqlite-vec` for vectors. Photo search uses CLIP vision/text models when enabled. Models download from Hugging Face on first use and are cached in the persistent data folder. Content is processed locally; search passages sent to your Claude/ChatGPT client are handled under that client's data policy. Photo indexing is disabled by default because it uses more memory.
 
