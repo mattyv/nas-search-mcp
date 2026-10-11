@@ -8,6 +8,44 @@ Read-only keyword and semantic search for a Synology DS220+ with 2 GB RAM. The s
 
 ## Try it on your NAS
 
+## Install
+
+**Connect an MCP client** from this checkout on your computer:
+
+```sh
+python3 scripts/install-mcp.py --client codex \
+  --url http://192.0.2.10:8080/mcp \
+  --token-file build/nas-deployment/.env
+```
+
+Replace `codex` with `claude-code` or `claude-desktop`. For the existing Linux Claude Desktop installation, add `--config "$HOME/.config/Claude/claude_desktop_config.json"`. Restart the client after installation. The token source is a private local file, not included in the repository; it can also be a token-only file. The installer preserves existing settings and keeps the token out of command arguments. See [client installation](docs/clients.md#install-the-mcp-connection).
+
+**Install or upgrade the NAS service** from a complete checkout on the NAS:
+
+```sh
+sudo sh scripts/install-nas.sh \
+  --image ghcr.io/mattyv/nas-search-mcp:COMMIT_SHA \
+  --documents-path /volume1/shared-documents \
+  --code-path /volume1/shared-code \
+  --photos-path /volume1/shared-photos \
+  --data-path /volume1/docker/nas-search/data \
+  --bind-ip 192.0.2.10
+```
+
+Replace `COMMIT_SHA` with a published version whose CI passed; `latest` is deliberately rejected. Existing NAS settings take precedence, so edit `.env` explicitly when changing collection mounts. The installer checks permissions and kernel support, preserves credentials/index data, and checks the started service. See [NAS installation and upgrades](docs/deployment.md#scripted-installation-and-upgrades).
+
+**Download an entire original document** to your computer:
+
+```sh
+python3 scripts/fetch-file.py --url http://192.0.2.10:8080/mcp \
+  --token-file build/nas-deployment/.env \
+  --path 'Documents/Course/Week 10/Melody.pdf' --output /tmp/nas-melody.pdf
+```
+
+The helper reassembles exact original bytes into a private local file. For extracted text, ask your assistant to use `read_document` and follow `next_offset` until complete. Scanned PDF pages use English OCR when enabled.
+
+## Start with a pilot
+
 1. Follow [deployment instructions](docs/deployment.md) to create a Container Manager project. The authorized sources are the `Documents` share and `shared-photos`; confirm their actual paths in DSM.
 2. Keep `NAS_PHOTOS=false` and mount a small document/code subfolder first. The first scan downloads the free text embedding model.
 3. Follow [client setup](docs/clients.md), then ask: **“Use nas-search to show index_status, then find documents about …”**
