@@ -42,6 +42,8 @@ python3 scripts/fetch-file.py --url http://192.0.2.10:8080/mcp \
 
 The helper reassembles exact original bytes into a private local file. For extracted text, ask your assistant to use `read_document` and follow `next_offset` until complete. Scanned PDF pages use English OCR when enabled.
 
+If a PDF's text layer contains unreadable glyphs, ask your assistant to retry `read_document` with `force_ocr: true`. Keep that setting on every continuation request. Forced OCR requires OCR to be enabled and applies only to PDFs. It can recover printed titles and labels, but does not interpret musical notation. Clearly suspicious text layers also trigger automatic OCR when enabled; metadata reports suspect pages and OCR use. This heuristic can miss poor text layers, and OCR can still return incomplete or unusable text.
+
 ## Use it
 
 Ask your assistant: **“Use nas-search to check index_status, then find documents about …”** Results include source paths, page or section locations, and passages. Documents appear under `Documents/`; code appears under `Code/`.
@@ -49,6 +51,8 @@ Ask your assistant: **“Use nas-search to check index_status, then find documen
 Search returns ranked candidates, including possible unrelated matches. Scores describe ranking, not confidence or relevance probabilities. Ask your assistant to read the passages and source document before drawing conclusions. A calibrated relevance cutoff remains unfinished.
 
 The six MCP tools are `search`, `browse`, `read_file`, `read_document`, `fetch_file`, and `index_status`. Use `read_document` for extracted text and `fetch_file` for original bytes. Scans run at startup and every five minutes. During initial indexing, semantic search and document reading can wait behind the worker queue; status checks and original-file retrieval avoid that queue.
+
+If indexed counts stop changing, check `index_status.current_file`, `scan_stage`, `file_started_at`, and `scan_started_at`. A file appears in the index only after its extraction and embedding finish, so counts can remain unchanged during a large file. Stages can include waiting for the shared worker; they are not a completion percentage or proof of a stall. This OCR update refreshes existing entries, so the first scan can take longer.
 
 ## Coverage and limits
 

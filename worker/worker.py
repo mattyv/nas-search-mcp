@@ -35,8 +35,47 @@ def ocr_pdf_page(path, number):
         return text
 
 
+def text_quality_suspect(text):
+    """Conservative glyph-layer warning, not a claim that prose is understood."""
+    import unicodedata
+    characters = [character for character in text if not character.isspace()]
+    if len(characters) < 20:
+        return False
+    readable = sum(character.isalnum() for character in characters)
+    malformed = sum(character == '\ufffd' or unicodedata.category(character) in {'Co', 'Cc', 'Cs', 'Cn'} for character in characters)
+    import itertools
+    letters = sum(character.isalpha() for character in characters)
+    punctuation = sum(unicodedata.category(character).startswith('P') for character in characters)
+    repeated_punctuation = any(unicodedata.category(character).startswith('P') and sum(1 for _ in group) >= 8
+                               for character, group in itertools.groupby(text))
+    dense_glyph_token = any(len(token) >= 20 and sum(unicodedata.category(character).startswith('P') for character in token) * 2 > len(token) for token in text.split())
+    glyph_pattern = (repeated_punctuation or dense_glyph_token) and letters * 4 < len(characters) and punctuation * 2 >= len(characters)
+    return readable * 4 < len(characters) or malformed * 5 >= len(characters) or glyph_pattern
+
+
+def usable_ocr_replacement(original, candidate):
+    if not candidate.strip():
+        return False
+    if not original.strip():
+        return True
+    if text_quality_suspect(candidate):
+        return False
+    # Reject tiny OCR fragments replacing a substantial existing layer.
+    readable = sum(character.isalnum() for character in candidate)
+    original_readable = sum(character.isalnum() for character in original)
+    return readable >= min(20, max(3, original_readable))
+
+
 def extract(request, document_window=False):
     path = Path(request['path'])
+    force_ocr = request.get('force_ocr', False)
+    if type(force_ocr) is not bool:
+        raise ValueError('force_ocr must be a boolean')
+    if force_ocr and path.suffix.lower() != '.pdf':
+        raise ValueError('force_ocr is supported only for PDF files')
+    ocr_enabled = (os.environ.get('NAS_OCR') or 'true').lower() == 'true'
+    if force_ocr and not ocr_enabled:
+        raise ValueError('force_ocr requires NAS_OCR=true')
     max_bytes = int(request.get('max_bytes', 32 * 1024 * 1024))
     max_chars = int(request.get('max_chars', 200000))
     offset = request.get('offset', 0) if document_window else 0
@@ -123,15 +162,36 @@ def extract(request, document_window=False):
         from pypdf import PdfReader
         reader = PdfReader(path)
         result['metadata']['pages'] = len(reader.pages)
-        result['metadata'].update(needs_ocr=False, ocr_pages=[], ocr_used=False, ocr_assessment_complete=False)
+        result['metadata'].update(needs_ocr=False, ocr_pages=[], ocr_used=False, ocr_assessment_complete=False,
+                                  text_quality_suspect=False, suspect_pages=[], ocr_forced=force_ocr,
+                                  ocr_failed_pages=[], ocr_replaced_pages=[])
         for number, page in enumerate(reader.pages, 1):
-            text = page.extract_text() or ''
-            if not text.strip():
-                if os.environ.get('NAS_OCR', 'true').lower() == 'true':
-                    text = ocr_pdf_page(path, number)
-                    result['metadata']['ocr_pages'].append(number)
-                    result['metadata']['ocr_used'] = True
-                if not text.strip():
+            try:
+                text = page.extract_text() or ''
+            except Exception:
+                if not force_ocr:
+                    raise
+                text = ''
+            suspect = text_quality_suspect(text)
+            if suspect:
+                result['metadata']['text_quality_suspect'] = True
+                result['metadata']['suspect_pages'].append(number)
+            if force_ocr or suspect or not text.strip():
+                if ocr_enabled:
+                    try:
+                        candidate = ocr_pdf_page(path, number)
+                    except ValueError:
+                        # Automatic recovery must not discard an existing layer.
+                        if force_ocr or not text.strip():
+                            raise
+                        result['metadata']['ocr_failed_pages'].append(number)
+                    else:
+                        result['metadata']['ocr_pages'].append(number)
+                        result['metadata']['ocr_used'] = True
+                        if force_ocr or usable_ocr_replacement(text, candidate):
+                            text = candidate
+                            result['metadata']['ocr_replaced_pages'].append(number)
+                if not text.strip() or text_quality_suspect(text):
                     result['metadata']['needs_ocr'] = True
             result['metadata']['ocr_assessment_complete'] = number == len(reader.pages)
             if not add(f'page:{number}', text):

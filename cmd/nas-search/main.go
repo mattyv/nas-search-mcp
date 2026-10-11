@@ -47,6 +47,7 @@ type ReadInput struct {
 	MaxBytes int    `json:"max_bytes,omitempty"`
 }
 type DocumentInput struct {
+	ForceOCR bool   `json:"force_ocr,omitempty"`
 	Path     string `json:"path"`
 	Offset   int64  `json:"offset,omitempty"`
 	MaxChars int    `json:"max_chars,omitempty"`
@@ -128,7 +129,7 @@ func buildHTTPHandler(a *app.App, token string) http.Handler {
 		out, err := a.Search(ctx, in.Query, in.Prefix, in.Photos, in.Limit)
 		return nil, out, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "browse", Description: "List indexed files and metadata. Prefix is a relative source path, such as Documents/Documents/. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in BrowseInput) (*mcp.CallToolResult, BrowseOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "browse", Description: "List indexed files and metadata. Prefix is a relative source path, such as Documents/Course/. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in BrowseInput) (*mcp.CallToolResult, BrowseOutput, error) {
 		if in.Limit == 0 {
 			in.Limit = 50
 		}
@@ -143,15 +144,15 @@ func buildHTTPHandler(a *app.App, token string) http.Handler {
 		return nil, ReadOutput{in.Path, text}, err
 	})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "read_document", Description: "Read the full extracted text of a PDF, Office document, or text/code file in character windows, including OCR of scanned PDF pages when enabled. offset is a Unicode character offset; max_chars defaults to 12000, capped at 20000. Follow next_offset until complete. Source files are limited to 32 MiB. metadata reports OCR status and source_version. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in DocumentInput) (*mcp.CallToolResult, app.DocumentResult, error) {
-		out, err := a.ReadDocument(ctx, in.Path, in.Offset, in.MaxChars)
+	mcp.AddTool(server, &mcp.Tool{Name: "read_document", Description: "Read the full extracted text of a PDF, Office document, or text/code file in character windows, including OCR of scanned PDF pages when enabled. offset is a Unicode character offset; max_chars defaults to 12000, capped at 20000. Follow next_offset until complete. Set force_ocr=true to retry PDF pages with suspect extracted text; use the same flag on every window. Configured OCR enablement and resource limits still apply. Source files are limited to 32 MiB. metadata reports OCR status and source_version. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in DocumentInput) (*mcp.CallToolResult, app.DocumentResult, error) {
+		out, err := a.ReadDocumentWithOCR(ctx, in.Path, in.Offset, in.MaxChars, in.ForceOCR)
 		return nil, out, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "fetch_file", Description: "Fetch exact original file bytes, including binary PDF/Office/image files, as base64 batches. max_bytes defaults to 65536, capped at 262144; source limit 32 MiB. Reassemble decoded data locally, following next_offset until complete. Send the first response's version as expected_version on every subsequent batch to reject changed files. This does not create a chat attachment automatically. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in FetchInput) (*mcp.CallToolResult, app.FetchResult, error) {
 		out, err := a.FetchFile(in.Path, in.Offset, in.MaxBytes, in.ExpectedVersion)
 		return nil, out, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "index_status", Description: "Show scan progress, indexed file/chunk counts, and whether semantic/photo indexing is enabled."}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "index_status", Description: "Show the active scan file, stage and start times, indexed file/chunk counts, errors, and whether OCR/semantic/photo indexing is enabled."}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
 		out, err := a.Status()
 		return nil, out, err
 	})

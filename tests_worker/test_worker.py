@@ -294,3 +294,163 @@ def test_document_read_rejects_binary_after_return_window(tmp_path):
     p.write_bytes(b'A' * 70000 + b'\x00binary')
     with pytest.raises(ValueError, match='binary'):
         read_document(p, 0, 1)
+
+
+def fake_pdf(monkeypatch, tmp_path, texts):
+    import pypdf
+    path = tmp_path / 'glyphs.pdf'
+    path.write_bytes(b'fake')
+    pages = [type('Page', (), {'extract_text': lambda self, text=text: text})() for text in texts]
+    monkeypatch.setattr(pypdf, 'PdfReader', lambda path: type('Reader', (), {'pages': pages})())
+    return path
+
+
+def test_force_ocr_replaces_existing_layer(monkeypatch, tmp_path):
+    path = fake_pdf(monkeypatch, tmp_path, ['Embedded placeholder'])
+    calls = []
+    monkeypatch.setenv('NAS_OCR', 'true')
+    monkeypatch.setattr(worker, 'ocr_pdf_page', lambda path, number: calls.append(number) or 'Complete recovered document text')
+    result = worker.handle({'operation': 'read_document', 'path': str(path), 'force_ocr': True})
+    assert result['text'] == 'Complete recovered document text'
+    assert result['metadata']['ocr_forced'] is True
+    assert result['metadata']['ocr_pages'] == [1]
+    assert calls == [1]
+
+
+def test_force_ocr_validation(monkeypatch, tmp_path):
+    path = fake_pdf(monkeypatch, tmp_path, ['Normal prose'])
+    with pytest.raises(ValueError, match='NAS_OCR'):
+        worker.handle({'operation': 'read_document', 'path': str(path), 'force_ocr': True})
+    monkeypatch.setenv('NAS_OCR', 'true')
+    for value in [1, 'true', None]:
+        with pytest.raises(ValueError, match='boolean'):
+            worker.handle({'operation': 'read_document', 'path': str(path), 'force_ocr': value})
+    path = tmp_path / 'text.txt'
+    path.write_text('Text')
+    with pytest.raises(ValueError, match='PDF'):
+        worker.handle({'operation': 'read_document', 'path': str(path), 'force_ocr': True})
+
+
+@pytest.mark.parametrize('text', ['♠♣♦♥♩♪♫♬☀☁' * 11, '\ue001\ue002\ue003\ue004' * 30, '\ufffd' * 110])
+def test_suspicious_layers_trigger_shared_ocr(monkeypatch, tmp_path, text):
+    path = fake_pdf(monkeypatch, tmp_path, [text])
+    monkeypatch.setenv('NAS_OCR', 'true')
+    monkeypatch.setattr(worker, 'ocr_pdf_page', lambda path, number: 'Recovered useful prose from the page.')
+    for result in [extract(path), read_document(path)]:
+        assert result['metadata']['text_quality_suspect'] is True
+        assert result['metadata']['suspect_pages'] == [1]
+        assert result['metadata']['ocr_forced'] is False
+        assert result['metadata']['needs_ocr'] is False
+        assert result['sections'][0]['text'] == 'Recovered useful prose from the page.'
+
+
+@pytest.mark.parametrize('text', ['A normal document paragraph, with punctuation and 123 numbers.', '中文文档可以包含中文标点。继续阅读这些文字。', 'Музыкальный документ содержит нормальный русский текст.', 'Title', '42', '2026-10-11'])
+def test_readable_layers_are_not_suspect(monkeypatch, tmp_path, text):
+    path = fake_pdf(monkeypatch, tmp_path, [text])
+    monkeypatch.setenv('NAS_OCR', 'true')
+    monkeypatch.setattr(worker, 'ocr_pdf_page', lambda *args: pytest.fail('Readable layer must not invoke OCR'))
+    result = read_document(path)
+    assert result['text'] == text
+    assert result['metadata']['text_quality_suspect'] is False
+    assert result['metadata']['suspect_pages'] == []
+
+
+@pytest.mark.parametrize('replacement', ['', '♠♣♦♥' * 50])
+def test_suspect_layer_preserved_when_ocr_empty_or_worse(monkeypatch, tmp_path, replacement):
+    original = '♠♣♦♥' * 25 + 'Original123'
+    path = fake_pdf(monkeypatch, tmp_path, [original])
+    monkeypatch.setenv('NAS_OCR', 'true')
+    monkeypatch.setattr(worker, 'ocr_pdf_page', lambda *args: replacement)
+    result = read_document(path)
+    assert result['text'] == original
+    assert result['metadata']['needs_ocr'] is True
+    assert result['metadata']['text_quality_suspect'] is True
+
+
+def test_suspect_layer_flagged_without_ocr(monkeypatch, tmp_path):
+    text = '♠♣♦♥' * 30
+    path = fake_pdf(monkeypatch, tmp_path, [text])
+    result = read_document(path)
+    assert result['text'] == text
+    assert result['metadata']['needs_ocr'] is True
+    assert result['metadata']['suspect_pages'] == [1]
+
+
+def test_music_glyph_layer_with_repeated_punctuation(monkeypatch, tmp_path):
+    # Same 110-character scale and low-letter/repeated-dot pattern as the failing PDF.
+    text = 'Title\n' + '.' * 31 + '\n1234567890 ' + ',.-' * 15 + '\nHeading123456789'
+    path = fake_pdf(monkeypatch, tmp_path, [text])
+    result = read_document(path)
+    assert result['metadata']['text_quality_suspect'] is True
+    assert result['metadata']['suspect_pages'] == [1]
+
+
+def test_prose_with_dot_leader_remains_readable(monkeypatch, tmp_path):
+    path = fake_pdf(monkeypatch, tmp_path, ['Chapter title and normal readable words .............. 42'])
+    result = read_document(path)
+    assert result['metadata']['text_quality_suspect'] is False
+
+
+def test_force_ocr_is_explicit_override_even_short_or_empty(monkeypatch, tmp_path):
+    path = fake_pdf(monkeypatch, tmp_path, ['Long embedded text that the user deliberately overrides.'])
+    monkeypatch.setenv('NAS_OCR', 'true')
+    for candidate in ['Hi', '']:
+        monkeypatch.setattr(worker, 'ocr_pdf_page', lambda *args: candidate)
+        result = worker.handle({'operation': 'read_document', 'path': str(path), 'force_ocr': True})
+        assert result['text'] == candidate
+        assert result['metadata']['needs_ocr'] is (candidate == '')
+
+
+def test_empty_ocr_environment_uses_enabled_default(monkeypatch, tmp_path):
+    path = fake_pdf(monkeypatch, tmp_path, ['Embedded'])
+    monkeypatch.setenv('NAS_OCR', '')
+    monkeypatch.setattr(worker, 'ocr_pdf_page', lambda *args: 'OCR')
+    assert worker.handle({'operation': 'read_document', 'path': str(path), 'force_ocr': True})['text'] == 'OCR'
+
+
+def test_force_ocr_recovers_broken_embedded_extraction(monkeypatch, tmp_path):
+    import pypdf
+    path = tmp_path / 'broken.pdf'
+    path.write_bytes(b'fake')
+    class Page:
+        def extract_text(self): raise ValueError('broken font mapping')
+    monkeypatch.setattr(pypdf, 'PdfReader', lambda path: type('Reader', (), {'pages': [Page()]})())
+    monkeypatch.setenv('NAS_OCR', 'true')
+    monkeypatch.setattr(worker, 'ocr_pdf_page', lambda *args: 'Recovered OCR')
+    assert worker.handle({'operation': 'read_document', 'path': str(path), 'force_ocr': True})['text'] == 'Recovered OCR'
+
+
+def test_force_ocr_multipage_pagination(monkeypatch, tmp_path):
+    path = fake_pdf(monkeypatch, tmp_path, ['First layer', 'Second layer'])
+    monkeypatch.setenv('NAS_OCR', 'true')
+    monkeypatch.setattr(worker, 'ocr_pdf_page', lambda path, number: {1:'First recovered',2:'Second recovered'}[number])
+    full = 'First recovered\nSecond recovered'
+    pieces = []
+    offset = 0
+    while True:
+        result = worker.handle({'operation': 'read_document', 'path': str(path), 'force_ocr': True, 'offset':offset, 'max_chars':5})
+        assert result['metadata']['ocr_forced'] is True
+        assert result['metadata']['ocr_pages'] == list(range(1,len(result['metadata']['ocr_pages'])+1))
+        pieces.append(result['text'])
+        if result['complete']: break
+        offset=result['next_offset']
+    assert ''.join(pieces) == full
+
+
+def test_interleaved_music_glyph_punctuation_layer(monkeypatch, tmp_path):
+    text = 'Title\n' + '.12..,3..4.,' * 5 + '\n42\nHeading\n' + ',.5.-6.' * 4
+    path = fake_pdf(monkeypatch, tmp_path, [text])
+    result = read_document(path)
+    assert result['metadata']['text_quality_suspect'] is True
+
+
+def test_automatic_ocr_failure_preserves_suspect_layer(monkeypatch, tmp_path):
+    text = '♠♣♦♥' * 30
+    path = fake_pdf(monkeypatch, tmp_path, [text])
+    monkeypatch.setenv('NAS_OCR', 'true')
+    def fail(*args): raise ValueError('PDF OCR unavailable')
+    monkeypatch.setattr(worker, 'ocr_pdf_page', fail)
+    result = read_document(path)
+    assert result['text'] == text
+    assert result['metadata']['ocr_failed_pages'] == [1]
+    assert result['metadata']['needs_ocr'] is True

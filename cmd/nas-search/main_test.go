@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -27,6 +28,7 @@ func (t bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(c)
 }
 func TestMCPHTTPTools(t *testing.T) {
+	t.Setenv("NAS_OCR", "true")
 	root := t.TempDir()
 	if e := os.WriteFile(filepath.Join(root, "doc.txt"), []byte("kitchen renovation"), 0600); e != nil {
 		t.Fatal(e)
@@ -90,6 +92,32 @@ func TestMCPHTTPTools(t *testing.T) {
 	names := map[string]bool{}
 	for _, tool := range tools.Tools {
 		names[tool.Name] = true
+		if tool.Name == "read_document" {
+			encoded, e := json.Marshal(tool.InputSchema)
+			if e != nil {
+				t.Fatal(e)
+			}
+			var schema map[string]any
+			if e = json.Unmarshal(encoded, &schema); e != nil {
+				t.Fatal(e)
+			}
+			properties, ok := schema["properties"].(map[string]any)
+			if !ok {
+				t.Fatal(schema)
+			}
+			flag, ok := properties["force_ocr"].(map[string]any)
+			if !ok || flag["type"] != "boolean" {
+				t.Fatal("missing boolean force_ocr schema", schema)
+			}
+			if required, ok := schema["required"].([]any); ok {
+				for _, name := range required {
+					if name == "force_ocr" {
+						t.Fatal("force_ocr must be optional")
+					}
+				}
+			}
+		}
+
 		encoded, err := json.Marshal(tool.OutputSchema)
 		if err != nil {
 			t.Fatal(err)
@@ -142,6 +170,43 @@ func TestMCPHTTPTools(t *testing.T) {
 	if e != nil || string(decoded) != "kitchen" || fetched["next_offset"] != float64(7) {
 		t.Fatal(fetched, e)
 	}
+	capture := filepath.Join(t.TempDir(), "capture.py")
+	script := `import json,sys
+request=json.load(sys.stdin)
+force=request['force_ocr']
+json.dump({'kind':'document','text':'forced' if force else 'automatic','sections':[],'offset':request['offset'],'next_offset':None,'complete':True,'metadata':{'received_force_ocr':force}},sys.stdout)
+`
+	if e = os.WriteFile(capture, []byte(script), 0600); e != nil {
+		t.Fatal(e)
+	}
+	a.Worker = capture
+	if e = os.WriteFile(filepath.Join(root, "doc.PDF"), []byte("source"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	forced := call("read_document", map[string]any{"path": "doc.PDF", "force_ocr": true})
+	if forced["text"] != "forced" || forced["metadata"].(map[string]any)["received_force_ocr"] != true {
+		t.Fatal(forced)
+	}
+	automatic := call("read_document", map[string]any{"path": "doc.txt"})
+	if automatic["text"] != "automatic" {
+		t.Fatal(automatic)
+	}
+
+	assertToolError := func(path, want string) {
+		t.Helper()
+		result, e := session.CallTool(ctx, &mcp.CallToolParams{Name: "read_document", Arguments: map[string]any{"path": path, "force_ocr": true}})
+		if e != nil || !result.IsError {
+			t.Fatalf("expected tool error: %v %v", result, e)
+		}
+		encoded, e := json.Marshal(result)
+		if e != nil || !strings.Contains(string(encoded), want) {
+			t.Fatalf("expected %s in error: %s %v", want, encoded, e)
+		}
+	}
+	assertToolError("doc.txt", "PDF-only")
+	t.Setenv("NAS_OCR", "false")
+	assertToolError("doc.PDF", "NAS_OCR")
+	t.Setenv("NAS_OCR", "true")
 	status := call("index_status", map[string]any{})
 	if status["index"] == nil {
 		t.Fatal(status)
