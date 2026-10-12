@@ -58,6 +58,8 @@ Use `find_files` when you know a filename or folder name, or content search miss
 
 If indexed counts stop changing, check `index_status.current_file`, `scan_stage`, `file_started_at`, and `scan_started_at`. A file appears in the index only after its extraction and embedding finish, so counts can remain unchanged during a large file. Stages can include waiting for the shared worker; they are not a completion percentage or proof of a stall. This OCR update refreshes existing entries, so the first scan can take longer.
 
+For visual image search, start with the [isolated NAS photo pilot](docs/deployment.md#start-a-small-visual-image-search-pilot). It keeps document search available while testing a small read-only image folder. NAS memory use and search quality still need measurement.
+
 ## Coverage and limits
 
 | Content | Current support |

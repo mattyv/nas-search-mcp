@@ -150,6 +150,16 @@ The NAS remains read-only. Native HTTP clients retain `fetch_file` and the comma
 
 Evidence: six new tests failed before implementation; nine downloader tests passed afterward. All four client installer runs passed the live NAS handshake. The installed bridge downloaded the 18,312-byte Melody PDF, verified private permissions, and rejected overwriting it; the temporary copy was removed. Dafny rebuild could not run because the local Dafny executable is absent; no Dafny sources or generated output changed. Desktop conversations remain untested.
 
+## D019 — Validate visual search in an isolated NAS pilot
+
+**Date:** 2026-10-12 · **Status:** Accepted pilot approach; NAS fit and search quality unvalidated
+
+The user requested image search. Reuse existing local CLIP image and text embeddings, photo metadata, and `search` with `photos=true`. Start a separate photo-only pilot on port 8081 with its own data directory, a selected read-only source folder, one CPU, and a 1 GiB memory limit without extra swap. Preserve the running document service, its index, credentials, and source configuration. Do not turn on photos in the existing index: its pipeline signature requires a fresh index when this setting changes.
+
+Measure container memory, model failures, indexing time, and descriptive search quality on the DS220+ before enabling the full library. Models download on first use, then inference runs locally. The existing development smoke test is evidence that the models run on that development machine; it does not establish NAS compatibility or retrieval quality. Initial scope includes supported image formats, not face recognition, image OCR, or HEIC/RAW conversion. The pilot launcher is an unproved operating-system/container adapter; existing Dafny search policy remains unchanged. Require at least 1280 MiB available host memory before starting the separate 1 GiB pilot and disable automatic restarts, so model failures do not create a restart loop. Available memory can still change after preflight; monitor DSM during the run.
+
+Evidence: the first two launcher tests failed because the script did not exist; all seven pilot tests then passed, including resource/security options, source confinement, credential handling, dry-run, and failure paths. Shell syntax validation passed. These use a fake Docker adapter and establish launcher behavior, not NAS compatibility. The published image e3ae38e passed full Linux CI before this pilot work. Local Dafny is absent and local Go linking fails against the installed macOS SDK, so fresh proof/Go verification remains assigned to CI.
+
 ## Open decisions
 
 **2026-10-12 filename lookup:** Add `find_files` against the live authorized mounts. The children's passport scans were already indexed with OCR metadata, but content search missed them. Do not infer file absence from semantic search or extraction success. Match literal query terms against case-normalized relative filenames and folder names, using a verified Dafny matcher. Keep filesystem traversal and Unicode case normalization as tested Go adapters. Bound traversal time, visited entries, and results, and report partial searches. Include regular files whose content is unsupported or failed extraction; retain hidden-folder, symlink, and excluded-folder restrictions.
