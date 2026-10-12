@@ -41,3 +41,12 @@ func Top(items [][2]int64, limit int) [][2]int64 {
 	}
 	return out
 }
+
+// MatchesTerms uses literal substring AND matching on prepared-case input.
+func MatchesTerms(text string, terms []string) bool {
+	values := make([]interface{}, len(terms))
+	for i, term := range terms {
+		values[i] = dafny.UnicodeSeqOfUtf8Bytes(term)
+	}
+	return core.Companion_Default___.MatchesTerms(dafny.UnicodeSeqOfUtf8Bytes(text), dafny.SeqOf(values...))
+}

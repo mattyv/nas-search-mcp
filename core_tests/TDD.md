@@ -8,7 +8,7 @@ After implementation:
 
     .tools/dafny/dafny verify core/Core.dfy core_tests/CoreTests.dfy
 
-passes with 30 verified obligations and zero errors (green).
+passes with 34 verified obligations and zero errors (green).
 
 The build script verifies both files explicitly, executes expectations through
 the Go backend, and regenerates production Go source. Tests exercise path
@@ -38,3 +38,14 @@ states only lexical confinement, not resolved filesystem confinement.
 
 Insertion sorting is quadratic and intended for bounded retrieval candidates.
 The runtime adapters must bound candidate counts and validate nonnegative limits.
+
+Literal AND path matching extension: Dafny executable expectations and Go bridge
+regressions were added first. Red runs reported eight unresolved MatchesTerms
+calls and an undefined Go MatchesTerms symbol. Green runs verify 34 obligations,
+execute all Dafny expectations, and pass go test ./internal/policy.
+ContainsFrom proves equivalence to a literal substring occurrence at or after
+its cursor. MatchesTerms proves equivalence to every supplied term occurring.
+Go passes prepared-case Unicode strings; case conversion and query validation
+remain outside the proof. Empty term lists match vacuously, and empty terms occur
+at every valid cursor. Tests cover Unicode, literal regex metacharacters, AND
+term order, missing terms, longer terms, and prepared-case behavior.

@@ -50,6 +50,38 @@ func (_this *Default__) ParentTraits_() []*_dafny.TraitID {
 
 var _ _dafny.TraitOffspring = &Default__{}
 
+func (_static *CompanionStruct_Default___) TermAt(text _dafny.Sequence, term _dafny.Sequence, start _dafny.Int) bool {
+	return _dafny.Companion_Sequence_.Equal((text).Subsequence((start).Uint32(), ((start).Plus(_dafny.IntOfUint32((term).Cardinality()))).Uint32()), term)
+}
+func (_static *CompanionStruct_Default___) ContainsFrom(text _dafny.Sequence, term _dafny.Sequence, start _dafny.Int) bool {
+	goto TAIL_CALL_START
+TAIL_CALL_START:
+	if (_dafny.IntOfUint32((term).Cardinality())).Cmp((_dafny.IntOfUint32((text).Cardinality())).Minus(start)) > 0 {
+		return false
+	} else if Companion_Default___.TermAt(text, term, start) {
+		return true
+	} else if (start).Cmp(_dafny.IntOfUint32((text).Cardinality())) == 0 {
+		return false
+	} else {
+		var _in0 _dafny.Sequence = text
+		_ = _in0
+		var _in1 _dafny.Sequence = term
+		_ = _in1
+		var _in2 _dafny.Int = (start).Plus(_dafny.One)
+		_ = _in2
+		text = _in0
+		term = _in1
+		start = _in2
+		goto TAIL_CALL_START
+	}
+}
+func (_static *CompanionStruct_Default___) MatchesTerms(text _dafny.Sequence, terms _dafny.Sequence) bool {
+	if (_dafny.IntOfUint32((terms).Cardinality())).Sign() == 0 {
+		return true
+	} else {
+		return (Companion_Default___.ContainsFrom(text, (terms).Select(0).(_dafny.Sequence), _dafny.Zero)) && (Companion_Default___.MatchesTerms(text, (terms).Drop(1)))
+	}
+}
 func (_static *CompanionStruct_Default___) Before(a _dafny.Tuple, b _dafny.Tuple) bool {
 	return (((*(a).IndexInt(1)).(_dafny.Int)).Cmp((*(b).IndexInt(1)).(_dafny.Int)) > 0) || ((((*(a).IndexInt(1)).(_dafny.Int)).Cmp((*(b).IndexInt(1)).(_dafny.Int)) == 0) && (((*(a).IndexInt(0)).(_dafny.Int)).Cmp((*(b).IndexInt(0)).(_dafny.Int)) <= 0))
 }

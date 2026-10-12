@@ -1,4 +1,39 @@
 module Core {
+  predicate TermAt(text: string, term: string, start: nat)
+    requires start + |term| <= |text|
+  { text[start..start+|term|] == term }
+
+  ghost predicate Occurs(text: string, term: string) {
+    exists i | 0 <= i <= |text|-|term| :: TermAt(text, term, i)
+  }
+
+  function ContainsFrom(text: string, term: string, start: nat): bool
+    requires start <= |text|
+    ensures ContainsFrom(text, term, start) <==>
+      (exists i | start <= i <= |text| - |term| :: TermAt(text, term, i))
+    ensures start == 0 ==> (ContainsFrom(text, term, start) <==> Occurs(text, term))
+    decreases |text| - start
+  {
+    if |term| > |text| - start then false
+    else if TermAt(text, term, start) then
+      assert exists i | start <= i <= |text|-|term| :: TermAt(text, term, i);
+      true
+    else if start == |text| then false
+    else ContainsFrom(text, term, start+1)
+  }
+
+  function MatchesTerms(text: string, terms: seq<string>): bool
+    ensures MatchesTerms(text, terms) <==>
+      (forall term <- terms :: Occurs(text, term))
+    decreases |terms|
+  {
+    if |terms| == 0 then true else
+      assert terms == [terms[0]] + terms[1..];
+      assert (forall term <- terms :: Occurs(text, term)) <==>
+        (Occurs(text, terms[0]) && (forall term <- terms[1..] :: Occurs(text, term)));
+      ContainsFrom(text, terms[0], 0) && MatchesTerms(text, terms[1..])
+  }
+
   predicate Before(a: (int, int), b: (int, int)) {
     a.1 > b.1 || (a.1 == b.1 && a.0 <= b.0)
   }

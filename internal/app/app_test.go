@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"github.com/mattyv/nas-search-mcp/internal/store"
 	"net/http"
@@ -621,5 +622,112 @@ json.dump({'kind':'document','sections':[{'location':'text','text':'needle'}],'m
 	}
 	if status["current_file"] != "" || status["scan_stage"] != "" || status["file_started_at"] != "" {
 		t.Fatal("active progress retained after scan", status)
+	}
+}
+
+func TestFindFilesLivePathsWithoutIndexOrWorker(t *testing.T) {
+	root := t.TempDir()
+	a := &App{Root: root, workerGate: make(chan struct{}, 1)}
+	a.workerGate <- struct{}{}
+	write(t, filepath.Join(root, "Berklee", "MÉLODY [Final].pdf"), "invalid PDF")
+	write(t, filepath.Join(root, "Berklee", "unsupported.backup"), "binary archive")
+	write(t, filepath.Join(root, "Other", "MÉLODY.pdf"), "invalid PDF")
+	out, e := a.FindFiles(context.Background(), "berklee mélody [final]", "", 20)
+	if e != nil || len(out.Files) != 1 || out.Files[0].Path != "Berklee/MÉLODY [Final].pdf" {
+		t.Fatal(out, e)
+	}
+	if out.Files[0].Size != 11 || out.Files[0].ModifiedAt == "" {
+		t.Fatal(out)
+	}
+	out, e = a.FindFiles(context.Background(), "unsupported", "Berklee/", 20)
+	if e != nil || len(out.Files) != 1 {
+		t.Fatal(out, e)
+	}
+	out, e = a.FindFiles(context.Background(), ".*", "", 20)
+	if e != nil || len(out.Files) != 0 {
+		t.Fatal("query must be literal", out, e)
+	}
+}
+func TestFindFilesExclusionsAndValidation(t *testing.T) {
+	root := t.TempDir()
+	a := &App{Root: root}
+	for _, name := range []string{".hidden/Passport.pdf", "node_modules/Passport.pdf", "@Recycle/Passport.pdf", "Passport.pdf"} {
+		write(t, filepath.Join(root, name), "data")
+	}
+	outside := t.TempDir()
+	write(t, filepath.Join(outside, "Passport.pdf"), "secret")
+	if e := os.Symlink(outside, filepath.Join(root, "escape")); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.Symlink(filepath.Join(outside, "Passport.pdf"), filepath.Join(root, "Passport-link.pdf")); e != nil {
+		t.Fatal(e)
+	}
+	out, e := a.FindFiles(context.Background(), "passport", "", 20)
+	if e != nil || len(out.Files) != 1 || out.Files[0].Path != "Passport.pdf" {
+		t.Fatal(out, e)
+	}
+	for _, prefix := range []string{"/", "/etc", "../", "escape/../", "a//b"} {
+		if _, e = a.FindFiles(context.Background(), "passport", prefix, 20); e == nil {
+			t.Fatal("accepted invalid prefix", prefix)
+		}
+	}
+	for _, query := range []string{"", "   ", strings.Repeat("x", 257), strings.Repeat("x ", 17)} {
+		if _, e = a.FindFiles(context.Background(), query, "", 20); e == nil {
+			t.Fatal("accepted invalid query", query)
+		}
+	}
+	if _, e = a.FindFiles(context.Background(), "passport", "", -1); e == nil {
+		t.Fatal("accepted negative limit")
+	}
+}
+func TestFindFilesBoundsAndCancellation(t *testing.T) {
+	root := t.TempDir()
+	a := &App{Root: root}
+	for i := 0; i < 4; i++ {
+		write(t, filepath.Join(root, fmt.Sprintf("match-%d.bin", i)), "data")
+	}
+	out, e := a.FindFiles(context.Background(), "match", "", 1)
+	if e != nil || len(out.Files) != 1 || !out.Truncated || out.Warning == "" {
+		t.Fatal(out, e)
+	}
+	out, e = a.findFiles(context.Background(), "match", "", 20, 2, time.Second)
+	if e != nil || !out.Truncated || out.Warning == "" || out.Visited > 2 {
+		t.Fatal(out, e)
+	}
+	out, e = a.findFiles(context.Background(), "match", "", 20, 100, time.Nanosecond)
+	if e != nil || !out.Truncated || out.Warning == "" {
+		t.Fatal(out, e)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, e = a.FindFiles(ctx, "match", "", 20); !errors.Is(e, context.Canceled) {
+		t.Fatal(e)
+	}
+}
+
+func TestFindFilesUnreadableCandidateReportsIncomplete(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permission checks")
+	}
+	root := t.TempDir()
+	path := filepath.Join(root, "target.bin")
+	write(t, path, "private")
+	if e := os.Chmod(path, 0); e != nil {
+		t.Fatal(e)
+	}
+	t.Cleanup(func() { os.Chmod(path, 0600) })
+	out, e := (&App{Root: root}).FindFiles(context.Background(), "target", "", 20)
+	if e != nil || len(out.Files) != 0 || !out.Truncated || out.Warning == "" {
+		t.Fatal("unreadable matching file must not appear as a complete empty search", out, e)
+	}
+}
+func TestFindFilesSkipsFIFOWithoutWarning(t *testing.T) {
+	root := t.TempDir()
+	if e := syscall.Mkfifo(filepath.Join(root, "target.fifo"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	out, e := (&App{Root: root}).FindFiles(context.Background(), "target", "", 20)
+	if e != nil || len(out.Files) != 0 || out.Truncated || out.Warning != "" {
+		t.Fatal(out, e)
 	}
 }
