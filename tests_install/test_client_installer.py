@@ -229,7 +229,7 @@ class BridgeTests(unittest.TestCase):
                     self.send_response(202);self.end_headers();return
                 result={'ok':True}
                 if body['method']=='initialize':
-                    result={'protocolVersion':'2025-03-26','capabilities':{'tools':{}},'serverInfo':{'name':'test','version':'1'}}
+                    result={'protocolVersion':body.get('params',{}).get('protocolVersion','2025-03-26'),'capabilities':{'tools':{}},'serverInfo':{'name':'test','version':'1'}}
                 elif body['method']=='tools/call':result={'content':[{'type':'text','text':'ok'}]}
                 elif body['method']=='tools/list':result={'tools':[{'name':n,'inputSchema':{'type':'object'}} for n in ['search','browse','read_file','index_status']]}
                 response=json.dumps({'jsonrpc':'2.0','id':body['id'],'result':result})
@@ -249,7 +249,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(result['id'],1)
         self.assertIsNone(bridge.request({'jsonrpc':'2.0','method':'notifications/initialized'}))
         result=bridge.request({'jsonrpc':'2.0','id':2,'method':'tools/list'})
-        self.assertEqual(len(result['result']['tools']),4)
+        self.assertEqual(len(result['result']['tools']),5)
         self.assertEqual(self.requests[-1][1].get('Mcp-Session-Id'),'session-test')
         self.assertEqual(self.requests[-1][1].get('Mcp-Protocol-Version'),'2025-03-26')
     def test_official_mcp_sdk_stdio_handshake_and_call(self):
@@ -266,7 +266,7 @@ class BridgeTests(unittest.TestCase):
                 async with ClientSession(reader,writer) as session:
                     await session.initialize()
                     tools=await session.list_tools()
-                    self.assertEqual(len(tools.tools),4)
+                    self.assertEqual(len(tools.tools),5)
                     result=await session.call_tool('browse',{})
                     self.assertFalse(result.isError)
                     self.assertEqual(result.content[0].text,'ok')

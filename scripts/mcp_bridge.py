@@ -5,6 +5,8 @@ This bridge forwards requests and notifications. It does not open a GET/SSE
 subscription, resume streams, or handle server-initiated client requests.
 """
 import argparse
+import base64
+import tempfile
 import json
 import http.client
 import os
@@ -64,6 +66,66 @@ def read_token(path, require_private=False):
         raise BridgeError('token file must contain a token or NAS_TOKEN=value')
     return token
 
+class DownloadError(Exception):
+    pass
+
+
+def download(remote, source, output, replace=False):
+    output = Path(output)
+    if output.is_symlink() or (output.exists() and not replace):
+        raise DownloadError('output exists; choose a new path or use --replace')
+    reply = remote.request({'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {'protocolVersion': '2025-03-26', 'capabilities': {}, 'clientInfo': {'name': 'nas-search-download', 'version': '0.1.0'}}})
+    if 'error' in reply:
+        raise DownloadError('MCP initialization failed')
+    remote.request({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+    fd, temporary = tempfile.mkstemp(prefix='.nas-download-', dir=output.parent)
+    offset, version, size, identifier = 0, None, None, 2
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            while True:
+                args = {'path': source, 'offset': offset, 'max_bytes': 262144}
+                if version is not None:
+                    args['expected_version'] = version
+                reply = remote.request({'jsonrpc': '2.0', 'id': identifier, 'method': 'tools/call', 'params': {'name': 'fetch_file', 'arguments': args}})
+                identifier += 1
+                result = reply.get('result', {})
+                if 'error' in reply or result.get('isError'):
+                    raise DownloadError('original-file retrieval failed')
+                chunk = result.get('structuredContent', {})
+                try:
+                    data = base64.b64decode(chunk['data'], validate=True)
+                    reported_size = chunk['size']
+                    if not isinstance(reported_size, int) or not 0 <= reported_size <= 32 * 1024 * 1024:
+                        raise ValueError()
+                    if chunk['offset'] != offset or (version is not None and chunk['version'] != version) or (size is not None and reported_size != size):
+                        raise ValueError()
+                    version, size = chunk['version'], reported_size
+                    if offset + len(data) > size:
+                        raise ValueError()
+                    next_offset = chunk.get('next_offset')
+                    if next_offset is not None and (not data or next_offset != offset + len(data)):
+                        raise ValueError()
+                    if next_offset is None and (offset + len(data) != size or not chunk.get('complete')):
+                        raise ValueError()
+                except (KeyError, ValueError, TypeError) as exc:
+                    raise DownloadError('invalid or changed original-file response') from exc
+                stream.write(data)
+                offset += len(data)
+                if next_offset is None:
+                    break
+            stream.flush()
+            os.fsync(stream.fileno())
+        if not replace:
+            # Exclusive publication avoids overwriting files created during transfer.
+            os.link(temporary, output)
+        else:
+            os.replace(temporary, output)
+        return offset
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -78,6 +140,31 @@ class Bridge:
         self.opener = urllib.request.build_opener(NoRedirect)
 
     def request(self, message):
+        params = message.get('params')
+        if message.get('method') == 'tools/call' and isinstance(params, dict) and params.get('name') == 'download_file':
+            if 'id' not in message:
+                return None
+            try:
+                args = params.get('arguments', {})
+                if not isinstance(args, dict) or set(args) != {'path', 'output'} or not isinstance(args['path'], str) or not args['path'] or not isinstance(args['output'], str) or not Path(args['output']).is_absolute():
+                    raise DownloadError('provide a NAS path and an absolute local output path; overwrites are disabled')
+                output = Path(args['output'])
+                size = download(Bridge(self.url, self.token, self.timeout), args['path'], output)
+                result = {'content': [{'type': 'text', 'text': 'Downloaded original file to ' + str(output)}], 'structuredContent': {'path': str(output), 'bytes': size}}
+            except (DownloadError, BridgeError, OSError, ValueError) as exc:
+                result = {'isError': True, 'content': [{'type': 'text', 'text': str(exc)}]}
+            return {'jsonrpc': '2.0', 'id': message['id'], 'result': result}
+        reply = self._request(message)
+        if message.get('method') == 'tools/list' and isinstance(reply, dict) and isinstance(reply.get('result'), dict) and isinstance(reply['result'].get('tools'), list):
+            reply['result']['tools'].append({
+                'name': 'download_file',
+                'description': 'Download an original NAS file (up to 32 MiB) to this MCP bridge host, where the LLM client runs. Provide a NAS path from search/browse and an absolute local output filename in an existing directory. Never overwrites existing files. This writes locally, not on the NAS; subsequent local access requires the client filesystem tools.',
+                'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string', 'minLength': 1, 'description': 'NAS file path from search or browse'}, 'output': {'type': 'string', 'description': 'Absolute local output filename in an existing directory'}}, 'required': ['path', 'output'], 'additionalProperties': False},
+                'annotations': {'readOnlyHint': False, 'destructiveHint': False, 'idempotentHint': False, 'openWorldHint': True},
+            })
+        return reply
+
+    def _request(self, message):
         headers = {'Authorization': 'Bearer ' + self.token, 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream'}
         if self.session:
             headers['Mcp-Session-Id'] = self.session
