@@ -22,6 +22,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mattyv/nas-search-mcp/internal/policy"
 	"github.com/mattyv/nas-search-mcp/internal/store"
@@ -477,6 +478,151 @@ func (a *App) Search(ctx context.Context, query, prefix string, photos bool, lim
 	}
 
 	return result, nil
+}
+
+type FoundFile struct {
+	Path       string `json:"path"`
+	Size       int64  `json:"size"`
+	ModifiedAt string `json:"modified_at"`
+}
+type FindResult struct {
+	Files     []FoundFile `json:"files"`
+	Truncated bool        `json:"truncated"`
+	Warning   string      `json:"warning,omitempty"`
+	Visited   int         `json:"visited"`
+}
+
+// FindFiles searches live relative paths without consulting the index or model worker.
+func (a *App) FindFiles(ctx context.Context, query, prefix string, limit int) (FindResult, error) {
+	return a.findFiles(ctx, query, prefix, limit, 100000, 5*time.Second)
+}
+func (a *App) findFiles(ctx context.Context, query, prefix string, limit, budget int, duration time.Duration) (FindResult, error) {
+	out := FindResult{Files: []FoundFile{}}
+	if !utf8.ValidString(query) || utf8.RuneCountInString(query) > 256 {
+		return out, errors.New("query must contain at most 256 Unicode characters")
+	}
+	terms := strings.Fields(strings.ToLower(query))
+	if len(terms) == 0 || len(terms) > 16 {
+		return out, errors.New("query must contain 1 to 16 literal terms")
+	}
+	if len(prefix) > 4096 {
+		return out, errors.New("prefix too long")
+	}
+	if prefix != "" && !policy.ValidRelative(strings.TrimSuffix(prefix, "/")) {
+		return out, errors.New("invalid relative prefix")
+	}
+	if limit < 0 {
+		return out, errors.New("limit must be nonnegative")
+	}
+	if limit == 0 {
+		limit = 20
+	}
+	limit = policy.ClampLimit(limit, 100)
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
+	walkContext, cancel := context.WithTimeout(ctx, duration)
+	defer cancel()
+	root, err := os.OpenRoot(a.Root)
+	if err != nil {
+		return out, err
+	}
+	defer root.Close()
+	stop := errors.New("bounded live search stopped")
+	truncated := func(message string) error { out.Truncated = true; out.Warning = message; return stop }
+	var walk func(string) error
+	walk = func(directory string) error {
+		if err := walkContext.Err(); err != nil {
+			return err
+		}
+		f, err := root.OpenFile(directory, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+		if err != nil {
+			out.Truncated = true
+			out.Warning = "Some directories could not be searched"
+			return nil
+		}
+		defer f.Close()
+		for {
+			if err := walkContext.Err(); err != nil {
+				return err
+			}
+			// Read incrementally instead of allocating every entry in a large NAS directory.
+			entries, readErr := f.ReadDir(128)
+			for _, entry := range entries {
+				if err := walkContext.Err(); err != nil {
+					return err
+				}
+				if out.Visited >= budget {
+					return truncated("Entry limit reached; narrow the prefix or query")
+				}
+				out.Visited++
+				if strings.HasPrefix(entry.Name(), ".") || entry.Type()&os.ModeSymlink != 0 {
+					continue
+				}
+				relative := entry.Name()
+				if directory != "." {
+					relative = directory + "/" + relative
+				}
+				if entry.IsDir() {
+					if excluded[entry.Name()] {
+						continue
+					}
+					folder := relative + "/"
+					if prefix != "" && !strings.HasPrefix(folder, prefix) && !strings.HasPrefix(prefix, folder) {
+						continue
+					}
+					if err := walk(relative); err != nil {
+						return err
+					}
+					continue
+				}
+				if !entry.Type().IsRegular() {
+					continue
+				}
+				if !strings.HasPrefix(relative, prefix) || !policy.MatchesTerms(strings.ToLower(relative), terms) {
+					continue
+				}
+				file, err := a.openFile(relative)
+				if err != nil {
+					out.Truncated = true
+					out.Warning = "Some matching files could not be read; results are incomplete"
+					continue
+				}
+				info, err := file.Stat()
+				file.Close()
+				if err != nil {
+					out.Truncated = true
+					out.Warning = "Some matching files could not be read; results are incomplete"
+					continue
+				}
+				out.Files = append(out.Files, FoundFile{Path: relative, Size: info.Size(), ModifiedAt: info.ModTime().UTC().Format(time.RFC3339Nano)})
+				if len(out.Files) >= limit {
+					return truncated("Result limit reached; additional matching files may exist")
+				}
+			}
+			if readErr == io.EOF {
+				return nil
+			}
+			if readErr != nil {
+				out.Truncated = true
+				out.Warning = "Some directories could not be searched"
+				return nil
+			}
+		}
+	}
+	err = walk(".")
+	if ctx.Err() != nil {
+		return out, ctx.Err()
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		out.Truncated = true
+		out.Warning = "Time limit reached; narrow the prefix or query"
+		return out, nil
+	}
+	if err == stop {
+		return out, nil
+	}
+	return out, err
 }
 
 // Browse filters stale entries immediately, while the next scan reconciles the index.

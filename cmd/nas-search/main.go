@@ -38,6 +38,11 @@ type SearchInput struct {
 	Photos bool   `json:"photos,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
 }
+type FindInput struct {
+	Query  string `json:"query"`
+	Prefix string `json:"prefix,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
 type BrowseInput struct {
 	Prefix string `json:"prefix,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
@@ -122,11 +127,16 @@ func main() {
 
 func buildHTTPHandler(a *app.App, token string) http.Handler {
 	server := mcp.NewServer(&mcp.Implementation{Name: "nas-search", Version: "0.1.0"}, nil)
-	mcp.AddTool(server, &mcp.Tool{Name: "search", Description: "Search indexed NAS files using keywords and meaning. Set photos=true for visual photo search. Results include source paths and page/section locations. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, app.SearchResult, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "search", Description: "Search indexed NAS files using keywords and meaning. Set photos=true for visual photo search. Results include source paths and page/section locations. If the user names a file or this search misses it, use find_files to match live filename and folder terms. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, app.SearchResult, error) {
 		if in.Limit == 0 {
 			in.Limit = 10
 		}
 		out, err := a.Search(ctx, in.Query, in.Prefix, in.Photos, in.Limit)
+		return nil, out, err
+	})
+
+	mcp.AddTool(server, &mcp.Tool{Name: "find_files", Description: "Find files by live filename and relative folder path, independently of indexing, OCR and semantic models. All whitespace-separated query terms must occur literally in the path, ignoring case; no regex. Includes unsupported file formats and failed document extractions. prefix is a relative, case-sensitive path prefix. limit defaults to 20, capped at 100. Searches at most 100000 entries or 5 seconds; truncated/warning explains incomplete searches. Known excluded directories, hidden entries and symlinks are skipped. Use this when the user names a file or content search misses it. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in FindInput) (*mcp.CallToolResult, app.FindResult, error) {
+		out, err := a.FindFiles(ctx, in.Query, in.Prefix, in.Limit)
 		return nil, out, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "browse", Description: "List indexed files and metadata. Prefix is a relative source path, such as Documents/Course/. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in BrowseInput) (*mcp.CallToolResult, BrowseOutput, error) {

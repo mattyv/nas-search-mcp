@@ -127,7 +127,7 @@ func TestMCPHTTPTools(t *testing.T) {
 			t.Fatalf("%s output schema must be object: %s (%v)", tool.Name, encoded, err)
 		}
 	}
-	if len(names) != 6 || !names["search"] || !names["browse"] || !names["read_file"] || !names["index_status"] || !names["read_document"] || !names["fetch_file"] {
+	if len(names) != 7 || !names["search"] || !names["browse"] || !names["read_file"] || !names["index_status"] || !names["read_document"] || !names["fetch_file"] || !names["find_files"] {
 		t.Fatal(names)
 	}
 	call := func(name string, args map[string]any) map[string]any {
@@ -150,6 +150,19 @@ func TestMCPHTTPTools(t *testing.T) {
 	files, ok := browse["files"].([]any)
 	if !ok || len(files) != 1 {
 		t.Fatal(browse)
+	}
+
+	if e = os.WriteFile(filepath.Join(root, "raw.backup"), []byte("original"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	found := call("find_files", map[string]any{"query": "RAW .backup"})
+	live, ok := found["files"].([]any)
+	if !ok || len(live) != 1 || live[0].(map[string]any)["path"] != "raw.backup" {
+		t.Fatal(found)
+	}
+	invalidFind, e := session.CallTool(ctx, &mcp.CallToolParams{Name: "find_files", Arguments: map[string]any{"query": "doc", "prefix": "../"}})
+	if e != nil || !invalidFind.IsError {
+		t.Fatalf("invalid find prefix accepted: %v %v", invalidFind, e)
 	}
 	search := call("search", map[string]any{"query": "renovation"})
 	hits, ok := search["hits"].([]any)

@@ -86,4 +86,6 @@ Ask your client to:
 
 Initial indexing shares its worker with semantic search and document extraction, so those calls can wait. Status checks and original-file retrieval avoid the worker queue. A health check confirms only that HTTP is running. Search results come from a periodically updated index; validate important answers against the source file.
 
+Before reporting a named document missing, call `find_files`. This searches live filenames and folder names, independently of OCR and indexing. Use a known folder as `prefix`, then pass the returned exact path to `read_document` or `fetch_file`. All whitespace-separated query terms must appear in the path, ignoring case. Check warnings and `truncated`: a partial search does not prove absence. Symlinks, hidden files, and excluded folders are omitted; matching by name does not guarantee the content can be extracted.
+
 For a PDF with unreadable extracted glyphs, call `read_document` with `force_ocr: true`, and use the same setting with every `next_offset`. OCR must be enabled on the NAS. Check `metadata.text_quality_suspect`, `suspect_pages`, and the OCR fields before treating extracted text as reliable. The suspect flag describes the original text layer, even when OCR replaces it. Sheet music needs visual interpretation to understand the notation; OCR may recover only printed words.

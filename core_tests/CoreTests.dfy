@@ -26,6 +26,14 @@ module CoreTests {
     expect SortTop([(3, 10), (2, 20), (1, 20)], 2) == [(1, 20), (2, 20)];
     expect SortTop([(3, 10)], 0) == [];
     expect SortTop([(3, 10)], 5) == [(3, 10)];
+    expect MatchesTerms("week 10/notes [a].pdf", ["notes", "week 10"]);
+    expect MatchesTerms("week 10/notes [a].pdf", ["[a].", ".pdf"]);
+    expect !MatchesTerms("week 10/notes [a].pdf", ["notes", "absent"]);
+    expect !MatchesTerms("week 10/notes [a].pdf", [".*"]);
+    expect MatchesTerms("中文🎵/notes", ["🎵", "中文"]);
+    expect MatchesTerms("", []);
+    expect MatchesTerms("anything", [""]);
+    expect !MatchesTerms("abc", ["abcd"]);
     print "Dafny core executable tests passed\n";
   }
 }
