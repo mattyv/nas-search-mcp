@@ -24,6 +24,49 @@ To expand the collection, deliberately edit the existing `.env` mount paths befo
 
 English PDF OCR is enabled by default (`NAS_OCR=true`) and uses Poppler plus Tesseract in the serialized worker queue. Set it to false to disable OCR. Photo OCR and additional recognition languages are not implemented. A one-page scanned-PDF OCR fixture and complete PDF text retrieval have passed on the NAS. Larger scans still need testing.
 
+## Start a small visual image-search pilot
+
+Visual search is implemented but has not been measured on the DS220+. Start with 20–50 JPEG, PNG, WebP, GIF, BMP, or TIFF images in an existing subfolder under `/volume1/shared-photos`. Images must be at most 32 MiB and 25 megapixels. HEIC, camera RAW, face recognition, and image OCR are outside this pilot. Searches describe visible content, such as “a beach at sunset”; results are candidates to inspect, not confidence scores.
+
+Run the pilot launcher from an updated checkout on the NAS:
+
+```sh
+sudo sh scripts/photo-pilot.sh \
+  --image ghcr.io/mattyv/nas-search-mcp:e3ae38e943786aa2e3d6a2ac017b05e6099b55dc \
+  --photos-path '/volume1/shared-photos/YOUR_SMALL_FOLDER' \
+  --dry-run
+```
+
+Replace the folder with its actual physical path. The image above passed CI and includes the existing visual-search support. A successful dry run checks prerequisites without downloading models or starting a container. Remove `--dry-run` to start the pilot. Keep the main document service running: this uses a separate container, port 8081, and data directory. The launcher refuses to replace an existing pilot or reuse an existing pilot data directory. It checks available NAS memory before starting; insufficient memory leaves the document service alone.
+
+The pilot mounts only the selected source folder, read-only, as `Photos/`. It uses the existing protected NAS token. Models download on first use, which can take several minutes and require internet access. The container is limited to one CPU and 1 GiB memory without extra swap. These limits do not prove compatibility: monitor the actual container and DSM while indexing.
+
+On the NAS, inspect the pilot:
+
+```sh
+sudo docker stats --no-stream nas-search-photo-pilot
+sudo docker logs --tail 40 nas-search-photo-pilot
+sudo docker inspect --format '{{.State.Status}} OOMKilled={{.State.OOMKilled}}' nas-search-photo-pilot
+```
+
+Record memory during indexing and during the first descriptive search, not just when idle. An OOM-killed container, unexpected stop, model error, or keyword-only fallback means the visual-search check has not passed. Stop the pilot if DSM slows down:
+
+```sh
+sudo docker stop nas-search-photo-pilot
+```
+
+Connect a separate local MCP entry so ordinary document search stays available. On your computer, from this checkout:
+
+```sh
+python3 scripts/install-mcp.py --client codex --name nas-photos \
+  --url http://192.0.2.10:8081/mcp \
+  --token-file ~/.config/nas-search/token
+```
+
+Use the other supported `--client` choices to add the same entry to Claude CLI, Claude Desktop, or ChatGPT Desktop's local Codex connection. Restart the client. Ask it to call `nas-photos` `index_status`, confirm `photos=true`, and report errors. When indexing finishes, ask it to search with `photos=true` for three descriptions of known images and one unrelated description. Confirm that results use visual search (`mode=hybrid`, without a model/vector fallback warning), inspect the returned images, and record elapsed time. Download a result through this connection's `download_file` tool to inspect the original locally. Unrelated queries can still return ranked images; relevance filtering remains uncalibrated.
+
+Do not expand the collection until indexing, descriptive search quality, memory use, and continued document-service availability have been checked on the NAS. The pilot uses a fresh index because changing photo settings on the existing document index requires rebuilding it.
+
 ## Manual Container Manager setup
 
 Use this route if you prefer DSM to the installer. Create `/volume1/docker/nas-search` using DSM File Station. Put the repository files there, preserving `worker/`, `generated/`, `internal/`, and `cmd/`. Either download the repository ZIP and extract its contents, or clone it using SSH if you already use SSH:
