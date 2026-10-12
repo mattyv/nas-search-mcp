@@ -32,7 +32,9 @@ sudo sh scripts/install-nas.sh \
 
 Replace `COMMIT_SHA` with a published version whose CI passed; `latest` is deliberately rejected. Existing NAS settings take precedence, so edit `.env` explicitly when changing collection mounts. The installer checks permissions and kernel support, preserves credentials/index data, and checks the started service. See [NAS installation and upgrades](docs/deployment.md#scripted-installation-and-upgrades).
 
-**Download an entire original document** to your computer:
+**Let your assistant save an original locally:** after installing the bridge, ask “Download this NAS file to /tmp/nas-melody.pdf using download_file.” Provide the exact NAS path and an absolute destination in an existing folder. Existing files are preserved. Rerun the client installer with `--replace` after updating this checkout, then restart the client to load the tool. See [local downloads](docs/clients.md#read-complete-documents-and-retrieve-originals).
+
+**Download an entire original document** from the command line:
 
 ```sh
 python3 scripts/fetch-file.py --url http://192.0.2.10:8080/mcp \
@@ -50,7 +52,7 @@ Ask your assistant: **“Use nas-search to check index_status, then find documen
 
 Search returns ranked candidates, including possible unrelated matches. Scores describe ranking, not confidence or relevance probabilities. Ask your assistant to read the passages and source document before drawing conclusions. A calibrated relevance cutoff remains unfinished.
 
-The seven MCP tools are `search`, `find_files`, `browse`, `read_file`, `read_document`, `fetch_file`, and `index_status`. Use `read_document` for extracted text and `fetch_file` for original bytes. Scans run at startup and every five minutes. During initial indexing, semantic search and document reading can wait behind the worker queue; status checks, filename lookup, and original-file retrieval avoid that queue.
+The seven NAS MCP tools are `search`, `find_files`, `browse`, `read_file`, `read_document`, `fetch_file`, and `index_status`. The installed stdio bridge also provides `download_file` to save originals on the bridge computer. Use `read_document` for extracted text and `fetch_file` for original bytes. Scans run at startup and every five minutes. During initial indexing, semantic search and document reading can wait behind the worker queue; status checks, filename lookup, and original-file retrieval avoid that queue.
 
 Use `find_files` when you know a filename or folder name, or content search misses a document. It checks the live mounted files, including files that failed extraction or have unsupported content formats. Query words must all occur somewhere in the relative path, ignoring case; punctuation is literal, not a wildcard or regular expression. For example, query `passport` with prefix `Documents/Personal Documents/`. A warning or truncated result means the search stopped early; narrow the prefix before concluding a file is missing. Hidden files, symlinks, and excluded folders are omitted.
 

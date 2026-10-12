@@ -1,6 +1,6 @@
 # Connect your MCP clients
 
-The service uses Streamable HTTP at `/mcp` with a static bearer token. For the LAN pilot the URL is `http://192.0.2.10:8080/mcp`. Substitute a reachable Tailscale/HTTPS address when configured. The server, index, and models remain on the NAS; a desktop bridge only forwards requests.
+The service uses Streamable HTTP at `/mcp` with a static bearer token. For the LAN pilot the URL is `http://192.0.2.10:8080/mcp`. Substitute a reachable Tailscale/HTTPS address when configured. The server, index, and models remain on the NAS; the desktop bridge forwards requests and can save downloaded originals on its own computer.
 
 ## Install the MCP connection
 
@@ -23,6 +23,12 @@ Start a new CLI session or fully restart the desktop app. Config installation an
 ## Read complete documents and retrieve originals
 
 `read_document` returns extracted text and page/section locations. Continue with its `next_offset` until `complete=true`; offsets count Unicode characters. This bypasses the search index's 200,000-character extraction cap, but source files still have a 32 MiB safety limit. English OCR is used for PDF pages without embedded text when `NAS_OCR=true`. Check OCR metadata; an unreadable scan can still contain missing text. Long scanned documents may repeat OCR of earlier pages during pagination, so reading can be slow.
+
+With the installed stdio bridge, ask your assistant: **“Download this NAS file to /tmp/nas-melody.pdf using download_file.”** Supply the exact NAS `path` and an absolute local `output` path. The destination folder must already exist. The tool saves the complete original and returns its local path and byte count; it refuses to overwrite existing files. Downloads retain the 32 MiB source limit and source-version checks.
+
+The file is saved on the computer running the bridge. A bridge running on a remote host saves there. Native HTTP connections do not offer `download_file`; use the helper below or reconnect through the installed bridge. A saved file does not automatically become a chat attachment.
+
+After updating this checkout, rerun the client installation command with `--replace`, then start a new CLI session or fully quit and reopen the desktop app to load the new tool.
 
 `fetch_file` returns original bytes in base64 batches, without conversion. For continuation calls, supply the first response's `version` as `expected_version`. A client must reassemble the bytes; receiving them does not establish that its model can interpret PDF/image attachments. To download the entire original to your computer:
 

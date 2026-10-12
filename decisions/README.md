@@ -140,6 +140,16 @@ The text-quality check is a conservative heuristic, not a guarantee of readable 
 
 Expose the current scan file, processing stage, and start times through `index_status`. Counts only increase after a complete file is committed; a long extraction or multiple embedding batches can leave them unchanged while work continues. These diagnostics do not estimate overall completion or distinguish active processing from waiting for the shared worker.
 
+## D018 — Save originals through a client-local MCP tool
+
+**Date:** 2026-10-12 · **Status:** Accepted; local download and installation validated
+
+The user needs the assistant to download NAS files and store them locally. Expose `download_file` through the installed stdio bridge, reusing the original-byte downloader rather than sending base64 through the model. Save on the bridge host, require an absolute destination in an existing folder, and refuse overwrites. Keep private temporary files, atomic publication, source-version checks, bearer authentication, and the 32 MiB source bound.
+
+The NAS remains read-only. Native HTTP clients retain `fetch_file` and the command-line helper; a NAS server cannot write to a client's disk. Installed bridges need reinstalling and clients need restarting. Local writes use the bridge user's filesystem permissions and require an explicit tool call; they are not confined to the NAS mounts. Filesystem and protocol adapters are tested Python outside the Dafny proof boundary; this change adds no verified application policy. Desktop conversation and remote-host behavior require separate validation.
+
+Evidence: six new tests failed before implementation; nine downloader tests passed afterward. All four client installer runs passed the live NAS handshake. The installed bridge downloaded the 18,312-byte Melody PDF, verified private permissions, and rejected overwriting it; the temporary copy was removed. Dafny rebuild could not run because the local Dafny executable is absent; no Dafny sources or generated output changed. Desktop conversations remain untested.
+
 ## Open decisions
 
 **2026-10-12 filename lookup:** Add `find_files` against the live authorized mounts. Some scanned identity documents were already indexed with OCR metadata, but content search missed them. Do not infer file absence from semantic search or extraction success. Match literal query terms against case-normalized relative filenames and folder names, using a verified Dafny matcher. Keep filesystem traversal and Unicode case normalization as tested Go adapters. Bound traversal time, visited entries, and results, and report partial searches. Include regular files whose content is unsupported or failed extraction; retain hidden-folder, symlink, and excluded-folder restrictions.
