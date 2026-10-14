@@ -12,6 +12,7 @@ services:
       NAS_ROOT: /files
       NAS_DATA: /data
       NAS_SEMANTIC: "true"
+      NAS_MODEL_KEEPALIVE_MINUTES: "${NAS_MODEL_KEEPALIVE_MINUTES:-5}"
       NAS_PHOTOS: "${NAS_PHOTOS:-false}"
       NAS_OCR: "${NAS_OCR:-true}"
       OMP_THREAD_LIMIT: "1"

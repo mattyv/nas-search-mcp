@@ -99,7 +99,7 @@ func scanApp(t *testing.T) *App {
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { a.Store.Close() })
+	t.Cleanup(func() { a.Close() })
 	return a
 }
 func write(t *testing.T, p, text string) {

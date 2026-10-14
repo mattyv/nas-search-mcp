@@ -160,6 +160,18 @@ Measure container memory, model failures, indexing time, and descriptive search 
 
 Evidence: the first two launcher tests failed because the script did not exist; all seven pilot tests then passed, including resource/security options, source confinement, credential handling, dry-run, and failure paths. Shell syntax validation passed. These use a fake Docker adapter and establish launcher behavior, not NAS compatibility. The published image e3ae38e passed full Linux CI before this pilot work. Local Dafny is absent and local Go linking fails against the installed macOS SDK, so fresh proof/Go verification remains assigned to CI.
 
+## D020 — Retain embedding models for a configurable idle period
+
+**Date:** 2026-10-14 · **Status:** Accepted; local tests and Dafny regeneration pass, NAS rollout and measurements pending
+
+Retain a serialized embedding worker for five idle minutes by default, configurable through `NAS_MODEL_KEEPALIVE_MINUTES`; accept fractional minutes and use `0` to disable reuse. Repeated searches previously paid model loading costs on every request. Restart the idle countdown after embedding requests, release the worker on idle expiry and service shutdown, and terminate it when a request is cancelled or its protocol fails. Do not replay failed requests automatically.
+
+Retain only one model in the worker. Release it before switching model types; stop the worker before document extraction so a warm model does not overlap extraction or OCR memory. Indexing can renew the timeout or interrupt model reuse. Keep the existing container memory and CPU limits. This supersedes the short-lived embedding-worker choice while preserving one-shot extraction and the zero-timeout fallback.
+
+Red-to-green evidence: two Python tests first failed because model retention and the persistent protocol were absent, then passed after implementation. The Python suite passes 75 tests plus two subtests. The Go lifecycle tests first failed because retention support was absent; the complete Go suite passes with race detection and `sqlite_fts5`. `scripts/build-core.sh` verifies and regenerates the unchanged core without stale generated output.
+
+The process lifecycle, timer, and model cache belong to Go/Python operating-system and model adapters outside the Dafny proof boundary. Do not claim that retention, runtime memory reclamation, or faster NAS searches are formally proved. NAS latency and resident-memory benefits remain unvalidated until measured on the DS220+.
+
 ## Open decisions
 
 **2026-10-12 filename lookup:** Add `find_files` against the live authorized mounts. The children's passport scans were already indexed with OCR metadata, but content search missed them. Do not infer file absence from semantic search or extraction success. Match literal query terms against case-normalized relative filenames and folder names, using a verified Dafny matcher. Keep filesystem traversal and Unicode case normalization as tested Go adapters. Bound traversal time, visited entries, and results, and report partial searches. Include regular files whose content is unsupported or failed extraction; retain hidden-folder, symlink, and excluded-folder restrictions.
@@ -174,4 +186,4 @@ Evidence: the first two launcher tests failed because the script did not exist; 
 - Whether CLIP photo inference fits comfortably on this NAS alongside its existing services.
 - How to extend OCR languages, unsupported formats, archives, and backups within the resource budget.
 - Which remote-access and ChatGPT connectivity route to validate.
-- Whether scale measurements justify a different vector index or persistent model-worker strategy.
+- Whether scale measurements justify a different vector index; measure the accepted persistent model-worker strategy on the NAS.
