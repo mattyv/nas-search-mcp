@@ -11,12 +11,14 @@ trap 'rm -rf "$translation_dir"' EXIT
   --output "$translation_dir/tests" --go-module-name coretests
 printf 'module coretests\n\ngo 1.25.0\n' > "$translation_dir/tests-go/go.mod"
 # Dafny 4.11's System_ template omits --go-module-name for its runtime import.
-sed -i 's|"dafny"|"coretests/dafny"|' "$translation_dir/tests-go/System_/System_.go"
+sed -i.bak 's|"dafny"|"coretests/dafny"|' "$translation_dir/tests-go/System_/System_.go"
+rm "$translation_dir/tests-go/System_/System_.go.bak"
 (cd "$translation_dir/tests-go" && go run .)
 "$dafny_bin" translate go core/Core.dfy --include-runtime \
   --output "$translation_dir/core" \
   --go-module-name github.com/mattyv/nas-search-mcp/generated/core
 mkdir -p generated/core
 cp -R "$translation_dir/core-go/." generated/core/
-sed -i 's|"dafny"|"github.com/mattyv/nas-search-mcp/generated/core/dafny"|' generated/core/System_/System_.go
+sed -i.bak 's|"dafny"|"github.com/mattyv/nas-search-mcp/generated/core/dafny"|' generated/core/System_/System_.go
+rm generated/core/System_/System_.go.bak
 gofmt -w generated/core

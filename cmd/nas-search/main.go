@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mattyv/nas-search-mcp/internal/app"
+	"github.com/mattyv/nas-search-mcp/internal/oauth"
 	"github.com/mattyv/nas-search-mcp/internal/store"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -72,6 +73,21 @@ type ReadOutput struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "hash-password" {
+		hash, err := passwordHash(os.Stdin)
+		if err != nil {
+			log.Fatal("password must contain 12 to 72 bytes")
+		}
+		// Setup captures this output directly into the private environment file.
+		os.Stdout.Write(hash)
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "revoke-oauth" {
+		if err := oauth.RevokeAll(env("NAS_OAUTH_DB", env("NAS_DATA", "/data")+"/oauth.sqlite3")); err != nil {
+			log.Fatal("OAuth revocation failed")
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "health" {
 		c := http.Client{Timeout: 3 * time.Second}
 		r, err := c.Get("http://127.0.0.1:8080/healthz")
@@ -84,8 +100,9 @@ func main() {
 		}
 		return
 	}
+	stdio := len(os.Args) > 1 && os.Args[1] == "--stdio"
 	token := os.Getenv("NAS_TOKEN")
-	if len(token) < 24 {
+	if !stdio && len(token) < 24 {
 		log.Fatal("NAS_TOKEN must contain at least 24 characters")
 	}
 	a, err := app.New(env("NAS_ROOT", "/files"), env("NAS_DATA", "/data"), env("NAS_PYTHON", "python3"), env("NAS_WORKER", "/app/worker/worker.py"), os.Getenv("NAS_VEC_EXTENSION"), enabled("NAS_SEMANTIC", true), enabled("NAS_PHOTOS", false))
@@ -93,8 +110,26 @@ func main() {
 		log.Fatal(err)
 	}
 	defer a.Close()
+	if err = a.ConfigureAccess(folderList(os.Getenv("NAS_ALLOWED_FOLDERS")), folderList(os.Getenv("NAS_DENIED_FOLDERS"))); err != nil {
+		log.Fatal("invalid folder access configuration")
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	server := buildMCPServer(a)
+	var publicServer *http.Server
+	if issuer := os.Getenv("NAS_OAUTH_ISSUER"); issuer != "" && !stdio {
+		auth, authErr := oauth.New(oauth.Config{Issuer: issuer, DatabasePath: env("NAS_OAUTH_DB", a.Data+"/oauth.sqlite3"), PasswordHash: os.Getenv("NAS_OAUTH_PASSWORD_HASH"), ClientID: os.Getenv("NAS_OAUTH_CLIENT_ID"), ClientSecretHash: os.Getenv("NAS_OAUTH_CLIENT_SECRET_HASH"), RedirectURIs: folderList(os.Getenv("NAS_OAUTH_LOCAL_REDIRECTS"))})
+		if authErr != nil {
+			log.Fatal("OAuth configuration invalid; refusing to start")
+		}
+		defer auth.Close()
+		publicServer = &http.Server{Addr: env("NAS_OAUTH_LISTEN", "127.0.0.1:8082"), Handler: buildPublicHandler(server, auth), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+		go func() {
+			if e := publicServer.ListenAndServe(); e != nil && !errors.Is(e, http.ErrServerClosed) {
+				log.Fatal("OAuth listener failed")
+			}
+		}()
+	}
 	interval, err := strconv.Atoi(env("NAS_SCAN_INTERVAL", "300"))
 	if err != nil || interval < 30 {
 		log.Fatal("NAS_SCAN_INTERVAL must be an integer >=30")
@@ -111,13 +146,22 @@ func main() {
 			}
 		}
 	}()
-	mux := buildHTTPHandler(a, token)
-	httpServer := &http.Server{Addr: env("NAS_LISTEN", ":8080"), Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+	if stdio {
+		if err = server.Run(ctx, &mcp.StdioTransport{}); err != nil {
+			log.Fatal("stdio transport failed")
+		}
+		return
+	}
+	mux := buildPrivateHandler(server, token)
+	httpServer := &http.Server{Addr: env("NAS_LISTEN", "127.0.0.1:8080"), Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		httpServer.Shutdown(shutdown)
+		if publicServer != nil {
+			publicServer.Shutdown(shutdown)
+		}
 	}()
 	log.Printf("NAS search listening on %s (bearer authentication required)", httpServer.Addr)
 	if err = httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -126,6 +170,20 @@ func main() {
 }
 
 func buildHTTPHandler(a *app.App, token string) http.Handler {
+	return buildPrivateHandler(buildMCPServer(a), token)
+}
+
+func folderList(value string) []string {
+	var out []string
+	for _, part := range strings.Split(value, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func buildMCPServer(a *app.App) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "nas-search", Version: "0.1.0"}, nil)
 	mcp.AddTool(server, &mcp.Tool{Name: "search", Description: "Search indexed NAS files using keywords and meaning. Set photos=true for visual photo search. Results include source paths and page/section locations. If the user names a file or this search misses it, use find_files to match live filename and folder terms. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, app.SearchResult, error) {
 		if in.Limit == 0 {
@@ -166,6 +224,10 @@ func buildHTTPHandler(a *app.App, token string) http.Handler {
 		out, err := a.Status()
 		return nil, out, err
 	})
+	return server
+}
+
+func buildPrivateHandler(server *mcp.Server, token string) http.Handler {
 	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true})
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", app.Protect(token, handler))

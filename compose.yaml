@@ -6,9 +6,21 @@ services:
     init: true
     user: "${NAS_UID:-1026}:${NAS_GID:-100}"
     ports:
-      - "${NAS_BIND_IP:-127.0.0.1}:8080:8080"
+      - "127.0.0.1:8080:8080"
+      - "${NAS_LAN_IP:-192.168.1.4}:8080:8080"
+      - "127.0.0.1:8082:8082"
     environment:
       NAS_TOKEN: ${NAS_TOKEN:?Set a random token of at least 24 characters in .env}
+      NAS_LISTEN: ":8080"
+      NAS_OAUTH_LISTEN: ":8082"
+      NAS_OAUTH_ISSUER: "${NAS_OAUTH_ISSUER:-}"
+      NAS_OAUTH_CLIENT_ID: "${NAS_OAUTH_CLIENT_ID:-nas-claude}"
+      NAS_OAUTH_PASSWORD_HASH: "${NAS_OAUTH_PASSWORD_HASH:-}"
+      NAS_OAUTH_CLIENT_SECRET_HASH: "${NAS_OAUTH_CLIENT_SECRET_HASH:-}"
+      NAS_OAUTH_DB: /data/oauth.sqlite3
+      NAS_OAUTH_LOCAL_REDIRECTS: "${NAS_OAUTH_LOCAL_REDIRECTS:-}"
+      NAS_ALLOWED_FOLDERS: "${NAS_ALLOWED_FOLDERS:-}"
+      NAS_DENIED_FOLDERS: "${NAS_DENIED_FOLDERS:-}"
       NAS_ROOT: /files
       NAS_DATA: /data
       NAS_SEMANTIC: "true"

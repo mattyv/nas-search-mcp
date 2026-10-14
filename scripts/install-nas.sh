@@ -51,6 +51,7 @@ if [ -f "$install_dir/.env" ]; then
     saved_code=$(field NAS_CODE_PATH)
     code=${saved_code:-/volume1/Matthew/Code}
     data=$(field NAS_INDEX_PATH)
+    allowed=$(field NAS_ALLOWED_FOLDERS)
     uid=$(field NAS_UID)
     gid=$(field NAS_GID)
     [ -d "$matthew" ] && [ -d "$photos" ] && [ -d "$code" ] && [ -d "$data" ] || fail 'Existing .env source and index directories must exist; refusing automatic recreation'
@@ -81,6 +82,11 @@ fi
 # Existing credential contents are preserved; restrict access before deployment.
 if [ "$existing_env" = true ]; then
     chmod 600 "$install_dir/.env" || fail 'Cannot secure existing .env permissions'
+    chown 0:0 "$install_dir/.env" || fail 'Cannot secure existing .env ownership'
+    if [ -z "$allowed" ]; then
+        awk 'BEGIN {value="NAS_ALLOWED_FOLDERS=Matthew,Code,Photos"} /^NAS_ALLOWED_FOLDERS=/ {if (!found++) print value; next} {print} END {if (!found) print value}' "$install_dir/.env" > "$install_dir/.env.tmp" || fail 'Cannot set source access scope'
+        chmod 600 "$install_dir/.env.tmp" && chown 0:0 "$install_dir/.env.tmp" && mv "$install_dir/.env.tmp" "$install_dir/.env" || fail 'Cannot save source access scope'
+    fi
 fi
 # No deployment/index state is changed before image/actual kernel limit validation.
 docker pull "$image"
@@ -92,10 +98,11 @@ if [ ! -f "$install_dir/.env" ]; then
     {
         printf 'NAS_TOKEN=%s\n' "$token"
         printf "NAS_MATTHEW_PATH='%s'\nNAS_PHOTOS_PATH='%s'\nNAS_CODE_PATH='%s'\nNAS_INDEX_PATH='%s'\n" "$matthew" "$photos" "$code" "$data"
-        printf 'NAS_UID=%s\nNAS_GID=%s\nNAS_BIND_IP=%s\nNAS_CPUSET=0\nNAS_PHOTOS=false\n' "$uid" "$gid" "$bind"
+        printf 'NAS_UID=%s\nNAS_GID=%s\nNAS_BIND_IP=%s\nNAS_CPUSET=0\nNAS_PHOTOS=false\nNAS_ALLOWED_FOLDERS=Matthew,Code,Photos\n' "$uid" "$gid" "$bind"
     } > "$install_dir/.env"
     unset token
     chmod 600 "$install_dir/.env"
+    chown 0:0 "$install_dir/.env" || fail 'Cannot secure new .env ownership'
     if [ ! -d "$data" ]; then
         mkdir -p "$data"
         chown "$uid:$gid" "$data"

@@ -67,7 +67,7 @@ func (a *App) sessionRequest(ctx context.Context, input []byte) (WorkerResult, e
 	if a.session == nil {
 		cmd := exec.Command(a.Python, a.Worker, "--serve")
 		cmd.Env = append(os.Environ(), "NAS_DATA="+a.Data, "OMP_NUM_THREADS=1", "OPENBLAS_NUM_THREADS=1", "TOKENIZERS_PARALLELISM=false")
-		cmd.Stderr = os.Stderr
+		cmd.Stderr = io.Discard
 		stdin, err := cmd.StdinPipe()
 		if err != nil {
 			return result, err
@@ -134,7 +134,7 @@ func (a *App) sessionRequest(ctx context.Context, input []byte) (WorkerResult, e
 		}
 	})
 	if result.Error != "" {
-		return result, errors.New(result.Error)
+		return result, errors.New("document/model worker reported an error")
 	}
 	return result, nil
 }

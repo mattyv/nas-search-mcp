@@ -2,6 +2,8 @@
 
 The service uses Streamable HTTP at `/mcp` with a static bearer token. For the LAN pilot the URL is `http://192.168.1.4:8080/mcp`. Substitute a reachable Tailscale/HTTPS address when configured. The server, index, and models remain on the NAS; the desktop bridge forwards requests and can save downloaded originals on its own computer.
 
+Claude web and mobile use a separate OAuth-protected listener on port `8082`; they do not use the static token or the private listener on `8080`. That connector is not deployed or publicly reachable yet. See [Claude web and mobile connector](oauth-connector.md) for the setup, selected folder scope, and pending checks.
+
 ## Install the MCP connection
 
 Fully quit Claude Desktop before changing its configuration, then reopen it after installation. If the NAS tools disappear later, check whether the `nas-search` entry is still present in the config file printed by the installer. Rerunning the installer restores a missing entry; use `--replace` only when replacing an existing entry.
@@ -77,7 +79,7 @@ For ChatGPT Desktop's local Codex connection, run the client installer with `--c
 
 [Official OpenAI documentation](https://learn.chatgpt.com/docs/extend/mcp) confirms that ChatGPT Desktop, Codex CLI, and the IDE extension share MCP configuration for the same Codex host. Restart the connection from Settings → MCP servers, start a new local Codex chat, and use `/mcp` to check availability. Desktop conversation use remains unverified here. Cloud Work chats do not load this local configuration, even when opened in the desktop app; see [developer settings](https://learn.chatgpt.com/docs/developer-settings).
 
-ChatGPT's **cloud** custom-MCP connection cannot directly reach a LAN address or your private Tailscale address. OpenAI documents [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels), which could run beside the server on the NAS and make an outbound connection. It requires a Platform tunnel identity, runtime API key, and relevant organization/workspace permissions. A publicly reachable HTTPS service is another route. Neither is configured in this pilot, and this server currently provides static bearer authentication rather than an OAuth authorization server.
+ChatGPT's **cloud** custom-MCP connection cannot directly reach a LAN address or your private Tailscale address. OpenAI documents [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels), which could run beside the server on the NAS and make an outbound connection. It requires a Platform tunnel identity, runtime API key, and relevant organization/workspace permissions. A publicly reachable HTTPS service is another route. Neither is configured for ChatGPT in this pilot. The separate OAuth listener described in the [Claude connector guide](oauth-connector.md) is intended for Claude web/mobile and does not establish ChatGPT cloud compatibility.
 
 Do not expose port 8080 to the public internet to bypass that limitation. First prove LAN/client access; verify the tunnel/authentication path and account support as a separate integration.
 
