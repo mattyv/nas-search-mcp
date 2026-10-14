@@ -45,7 +45,7 @@ func TestMCPHTTPTools(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer a.Store.Close()
+	defer a.Close()
 	if e = a.Store.Replace(store.File{Path: "doc.txt", Fingerprint: "test", Kind: "document"}, []store.Chunk{{Location: "text:1", Text: "kitchen renovation"}}, nil); e != nil {
 		t.Fatal(e)
 	}

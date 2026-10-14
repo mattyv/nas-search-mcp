@@ -33,6 +33,10 @@ type App struct {
 	Semantic, Photos           bool
 	Store                      *store.Store
 	workerGate                 chan struct{}
+	modelKeepalive             time.Duration
+	sessionMu                  sync.Mutex
+	session                    *modelSession
+	closed                     bool
 	scanMu                     sync.Mutex
 	stateMu                    sync.Mutex
 	scanning                   bool
@@ -73,7 +77,11 @@ type SearchResult struct {
 }
 
 func New(root, data, python, worker, extension string, semantic, photos bool) (*App, error) {
-	root, err := filepath.EvalSymlinks(root)
+	keepalive, err := modelKeepaliveFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +112,7 @@ func New(root, data, python, worker, extension string, semantic, photos bool) (*
 	if err != nil {
 		return nil, err
 	}
-	a := &App{Root: root, Data: data, Python: python, Worker: worker, Semantic: semantic, Photos: photos, Store: db, workerGate: make(chan struct{}, 1)}
+	a := &App{Root: root, Data: data, Python: python, Worker: worker, Semantic: semantic, Photos: photos, Store: db, modelKeepalive: keepalive, workerGate: make(chan struct{}, 1)}
 	// Store the extraction/model configuration. Never silently mix incompatible vectors.
 	signature := fmt.Sprintf("v1;bge-small-en-v1.5;clip-ViT-B-32;semantic=%t;photos=%t;root=%s", semantic, photos, root)
 	file := filepath.Join(data, "pipeline.json")
@@ -392,7 +400,7 @@ func Protect(token string, next http.Handler) http.Handler {
 	})
 }
 
-// A single subprocess at a time prevents document, text and image models coexisting.
+// Serialize workers; extraction releases the resident embedding worker before starting.
 func (a *App) worker(ctx context.Context, request map[string]any) (WorkerResult, error) {
 	var result WorkerResult
 	select {
@@ -407,6 +415,16 @@ func (a *App) worker(ctx context.Context, request map[string]any) (WorkerResult,
 	if err != nil {
 		return result, err
 	}
+	a.sessionMu.Lock()
+	defer a.sessionMu.Unlock()
+	if a.closed {
+		return result, errors.New("app is closed")
+	}
+	operation, _ := request["operation"].(string)
+	if a.modelKeepalive > 0 && (operation == "embed" || operation == "image_query" || operation == "image_embed") {
+		return a.sessionRequest(ctx, input)
+	}
+	a.stopSession()
 	cmd := exec.CommandContext(ctx, a.Python, a.Worker)
 	cmd.Env = append(os.Environ(), "NAS_DATA="+a.Data, "OMP_NUM_THREADS=1", "OPENBLAS_NUM_THREADS=1", "TOKENIZERS_PARALLELISM=false")
 	cmd.Stdin = bytes.NewReader(input)

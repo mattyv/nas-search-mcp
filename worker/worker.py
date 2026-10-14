@@ -278,7 +278,26 @@ def load_embedding_classes():
     return TextEmbedding, ImageEmbedding
 
 
-def handle(request):
+class ModelCache:
+    """Retain at most one model; process shutdown releases its runtime memory."""
+    def __init__(self):
+        self.key = None
+        self.model = None
+
+    def get(self, cls, model_name):
+        if self.key != model_name:
+            import gc
+            self.model = None
+            self.key = None
+            gc.collect()
+            self.model = cls(model_name=model_name, threads=1,
+                             providers=['CPUExecutionProvider'],
+                             cache_dir=str(Path(os.environ.get('NAS_DATA', '/data')) / 'models'))
+            self.key = model_name
+        return self.model
+
+
+def handle(request, model_cache=None):
     operation = request.get('operation', request.get('op'))
     if operation == 'extract':
         return extract(request)
@@ -297,7 +316,7 @@ def handle(request):
     TextEmbedding, ImageEmbedding = load_embedding_classes()
     model_name = {'embed': 'BAAI/bge-small-en-v1.5', 'image_embed': 'Qdrant/clip-ViT-B-32-vision', 'image_query': 'Qdrant/clip-ViT-B-32-text'}[operation]
     cls = ImageEmbedding if operation == 'image_embed' else TextEmbedding
-    model = cls(model_name=model_name, threads=1, providers=['CPUExecutionProvider'], cache_dir=str(Path(os.environ.get('NAS_DATA', '/data')) / 'models'))
+    model = (model_cache if model_cache is not None else ModelCache()).get(cls, model_name)
     vectors = [vector.tolist() if hasattr(vector, 'tolist') else list(vector) for vector in model.embed(values, batch_size=1)]
     dimension = 384 if operation == 'embed' else 512
     if len(vectors) != len(values) or any(len(vector) != dimension for vector in vectors):
@@ -305,7 +324,22 @@ def handle(request):
     return {'vectors': vectors, 'dimension': dimension, 'model': model_name}
 
 
+def serve():
+    cache = ModelCache()
+    for line in sys.stdin:
+        try:
+            with contextlib.redirect_stdout(sys.stderr):
+                result = handle(json.loads(line), cache)
+                response = json.dumps(result, allow_nan=False)
+        except Exception as error:
+            response = json.dumps({'error': str(error)})
+        print(response, flush=True)
+    return 0
+
+
 def main():
+    if sys.argv[1:] == ['--serve']:
+        return serve()
     try:
         request = json.load(sys.stdin)
         with contextlib.redirect_stdout(sys.stderr):

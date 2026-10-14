@@ -92,7 +92,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer a.Store.Close()
+	defer a.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	interval, err := strconv.Atoi(env("NAS_SCAN_INTERVAL", "300"))
