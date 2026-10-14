@@ -14,7 +14,7 @@ def setup(tmp_path):
     install = tmp_path / 'install'
     install.mkdir()
     secret = install / '.env'
-    secret.write_text(f'NAS_TOKEN={TOKEN}\nNAS_UID=1000\nNAS_GID=100\nNAS_CPUSET=0\n')
+    secret.write_text(f'NAS_TOKEN={TOKEN}\nNAS_UID=1000\nNAS_GID=100\nNAS_CPUSET=0\nNAS_DENIED_FOLDERS=Photos/private\n')
     secret.chmod(0o600)
     (install / 'compose.yaml').write_text('original')
     log = tmp_path / 'docker.log'
@@ -54,6 +54,8 @@ def test_isolated_private_bounded_launch(tmp_path):
     assert TOKEN not in calls + result.stdout + result.stderr
     pilot_env = install / '.env-photo-pilot'
     assert 'NAS_PHOTOS=true' in pilot_env.read_text()
+    assert 'NAS_ALLOWED_FOLDERS=Photos' in pilot_env.read_text()
+    assert 'NAS_DENIED_FOLDERS=Photos/private' in pilot_env.read_text()
     assert pilot_env.stat().st_mode & 0o077 == 0
     assert (install / '.env').read_bytes() == original
     assert (install / 'compose.yaml').read_text() == 'original'

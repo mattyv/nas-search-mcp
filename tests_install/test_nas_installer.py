@@ -19,7 +19,7 @@ run) [ "${FAIL_LIMITS:-0}" = 0 ];;
 compose) case "$*" in *"exec -T nas-search"*) [ "${FAIL_HEALTH:-0}" = 0 ];; esac;;
 esac
 ''')
-    (binaries / 'chown').write_text('#!/bin/sh\nexit 0\n')
+    (binaries / 'chown').write_text('#!/bin/sh\nprintf \"%s\\n\" \"$*\" >> \"$CHOWN_LOG\"\n')
     (binaries / 'sleep').write_text('#!/bin/sh\nexit 0\n')
     for binary in binaries.iterdir():
         binary.chmod(0o755)
@@ -29,7 +29,7 @@ esac
     photos.mkdir()
     code = tmp_path / 'Code'
     code.mkdir()
-    env = dict(os.environ, PATH=str(binaries) + ':' + os.environ['PATH'], DOCKER_LOG=str(log), SUDO_UID='1000', SUDO_GID='100')
+    env = dict(os.environ, PATH=str(binaries) + ':' + os.environ['PATH'], DOCKER_LOG=str(log), CHOWN_LOG=str(tmp_path / 'chown.log'), SUDO_UID='1000', SUDO_GID='100')
     args = ['sh', str(SCRIPT), '--image', 'ghcr.io/mattyv/nas-search-mcp:abc123', '--install-dir', str(tmp_path / 'install'), '--documents-path', str(owner), '--photos-path', str(photos), '--code-path', str(code), '--data-path', str(tmp_path / 'index'), '--bind-ip', '192.0.2.10']
     return args, env, log
 
@@ -42,7 +42,9 @@ def test_install_order_and_private_state(tmp_path):
     contents = (state / '.env').read_text()
     assert 'NAS_UID=1000' in contents
     assert 'NAS_TOKEN=' in contents
+    assert 'NAS_ALLOWED_FOLDERS=Documents,Code,Photos' in contents
     assert (state / '.env').stat().st_mode & 0o077 == 0
+    assert f'0:0 {state / ".env"}' in (tmp_path / 'chown.log').read_text()
     assert 'NAS_TOKEN=' not in result.stdout
     calls = log.read_text()
     assert calls.index('pull ') < calls.index('run ') < calls.index('up -d --no-build') < calls.index('exec -T nas-search')
@@ -75,12 +77,17 @@ def test_existing_state_and_failed_upgrade_rollback(tmp_path):
     args, env, log = setup(tmp_path)
     assert subprocess.run(args, env=env, capture_output=True).returncode == 0
     state = tmp_path / 'install'
-    original = (state / '.env').read_bytes()
+    original = (state / '.env').read_text()
+    token = next(line for line in original.splitlines() if line.startswith('NAS_TOKEN='))
+    (state / '.env').write_text('\n'.join(line for line in original.splitlines() if not line.startswith('NAS_ALLOWED_FOLDERS=')) + '\nNAS_DENIED_FOLDERS=Photos/private\n')
     (tmp_path / 'index' / 'keep.sqlite3').write_bytes(b'untouched')
     args[args.index('--image') + 1] = 'ghcr.io/mattyv/nas-search-mcp:def456'
     env['FAIL_HEALTH'] = '1'
     assert subprocess.run(args, env=env, capture_output=True).returncode != 0
-    assert (state / '.env').read_bytes() == original
+    updated = (state / '.env').read_text()
+    assert token in updated
+    assert 'NAS_ALLOWED_FOLDERS=Documents,Code,Photos' in updated
+    assert 'NAS_DENIED_FOLDERS=Photos/private' in updated
     assert (state / 'current-image').read_text().strip().endswith(':abc123')
     assert (tmp_path / 'index' / 'keep.sqlite3').read_bytes() == b'untouched'
     assert 'Rollback' in log.read_text() or log.read_text().count('up -d --no-build') >= 3
@@ -155,3 +162,16 @@ def test_code_source_mount_and_env(tmp_path):
     assert f"{tmp_path / 'Code'}:/check-code:ro" in log.read_text()
     (tmp_path / 'Code').rmdir()
     assert subprocess.run(args, env=env, capture_output=True).returncode != 0
+
+
+def test_existing_access_scope_is_preserved(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    secret = tmp_path / 'install' / '.env'
+    secret.write_text(secret.read_text().replace('NAS_ALLOWED_FOLDERS=Documents,Code,Photos', 'NAS_ALLOWED_FOLDERS=Documents') + 'NAS_DENIED_FOLDERS=Documents/private\n')
+    args[args.index('--image') + 1] = 'ghcr.io/mattyv/nas-search-mcp:def456'
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    contents = secret.read_text()
+    assert 'NAS_ALLOWED_FOLDERS=Documents\n' in contents
+    assert 'NAS_DENIED_FOLDERS=Documents/private\n' in contents

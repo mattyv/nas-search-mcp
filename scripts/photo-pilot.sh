@@ -40,6 +40,7 @@ token=$(field NAS_TOKEN)
 uid=$(field NAS_UID)
 gid=$(field NAS_GID)
 cpuset=$(field NAS_CPUSET)
+denied=$(field NAS_DENIED_FOLDERS)
 [ "${#token}" -ge 24 ] || fail 'Deployment token must have at least 24 characters'
 case "$token" in *[!a-zA-Z0-9_-]*) fail 'Deployment token has unsupported characters';; esac
 case "$uid:$gid" in *[!0-9:]*|:*|*:) fail 'Deployment UID/GID must be numeric';; esac
@@ -70,8 +71,9 @@ docker run --rm --user "$uid:$gid" --memory 1g --memory-swap 1g --cpuset-cpus "$
     || fail 'Container user cannot read photos or write pilot data; fix DSM permissions. Normal service is untouched.'
 {
     printf 'NAS_TOKEN=%s\n' "$token"
-    printf '%s\n' NAS_ROOT=/files NAS_DATA=/data NAS_SEMANTIC=true NAS_PHOTOS=true NAS_OCR=false NAS_SCAN_INTERVAL=300 NAS_VEC_EXTENSION=/opt/vec0.so NAS_WORKER=/app/worker/worker.py GOMEMLIMIT=128MiB GOMAXPROCS=1 OMP_THREAD_LIMIT=1 HOME=/data HF_HOME=/data/models/huggingface
+    printf '%s\n' NAS_ROOT=/files NAS_DATA=/data NAS_SEMANTIC=true NAS_PHOTOS=true NAS_OCR=false NAS_ALLOWED_FOLDERS=Photos NAS_SCAN_INTERVAL=300 NAS_VEC_EXTENSION=/opt/vec0.so NAS_WORKER=/app/worker/worker.py GOMEMLIMIT=128MiB GOMAXPROCS=1 OMP_THREAD_LIMIT=1 HOME=/data HF_HOME=/data/models/huggingface
 } > "$pilot_env"
+if [ -n "$denied" ]; then printf 'NAS_DENIED_FOLDERS=%s\n' "$denied" >> "$pilot_env"; fi
 unset token
 chmod 600 "$pilot_env"
 docker run -d --name nas-search-photo-pilot --init \

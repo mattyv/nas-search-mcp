@@ -1,0 +1,5 @@
+# Local NAS update: reuse the already-running pinned runtime image and replace only the Go service.
+FROM ghcr.io/mattyv/nas-search-mcp:7391ce9920a337e15a064fe0f89194e931213d3f
+COPY build/nas-search /app/nas-search
+COPY worker/worker.py /app/worker/worker.py
+EXPOSE 8082

@@ -6,6 +6,8 @@ Read-only keyword and semantic search for a Synology DS220+ with 2 GB RAM. The s
 
 **Status: running on the DS220+.** NAS checks passed for text indexing, hybrid search, authenticated MCP access, complete PDF text retrieval, original-file download, and a one-page scanned-PDF OCR fixture. Documents and Code are mounted separately. Initial indexing is still running; photo embeddings remain disabled. Client configurations are installed; GUI conversations still need testing. An indexed C++ source file also passed a text-read check. See [current NAS validation](docs/benchmarks/nas-update.json) and [initial pilot evidence](docs/benchmarks/nas-pilot.json).
 
+Claude web and mobile can use a separate OAuth connector design at `https://NAS.TAILNET.ts.net/mcp`. It is not deployed or publicly reachable yet. Read [Claude connector setup and access limits](docs/oauth-connector.md) before enabling it; the guide requires explicit approval before Funnel exposure.
+
 ## Install
 
 **Connect an MCP client** from this checkout on your computer:

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -29,6 +30,8 @@ if "--serve" in sys.argv:
   if r.get("text")=="malformed":
    print("invalid",flush=True); continue
   if r.get("text")=="exit": sys.exit(0)
+  if r.get("text")=="secret-error":
+   print(json.dumps({"error":"private document contents"}),flush=True); continue
   reply(r)
 else:
  reply(json.load(sys.stdin))
@@ -129,6 +132,14 @@ func TestModelSessionInvalidResponseRestarts(t *testing.T) {
 				t.Fatal("broken worker reused")
 			}
 		})
+	}
+}
+
+func TestModelSessionHidesWorkerErrorDetails(t *testing.T) {
+	a := fakeSessionApp(t, time.Minute)
+	_, err := a.worker(context.Background(), map[string]any{"operation": "embed", "text": "secret-error"})
+	if err == nil || strings.Contains(err.Error(), "private document contents") {
+		t.Fatal("worker details escaped into a public tool error")
 	}
 }
 

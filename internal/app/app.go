@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -37,6 +36,9 @@ type App struct {
 	sessionMu                  sync.Mutex
 	session                    *modelSession
 	closed                     bool
+	accessMu                   sync.RWMutex
+	accessConfigured           bool
+	allowed, denied            []string
 	scanMu                     sync.Mutex
 	stateMu                    sync.Mutex
 	scanning                   bool
@@ -134,48 +136,25 @@ func New(root, data, python, worker, extension string, semantic, photos bool) (*
 	return a, nil
 }
 func (a *App) safeFile(relative string) (string, error) {
-	if !policy.ValidRelative(relative) {
-		return "", errors.New("invalid relative path")
-	}
-	full, err := filepath.EvalSymlinks(filepath.Join(a.Root, filepath.FromSlash(relative)))
+	f, err := a.openFile(relative)
 	if err != nil {
 		return "", err
 	}
-	rel, err := filepath.Rel(a.Root, full)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", errors.New("path escapes configured root")
-	}
-	info, err := os.Stat(full)
-	if err != nil {
-		return "", err
-	}
-	if !info.Mode().IsRegular() {
-		return "", errors.New("path is not a regular file")
-	}
-	return full, nil
+	f.Close()
+	return filepath.Join(a.Root, filepath.FromSlash(relative)), nil
 }
 
-// openFile uses the OS-enforced root boundary, including during concurrent symlink changes.
 func (a *App) openFile(relative string) (*os.File, error) {
-	if !policy.ValidRelative(relative) {
-		return nil, errors.New("invalid relative path")
+	if !policy.ValidRelative(relative) || !a.accessAllowed(relative, false) {
+		return nil, errors.New("path outside allowed folders")
 	}
-	root, err := os.OpenRoot(a.Root)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-	// Nonblocking open prevents a raced-in FIFO from waiting for a writer before Stat.
-	f, err := root.OpenFile(filepath.FromSlash(relative), os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := a.openNoSymlinks(relative, false)
 	if err != nil {
 		return nil, err
 	}
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
 		f.Close()
-		if err != nil {
-			return nil, err
-		}
 		return nil, errors.New("path is not a regular file")
 	}
 	return f, nil
@@ -301,7 +280,7 @@ func (a *App) FetchFile(relative string, offset int64, maxBytes int, expectedVer
 }
 
 // ReadDocument reads a window of the full extracted document, independently of the index's text cap.
-// Python extraction is a trusted boundary; its path open is not part of Dafny verification.
+// Python extraction consumes a private snapshot and is outside Dafny verification.
 func (a *App) ReadDocument(ctx context.Context, relative string, offset int64, maxChars int) (DocumentResult, error) {
 	return a.ReadDocumentWithOCR(ctx, relative, offset, maxChars, false)
 }
@@ -323,22 +302,21 @@ func (a *App) ReadDocumentWithOCR(ctx context.Context, relative string, offset i
 		maxChars = 12000
 	}
 	maxChars = policy.ClampLimit(maxChars, 20000)
-	full, err := a.safeFile(relative)
+	full, info, cleanup, err := a.snapshot(relative)
 	if err != nil {
 		return out, err
 	}
-	info, err := os.Stat(full)
-	if err != nil {
-		return out, err
-	}
-	if info.Size() > sourceLimit {
-		return out, errors.New("file exceeds 32 MiB source limit")
-	}
+	defer cleanup()
 	result, err := a.worker(ctx, map[string]any{"operation": "read_document", "path": full, "offset": offset, "max_chars": maxChars, "max_bytes": sourceLimit, "force_ocr": forceOCR})
 	if err != nil {
 		return out, err
 	}
-	after, err := os.Stat(full)
+	current, err := a.openFile(relative)
+	if err != nil {
+		return out, err
+	}
+	after, err := current.Stat()
+	current.Close()
 	if err != nil {
 		return out, err
 	}
@@ -430,7 +408,7 @@ func (a *App) worker(ctx context.Context, request map[string]any) (WorkerResult,
 	cmd.Stdin = bytes.NewReader(input)
 	var output bytes.Buffer
 	cmd.Stdout = &output
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = io.Discard
 	if err = cmd.Run(); err != nil {
 		return result, fmt.Errorf("worker failed: %w", err)
 	}
@@ -438,7 +416,7 @@ func (a *App) worker(ctx context.Context, request map[string]any) (WorkerResult,
 		return result, fmt.Errorf("invalid worker response: %w", err)
 	}
 	if result.Error != "" {
-		return result, errors.New(result.Error)
+		return result, errors.New("document/model worker reported an error")
 	}
 	return result, nil
 }
@@ -465,7 +443,7 @@ func (a *App) Search(ctx context.Context, query, prefix string, photos bool, lim
 			result.Mode = "hybrid"
 		} else {
 			result.Warning = "Semantic model unavailable; using keyword search"
-			log.Printf("query embedding unavailable: %v", err)
+			log.Printf("query embedding unavailable")
 		}
 	}
 	candidates, err := a.Store.Candidates(query, prefix, photos, vector, policy.ClampLimit(limit, 50)*5)
@@ -541,11 +519,6 @@ func (a *App) findFiles(ctx context.Context, query, prefix string, limit, budget
 	}
 	walkContext, cancel := context.WithTimeout(ctx, duration)
 	defer cancel()
-	root, err := os.OpenRoot(a.Root)
-	if err != nil {
-		return out, err
-	}
-	defer root.Close()
 	stop := errors.New("bounded live search stopped")
 	truncated := func(message string) error { out.Truncated = true; out.Warning = message; return stop }
 	var walk func(string) error
@@ -553,7 +526,10 @@ func (a *App) findFiles(ctx context.Context, query, prefix string, limit, budget
 		if err := walkContext.Err(); err != nil {
 			return err
 		}
-		f, err := root.OpenFile(directory, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+		if !a.accessAllowed(directory, true) {
+			return nil
+		}
+		f, err := a.openNoSymlinks(directory, true)
 		if err != nil {
 			out.Truncated = true
 			out.Warning = "Some directories could not be searched"
@@ -573,7 +549,6 @@ func (a *App) findFiles(ctx context.Context, query, prefix string, limit, budget
 				if out.Visited >= budget {
 					return truncated("Entry limit reached; narrow the prefix or query")
 				}
-				out.Visited++
 				if strings.HasPrefix(entry.Name(), ".") || entry.Type()&os.ModeSymlink != 0 {
 					continue
 				}
@@ -581,6 +556,10 @@ func (a *App) findFiles(ctx context.Context, query, prefix string, limit, budget
 				if directory != "." {
 					relative = directory + "/" + relative
 				}
+				if !a.accessAllowed(relative, entry.IsDir()) {
+					continue
+				}
+				out.Visited++
 				if entry.IsDir() {
 					if excluded[entry.Name()] {
 						continue
@@ -628,7 +607,7 @@ func (a *App) findFiles(ctx context.Context, query, prefix string, limit, budget
 			}
 		}
 	}
-	err = walk(".")
+	err := walk(".")
 	if ctx.Err() != nil {
 		return out, ctx.Err()
 	}
@@ -677,9 +656,24 @@ func (a *App) Status() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	var index any = stats
+	a.accessMu.RLock()
+	scoped := a.accessConfigured
+	a.accessMu.RUnlock()
+	if scoped {
+		index = map[string]any{"scope": "configured folders", "details": "global index statistics hidden"}
+	}
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
-	return map[string]any{"index": stats, "scanning": a.scanning, "last_scan": a.lastScan, "scan_error": a.scanError, "semantic": a.Semantic, "photos": a.Photos, "ocr": ocrEnabled(), "current_file": a.currentFile, "scan_stage": a.scanStage, "file_started_at": a.fileStartedAt, "scan_started_at": a.scanStartedAt}, nil
+	scanError := a.scanError
+	if scoped && scanError != "" {
+		scanError = "scan failed"
+	}
+	currentFile := a.currentFile
+	if currentFile != "" && !a.accessAllowed(currentFile, false) {
+		currentFile = ""
+	}
+	return map[string]any{"index": index, "scanning": a.scanning, "last_scan": a.lastScan, "scan_error": scanError, "semantic": a.Semantic, "photos": a.Photos, "ocr": ocrEnabled(), "current_file": currentFile, "scan_stage": a.scanStage, "file_started_at": a.fileStartedAt, "scan_started_at": a.scanStartedAt}, nil
 }
 
 var excluded = map[string]bool{"node_modules": true, "vendor": true, "build": true, "dist": true, "__pycache__": true, "WDTimeMachine": true, "Time Machine": true, "@eaDir": true, "@Recycle": true}
@@ -757,6 +751,13 @@ func (a *App) Scan(ctx context.Context) error {
 			return walkErr
 		}
 		if d.IsDir() {
+			rel, e := filepath.Rel(a.Root, full)
+			if e != nil {
+				return e
+			}
+			if !a.accessAllowed(filepath.ToSlash(rel), true) {
+				return filepath.SkipDir
+			}
 			if full != a.Root && (strings.HasPrefix(d.Name(), ".") || excluded[d.Name()]) {
 				return filepath.SkipDir
 			}
@@ -770,6 +771,9 @@ func (a *App) Scan(ctx context.Context) error {
 			return e
 		}
 		rel = filepath.ToSlash(rel)
+		if !a.accessAllowed(rel, false) {
+			return nil
+		}
 		a.setScanProgress(rel, "checking")
 		defer a.setScanProgress("", "walking")
 		if _, e = a.safeFile(rel); e != nil {
@@ -786,20 +790,25 @@ func (a *App) Scan(ctx context.Context) error {
 			}
 			return a.Store.RecordError(rel, "File exceeds 32 MiB input limit")
 		}
-		hash, e := fingerprint(full)
+		snapshot, _, cleanup, e := a.snapshot(rel)
+		if e != nil {
+			return e
+		}
+		defer cleanup()
+		hash, e := fingerprint(snapshot)
 		if e != nil {
 			return e
 		}
 		if !forceRefresh && !policy.ShouldReplace(old[rel], hash) {
 			return nil
 		}
-		if e = a.indexFile(ctx, full, rel, hash); e != nil {
-			log.Printf("index %s: %v", rel, e)
+		if e = a.indexFile(ctx, snapshot, rel, hash); e != nil {
+			log.Printf("indexing failed")
 			// Old chunks describe a different revision and must not survive a failed update.
 			if removeErr := a.Store.Remove(rel); removeErr != nil {
 				return removeErr
 			}
-			return a.Store.RecordError(rel, e.Error())
+			return a.Store.RecordError(rel, "document indexing failed")
 		}
 		return nil
 	})
@@ -871,7 +880,12 @@ func (a *App) indexFile(ctx context.Context, full, relative, hash string) error 
 		}
 	}
 	// Changed-during-read files are retried on the next scan, never committed as current.
-	after, err := fingerprint(full)
+	current, _, cleanup, err := a.snapshot(relative)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	after, err := fingerprint(current)
 	if err != nil {
 		return err
 	}
