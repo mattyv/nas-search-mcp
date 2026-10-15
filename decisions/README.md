@@ -172,6 +172,18 @@ Red-to-green evidence: two Python tests first failed because model retention and
 
 The process lifecycle, timer, and model cache belong to Go/Python operating-system and model adapters outside the Dafny proof boundary. Do not claim that retention, runtime memory reclamation, or faster NAS searches are formally proved. NAS latency and resident-memory benefits remain unvalidated until measured on the DS220+.
 
+## D023 — Request checked main upgrades through authenticated MCP
+
+**Date:** 2026-10-15 · **Status:** Accepted implementation; NAS enablement and reboot recovery unvalidated
+
+Expose optional `upgrade_from_main` and `upgrade_status` tools through the existing bearer and OAuth authentication boundaries. Require an explicit user upgrade request in the tool description. Enabling the feature grants the capability to every authenticated client, including existing OAuth grants; there is no separate administrator role. Disclose service upgrades in OAuth consent. Original document access stays read-only. The user specifically requested upgrade commands through MCP.
+
+Keep Docker and root execution outside the search container. Publish one complete, exclusive fixed-action request into a separate root-controlled sticky queue. A host worker locks deployment, resolves the exact current main commit, checks successful push-main verification and publication jobs, fetches a bounded source archive, rejects unsafe archive entries, and invokes the existing pinned-image installer. Retain the request until terminal status is written. Wait for installer completion so slow Docker operations cannot outlive a falsely released upgrade lock; stalled installations require operator inspection. Preserve existing secrets, mounts, index and models. Startup rollback covers image/configuration, not database schemas.
+
+One-time sudo setup creates `/volume1/@nas-search-upgrader`, rather than trusting the existing user-writable deployment tree. Protect all ancestors and check DSM ACLs at deployment. Copy private settings, install trusted worker code, and mount only its request queue into the service. A root DSM boot task is required for reboot recovery. The worker itself does not self-update. This adds Python/Go operating-system, filesystem and protocol adapters; no new application policy requires Dafny, and these adapters are not formally verified.
+
+Evidence: initial queue tests failed because the queue was absent; the MCP test then failed with an unknown upgrade tool. Both passed after implementation, including concurrent exclusive publication and rejection of unauthenticated calls. Host and setup tests began with missing-file failures and passed after implementation; further review added archive bounds, CI publication, privacy, permission disclosure and failure handling checks. Verification: current-main Dafny rebuild passed 37 obligations with zero errors and executable core tests; generated output remains unchanged. All Go tests pass with race detection and `sqlite_fts5`. Python worker and installer tests pass 125 tests plus two subtests. OAuth upgrade and consent checks pass. Docker is unavailable locally, so the feature image build and CI publication remain pending. Latest main b332152 was installed on the NAS by the user through the staged sudo helper; its installer reported HTTP health and authenticated index_status passed. The new MCP upgrade feature still requires publication and protected host setup.
+
 ## Open decisions
 
 **2026-10-12 filename lookup:** Add `find_files` against the live authorized mounts. Some scanned identity documents were already indexed with OCR metadata, but content search missed them. Do not infer file absence from semantic search or extraction success. Match literal query terms against case-normalized relative filenames and folder names, using a verified Dafny matcher. Keep filesystem traversal and Unicode case normalization as tested Go adapters. Bound traversal time, visited entries, and results, and report partial searches. Include regular files whose content is unsupported or failed extraction; retain hidden-folder, symlink, and excluded-folder restrictions.
@@ -223,3 +235,63 @@ Proof boundary: the Dafny core proves the inline allowlist excludes HTML, XHTML,
 Red-to-green evidence: new Dafny executable tests failed to resolve before `ShowInline` and `LinkActive` existed. With empty Go stubs, all eight new Go tests failed on behavior (stub errors, accepted invalid base, missing tool, no rate limit), then passed after implementation. `scripts/build-core.sh` verified and regenerated the core; the Go race suite with `sqlite_fts5` and 104 Python tests pass.
 
 **2026-10-15 review follow-up:** An independent review found no blockers. Fixed three issues. A handler panic leaked a download concurrency slot permanently; slots are now released on panic, in both the download and MCP gates. One shared rate limit let junk requests starve real links, and a PDF viewer's burst of range requests hit `429`. Requests for active links now get a separate, larger budget (20/s, burst 100), unknown links keep the strict budget, and full concurrency slots queue for up to 10 seconds instead of failing. `fetch_file` mentioned `download_link` even when links were disabled; the hint now appears only when the tool exists. Each fix had a test that failed on behavior with signature-only stubs, then passed. A reported markdown break on filenames with parentheses did not reproduce: Go's path escaping already encodes them; a regression test now covers it. Docs now mark Claude app use as unconfirmed, the private-address setup as untested, and note that `revoke-oauth` alone leaves links active until expiry.
+
+## D024 — Accept Synology upgrade paths and resume interrupted setup
+
+**Date:** 2026-10-15 · **Status:** Accepted fix; NAS recovery and same-version MCP upgrade passed, reboot recovery pending
+
+The first live setup created the protected deployment snapshots, then failed because the installer rejected the `@` in its own default `/volume1/@nas-search-upgrader` path. Live HTTP health still passed and MCP discovery still showed the earlier seven tools. A regression reproduced the exact path rejection before the fix, then passed initial installation and a subsequent upgrade after allowing literal at signs. Other path restrictions remain in place.
+
+Add explicit `--resume` for an existing protected setup. Require trusted ancestors and complete root-owned snapshots, worker and queue; preserve the target's token and configuration. Default setup continues to refuse an existing target. This avoids deleting saved deployment state and supports recovery after a failed attempt. These are tested shell/Python deployment adapters outside the Dafny proof boundary.
+
+Evidence: eight resume tests failed before implementation and 19 bootstrap tests passed afterward. The complete Python suite passes 136 tests plus two subtests; the Go suite with race detection and sqlite_fts5 passes. Dafny rebuild verifies 37 obligations with zero errors and executable tests, with unchanged generated output. Live recovery passed on the DS220+: the user ran the pinned sudo resume helper, authenticated MCP discovery exposed both upgrade tools, and a real upgrade_from_main request progressed from queued to running to succeeded for b0aa0b569a15762807527d5f527839d629224416. This exercised a same-version upgrade after setup installed the image; a future version-changing MCP upgrade has not yet been observed. HTTP health returned ok and unauthenticated MCP returned 401. The DSM root boot task and reboot recovery remain unvalidated.
+
+## D025 — Preserve the active mobile connector configuration during upgrades
+
+**Date:** 2026-10-15 · **Status:** Accepted repair; live OAuth restoration and version-changing MCP upgrade passed; mobile sign-in denial under investigation
+
+The user reported mobile OAuth login timing out after upgrade enablement. The private MCP tools worked, but the local OAuth listener was unavailable. Deployment had copied stale settings from `/volume1/docker/nas-search` instead of the previously active `/volume1/nas-search-connector`. Private health and same-version MCP-upgrade checks did not detect this regression; their earlier evidence applies only to private access.
+
+Discover the active Compose working-directory label when no deployment source is specified. Fall back to the legacy directory only when the service container is absent, and reject inspection errors or invalid paths. Preserve explicit path overrides. Require configured OAuth metadata to report the expected issuer and anonymous MCP to return its authentication challenge before installer success; failed checks use existing rollback.
+
+Provide a root-only one-time repair that restores the saved original configuration while retaining upgrade queue settings. Verify deployment identity, preserve a private environment backup, append protected diagnostics, and restore the prior settings if installation or OAuth checks fail. Keep Funnel, Tailscale and unrelated services unchanged. These Docker, filesystem and HTTP operations remain unproved adapters; no Dafny source changes are needed.
+
+Evidence: eight deployment-preservation regressions failed before their fixes, and seven repair tests initially failed before implementation. Three review regressions then reproduced the wrong OAuth probe port, unchecked issuer, and pending-upgrade handling before correction. Full repair orchestration tests were added after implementation and are not TDD evidence. Final Python, Go and Dafny results are reported with the handoff; NAS restoration remains pending.
+
+Independent review added a maintenance pause for the exact root upgrade-worker process, with command, root credentials and process identity checks. Repair and rollback run while it is paused; cleanup resumes it. The full Python suite passes 163 tests plus two subtests. Go race/sqlite_fts5 tests and Dafny verification pass with unchanged generated output.
+
+Live evidence on 2026-10-15: the user ran the staged root repair; OAuth metadata and authentication checks passed. Public issuer metadata and the password form returned 200. A real authenticated MCP upgrade moved from b0aa0b5 to 7df3e6961a8217de3590488a9c56d1e3bdfeecd1 and reported succeeded with configured OAuth checks. Public anonymous MCP returned 401 with resource metadata. This validates preservation of the OAuth listener and settings, not a completed mobile sign-in. The user reports access denied on mobile; the exact step is being clarified.
+
+## D026 — Preserve access restrictions and writable-mount separation
+
+**Date:** 2026-10-15 · **Status:** Accepted local security fixes; release and NAS rollout pending
+
+The Astra high-effort review reproduced access widening when an upgrade saw an empty allowlist, unsafe reverse source/index containment, and an ignored bind address. Preserve both empty and missing allowlists without mutation; fresh installs alone explicitly authorize their selected source roots. Require canonical original sources and writable index/queue directories to be disjoint in both directions, reject writable directories containing installer state, and neutralize inherited Compose overrides so the settings checked are the settings deployed.
+
+Use `NAS_BIND_IP` consistently. Existing canonical configuration takes precedence; legacy `NAS_LAN_IP` supplies the address only when the canonical setting is absent. Installer-managed LAN deployments keep loopback for existing private Serve routes; wildcard and loopback addresses do not create duplicate listeners. Direct Compose uses one explicit address and needs a separately added loopback mapping when LAN plus private Serve is required. Existing LAN access must remain enabled at rollout.
+
+Five initial installer regressions reproduced unsafe scope and mount handling before the fixes. An additional ambient-environment override regression failed before its fix. Binding tests were added after implementation and provide regression coverage; do not describe them as TDD. All path, Docker and environment adapters remain outside the Dafny proof boundary.
+
+## D027 — Isolate login failures and authenticated request budgets
+
+**Date:** 2026-10-15 · **Status:** Accepted local security fixes; release and mobile validation pending
+
+Track failed passwords on the existing bounded, expiring SQLite login row instead of globally locking out the owner. Five failures disable that login session; another browser session can still sign in. The pure allowed-attempt and bounded-failure transition are specified in Dafny and compiled into the OAuth adapter. Negative counts and exhausted sessions fail closed. Cryptography, SQL transactions, session identity, HTTP and timing remain tested adapters, not formally proved components.
+
+Separate anonymous OAuth admission from MCP admission after successful bearer verification. Bound opaque-token database lookups to two, respect cancellation, and retain immediate revocation checks instead of caching grants. Forged credentials do not spend the authenticated request budget. This prevents the reproduced application-budget starvation, but sustained traffic can still contend for verification slots, the database, CPU or network. No availability guarantee against arbitrary denial of service is made.
+
+Tests first reproduced a correct owner password rejected after another session's failures, and valid MCP initialization rejected after anonymous/forged request bursts. Both then passed. A separate login-policy contract test failed before the Dafny functions and Go bridge were implemented. The rebuilt core verifies 39 obligations with zero errors and its executable tests pass.
+
+## D028 — Keep the host upgrade worker alive after malformed requests
+
+**Date:** 2026-10-15 · **Status:** Accepted local security fix; privileged worker update still required for live activation
+
+Reject symlinks, directories, FIFOs, oversized requests and invalid JSON without following targets or terminating the polling worker. Guard ordinary cleanup against visible replacement requests. Quarantine one opaque rejected directory outside the app queue without traversing or deleting its contents. If that bounded slot is occupied, a later malformed directory requires administrator cleanup; the worker stays alive. Queue write access already permits availability attacks, so this is resilience rather than protection against a fully compromised queue writer.
+
+Three initial regressions reproduced worker termination and removal of a replacement request before the fix. Twenty worker tests pass after the implementation and additional review coverage. The host runner does not self-update: publishing the fixed script or upgrading the service through MCP does not activate it on an already running old root worker. A separate reviewed administrator update/restart remains required. Original source files and NAS configuration have not been changed during local implementation.
+
+Integrated local verification: 181 Python tests plus two subtests pass; the full Go suite passes with race detection and sqlite_fts5. Dafny verification and executable core checks pass, with regenerated output matching the new login policy. CI and release publication are still pending.
+
+Release review found a dotenv ambiguity: the installer previously read the first key while Compose accepted a later duplicate. New failing regression coverage preceded a guard that rejects duplicate or noncanonical NAS assignments before reading settings or mutating files. Quoted values, comments and non-NAS settings remain supported. CI now also validates the base Compose configuration before building the container.
+
+A second release-review regression reproduced unquoted trailing whitespace being interpreted differently by validation and dotenv. Three failing tests preceded the corrected field parser: trim surrounding whitespace, remove only complete matching quotes, preserve quoted inner spaces, and reject unsupported quoting. Astra then cleared the scoped fixes subject to CI. Final local Python verification passes 186 tests plus two subtests; six real-Compose contract cases are skipped locally because Docker is unavailable and must execute on CI. Full Go race tests and the rebuilt Dafny core pass.

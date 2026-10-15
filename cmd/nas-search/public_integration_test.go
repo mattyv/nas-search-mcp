@@ -106,6 +106,25 @@ func TestPublicOAuthToolFlow(t *testing.T) {
 	if e = json.NewDecoder(exchange.Body).Decode(&grant); e != nil {
 		t.Fatal(e)
 	}
+	// Anonymous traffic, including plausible but forged bearers, cannot spend
+	// authenticated MCP capacity. A header alone must never select that budget.
+	forgedLimited := false
+	for i := 0; i < 100; i++ {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("GET", ts.URL+"/unknown", nil))
+		r := httptest.NewRequest("POST", ts.URL+"/mcp", nil)
+		r.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 43))
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code == 429 {
+			forgedLimited = true
+		} else if w.Code != 401 {
+			t.Fatalf("forged token accepted: %d", w.Code)
+		}
+	}
+	if !forgedLimited {
+		t.Fatal("forged bearer requests were not bounded")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	clientMCP := mcp.NewClient(&mcp.Implementation{Name: "public-test", Version: "1"}, nil)
@@ -115,15 +134,34 @@ func TestPublicOAuthToolFlow(t *testing.T) {
 	}
 	defer sessionMCP.Close()
 	tools, e := sessionMCP.ListTools(ctx, nil)
-	if e != nil || len(tools.Tools) != 7 {
+	expectedTools := 7
+	if os.Getenv("NAS_UPGRADE_DIR") != "" {
+		expectedTools = 9
+	}
+	if e != nil || len(tools.Tools) != expectedTools {
 		t.Fatal("public tool list failed", e)
 	}
 	result, e := sessionMCP.CallTool(ctx, &mcp.CallToolParams{Name: "search", Arguments: map[string]any{"query": "harmless"}})
 	if e != nil || result.IsError {
 		t.Fatal("public search failed", e)
 	}
+	if os.Getenv("NAS_UPGRADE_DIR") != "" {
+		upgraded, err := sessionMCP.CallTool(ctx, &mcp.CallToolParams{Name: "upgrade_from_main", Arguments: map[string]any{}})
+		if err != nil || upgraded.IsError {
+			t.Fatal("OAuth upgrade failed", err, upgraded)
+		}
+		status, err := sessionMCP.CallTool(ctx, &mcp.CallToolParams{Name: "upgrade_status", Arguments: map[string]any{}})
+		if err != nil || status.IsError {
+			t.Fatal("OAuth upgrade status failed", err, status)
+		}
+	}
 	encoded, _ := json.Marshal(result.StructuredContent)
 	if !strings.Contains(string(encoded), "Documents/doc.txt") {
 		t.Fatal("authorized search missed allowed fixture")
 	}
+}
+
+func TestPublicOAuthUpgradeFlow(t *testing.T) {
+	t.Setenv("NAS_UPGRADE_DIR", t.TempDir())
+	TestPublicOAuthToolFlow(t)
 }

@@ -6,8 +6,7 @@ services:
     init: true
     user: "${NAS_UID:-1000}:${NAS_GID:-100}"
     ports:
-      - "127.0.0.1:8080:8080"
-      - "${NAS_LAN_IP:-192.0.2.10}:8080:8080"
+      - "${NAS_BIND_IP:-127.0.0.1}:8080:8080"
       - "127.0.0.1:8082:8082"
     environment:
       NAS_TOKEN: ${NAS_TOKEN:?Set a random token of at least 24 characters in .env}
@@ -23,6 +22,7 @@ services:
       NAS_DOWNLOAD_LINK_MINUTES: "${NAS_DOWNLOAD_LINK_MINUTES:-10}"
       NAS_ALLOWED_FOLDERS: "${NAS_ALLOWED_FOLDERS:-}"
       NAS_DENIED_FOLDERS: "${NAS_DENIED_FOLDERS:-}"
+      NAS_UPGRADE_DIR: "${NAS_UPGRADE_DIR:-}"
       NAS_ROOT: /files
       NAS_DATA: /data
       NAS_SEMANTIC: "true"
@@ -42,6 +42,7 @@ services:
       - "${NAS_CODE_PATH:-/volume1/shared-code}:/files/Code:ro"
       - "${NAS_PHOTOS_PATH:-/volume1/shared-photos}:/files/Photos:ro"
       - "${NAS_INDEX_PATH:-/volume1/docker/nas-search/data}:/data"
+      - "${NAS_UPGRADE_PATH:-/volume1/docker/nas-search/upgrades}:/upgrades"
     mem_limit: 1g
     memswap_limit: 1g
     # Synology's kernel lacks CFS quotas; confine execution to one CPU instead.

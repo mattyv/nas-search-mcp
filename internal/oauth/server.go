@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/mattyv/nas-search-mcp/internal/policy"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/sys/unix"
 	"golang.org/x/time/rate"
@@ -29,16 +30,16 @@ import (
 const scope = "files:read"
 
 type Config struct {
+	ServiceUpgrades                                                bool
 	Issuer, DatabasePath, PasswordHash, ClientID, ClientSecretHash string
 	RedirectURIs                                                   []string
 }
 type Server struct {
-	cfg           Config
-	db            *sql.DB
-	mu            sync.Mutex
-	limiter       *rate.Limiter
-	loginFailures int
-	lockedUntil   time.Time
+	cfg            Config
+	db             *sql.DB
+	mu             sync.Mutex
+	limiter        *rate.Limiter
+	validationGate chan struct{}
 }
 
 func New(c Config) (*Server, error) {
@@ -82,7 +83,7 @@ func New(c Config) (*Server, error) {
 		db.Close()
 		return nil, e
 	}
-	return &Server{cfg: c, db: db, limiter: rate.NewLimiter(rate.Every(time.Second), 10)}, nil
+	return &Server{cfg: c, db: db, limiter: rate.NewLimiter(rate.Every(time.Second), 10), validationGate: make(chan struct{}, 2)}, nil
 }
 func loopback(h string) bool {
 	return h == "localhost" || (net.ParseIP(h) != nil && net.ParseIP(h).IsLoopback())
@@ -168,7 +169,7 @@ func (s *Server) validAuthorize(v url.Values) bool {
 	return v.Get("client_id") == s.cfg.ClientID && redirectOK && v.Get("response_type") == "code" && v.Get("code_challenge_method") == "S256" && e == nil && len(challenge) == 32 && v.Get("resource") == s.resource() && (v.Get("scope") == "" || v.Get("scope") == scope) && len(v.Get("state")) <= 1024
 }
 
-var page = template.Must(template.New("login").Parse(`<!doctype html><html><head><title>Authorize NAS search</title></head><body><h1>Allow read-only NAS access?</h1><p>This connector can search and read the folders enabled by the NAS owner.</p><p>Send authorization to {{.Destination}}.</p>{{if .Loopback}}<p>Warning: another local program could receive this authorization.</p>{{end}}<form method="post" action="/authorize"><input type="hidden" name="session" value="{{.Session}}"><label>NAS connector password <input name="password" type="password" autocomplete="current-password" required maxlength="1024"></label><button name="consent" value="allow">Allow read-only access</button></form></body></html>`))
+var page = template.Must(template.New("login").Parse(`<!doctype html><html><head><title>Authorize NAS search</title></head><body><h1>{{if .ServiceUpgrades}}Allow NAS access and service upgrades?{{else}}Allow read-only NAS access?{{end}}</h1><p>This connector can search and read the folders enabled by the NAS owner.</p>{{if .ServiceUpgrades}}<p>This connector can also upgrade the search service from main when requested. Original files remain read-only.</p>{{end}}<p>Send authorization to {{.Destination}}.</p>{{if .Loopback}}<p>Warning: another local program could receive this authorization.</p>{{end}}<form method="post" action="/authorize"><input type="hidden" name="session" value="{{.Session}}"><label>NAS connector password <input name="password" type="password" autocomplete="current-password" required maxlength="1024"></label><button name="consent" value="allow">{{if .ServiceUpgrades}}Allow access and upgrades{{else}}Allow read-only access{{end}}</button></form></body></html>`))
 
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	if !s.limiter.Allow() {
@@ -195,9 +196,9 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "strict-origin")
 	destination, _ := url.Parse(r.URL.Query().Get("redirect_uri"))
 	page.Execute(w, struct {
-		Session, Destination string
-		Loopback             bool
-	}{session, destination.Host, loopback(destination.Hostname())})
+		Session, Destination      string
+		Loopback, ServiceUpgrades bool
+	}{session, destination.Host, loopback(destination.Hostname()), s.cfg.ServiceUpgrades})
 }
 func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	if !s.limiter.Allow() {
@@ -216,10 +217,6 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if time.Now().Before(s.lockedUntil) {
-		oauthError(w, 429, "temporarily_unavailable")
-		return
-	}
 	tx, e := s.db.Begin()
 	if e != nil {
 		oauthError(w, 500, "server_error")
@@ -227,9 +224,16 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	var raw string
-	e = tx.QueryRow("SELECT redirect FROM oauth_grants WHERE hash=? AND kind='login' AND expires>? AND used=0", hash(session), time.Now().Unix()).Scan(&raw)
+	var failures int
+	e = tx.QueryRow("SELECT redirect,used FROM oauth_grants WHERE hash=? AND kind='login' AND expires>?", hash(session), time.Now().Unix()).Scan(&raw, &failures)
 	if e != nil {
 		oauthError(w, 400, "invalid_request")
+		return
+	}
+	// The existing bounded, expiring login row also holds this browser's attempt count.
+	// An anonymous browser cannot lock other browsers out of the owner's account.
+	if !policy.LoginAttemptAllowed(failures) {
+		oauthError(w, 429, "temporarily_unavailable")
 		return
 	}
 	v, e := url.ParseQuery(raw)
@@ -238,10 +242,9 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(s.cfg.PasswordHash), []byte(r.PostForm.Get("password"))) != nil {
-		s.loginFailures++
-		if s.loginFailures >= 5 {
-			s.lockedUntil = time.Now().Add(15 * time.Minute)
-			s.loginFailures = 0
+		if _, e := tx.Exec("UPDATE oauth_grants SET used=? WHERE hash=? AND kind='login'", policy.FailedLoginCount(failures), hash(session)); e != nil || tx.Commit() != nil {
+			oauthError(w, 500, "server_error")
+			return
 		}
 		oauthError(w, 403, "access_denied")
 		return
@@ -263,7 +266,6 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 500, "server_error")
 		return
 	}
-	s.loginFailures = 0
 	target, _ := url.Parse(v.Get("redirect_uri"))
 	q := target.Query()
 	q.Set("code", code)
@@ -382,18 +384,34 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, 200, map[string]any{"access_token": access, "token_type": "Bearer", "expires_in": 600, "refresh_token": refresh, "scope": scope})
 }
 func (s *Server) Protect(next http.Handler) http.Handler {
+	misses := rate.NewLimiter(rate.Every(time.Second), 30)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := r.Header.Get("Authorization")
 		parts := strings.Fields(header)
 		valid := false
 		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && len(parts[1]) == 43 {
-			var n int
-			e := s.db.QueryRow("SELECT count(*) FROM oauth_grants WHERE hash=? AND kind='access' AND resource=? AND expires>? AND used=0", hash(parts[1]), s.resource(), time.Now().Unix()).Scan(&n)
-			valid = e == nil && n == 1
+			// Opaque credentials require a database lookup. Bound active lookups
+			// instead of allowing unauthenticated requests to queue without limit.
+			select {
+			case s.validationGate <- struct{}{}:
+				var n int
+				e := s.db.QueryRowContext(r.Context(), "SELECT count(*) FROM oauth_grants WHERE hash=? AND kind='access' AND resource=? AND expires>? AND used=0", hash(parts[1]), s.resource(), time.Now().Unix()).Scan(&n)
+				<-s.validationGate
+				valid = e == nil && n == 1
+			default:
+				w.Header().Set("Retry-After", "1")
+				oauthError(w, 429, "temporarily_unavailable")
+				return
+			}
 		}
 		if !valid {
 			w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer resource_metadata=%q, scope=%q", s.cfg.Issuer+"/.well-known/oauth-protected-resource/mcp", scope))
 			w.Header().Set("Cache-Control", "no-store")
+			if !misses.Allow() {
+				w.Header().Set("Retry-After", "1")
+				oauthError(w, 429, "temporarily_unavailable")
+				return
+			}
 			oauthError(w, 401, "invalid_token")
 			return
 		}

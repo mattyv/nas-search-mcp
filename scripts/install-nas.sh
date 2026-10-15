@@ -3,7 +3,7 @@
 set -eu
 umask 077
 fail() { printf '%s\n' "$*" >&2; exit 1; }
-image= install_dir=/volume1/docker/nas-search documents= photos= code=/volume1/shared-code data= bind=127.0.0.1 dry=false
+image= install_dir= documents= photos= code=/volume1/shared-code data= bind=127.0.0.1 dry=false
 uid=${SUDO_UID:-$(id -u)}
 gid=${SUDO_GID:-$(id -g)}
 while [ "$#" -gt 0 ]; do
@@ -24,10 +24,25 @@ case "$image" in *:latest|*[!a-zA-Z0-9._/:@-]*|*:|*@) fail 'Use an explicit vers
 case "${image##*/}" in *:*|*@sha256:*) :;; *) fail 'Image needs an explicit versioned tag or digest';; esac
 case "$uid:$gid" in *[!0-9:]*|:*|*:) fail 'UID/GID must be numeric';; esac
 case "$bind" in ''|*[!0-9.]* ) fail 'Bind address must be an explicit IPv4 address';; esac
+# Discover the running deployment before selecting any configuration or credentials.
+[ "$(id -u)" = 0 ] || fail 'Run on the NAS with sudo/root Docker access'
+PATH=/usr/local/bin:$PATH
+export PATH
+command -v docker >/dev/null 2>&1 || fail 'Docker is required; install Synology Container Manager'
+if [ -z "$install_dir" ]; then
+    if detected=$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' nas-search-nas-search-1 2>/dev/null); then
+        [ -n "$detected" ] || fail 'Active deployment has no working-directory label; specify --install-dir'
+        install_dir=$detected
+    else
+        containers=$(docker ps -a --filter 'name=^/nas-search-nas-search-1$' --format '{{.Names}}') || fail 'Cannot discover active deployment'
+        [ -z "$containers" ] || fail 'Cannot inspect active deployment; refusing default configuration'
+        install_dir=/volume1/docker/nas-search
+    fi
+fi
 for path in "$install_dir" "$documents" "$photos" "$code" "$data"; do
     case "$path" in /*) :;; *) fail 'All source/install/data paths must be explicit absolute paths';; esac
     case "$path" in */../*|*/..|*/./*|*/.) fail 'Paths must not contain dot traversal segments';; esac
-    case "$path" in *[!a-zA-Z0-9_./\ -]*) fail 'Paths must use letters, digits, spaces, underscores, dots, slashes, or hyphens';; esac
+    case "$path" in *[!a-zA-Z0-9_./@\ -]*) fail 'Paths must use letters, digits, spaces, underscores, dots, slashes, at signs, or hyphens';; esac
 done
 [ -d "$documents" ] && [ -d "$photos" ] && [ -d "$code" ] || fail 'Selected source directories must already exist'
 # Resolve symlinked existing ancestors without creating anything during preflight.
@@ -36,7 +51,7 @@ canonical() {
         readlink -f "$1" || return 1
     else
         parent=$(canonical "$(dirname "$1")") || return 1
-        printf '%s/%s\n' "$parent" "$(basename "$1")"
+        printf '%s/%s\n' "${parent%/}" "$(basename "$1")"
     fi
 }
 install_dir=$(canonical "$install_dir") || fail 'Cannot resolve install path'
@@ -44,28 +59,66 @@ existing_env=false
 [ ! -L "$install_dir/.env" ] || fail 'Refusing symlink .env; credentials must be a regular private file'
 if [ -f "$install_dir/.env" ]; then
     existing_env=true
+    # Restrict NAS assignments to one canonical spelling. Compose accepts aliases
+    # and duplicate last values that would disagree with our field reader.
+    awk '
+        /^[[:space:]]*(export[[:space:]]+)?NAS_[A-Za-z0-9_]+[[:space:]]*=/ {
+            if ($0 !~ /^NAS_[A-Za-z0-9_]+=/) exit 1
+            key=$0; sub(/=.*/, "", key)
+            if (seen[key]++) exit 1
+        }
+    ' "$install_dir/.env" || fail 'Existing .env has duplicate or unsupported NAS assignments; use one NAS_KEY=value line per setting'
     # Parse only deployment fields, never the token. Do not source arbitrary shell.
-    field() { awk -v key="$1" 'index($0,key "=")==1 {print substr($0,length(key)+2); exit}' "$install_dir/.env" | tr -d "\"'"; }
+    field() {
+        awk -v key="$1" -v sq="'" '
+            index($0,key "=")==1 {
+                value=substr($0,length(key)+2)
+                sub(/^[[:space:]]+/, "", value); sub(/[[:space:]]+$/, "", value)
+                first=substr(value,1,1)
+                if (first == sq || first == "\"") {
+                    if (length(value)<2 || substr(value,length(value),1)!=first) exit 1
+                    value=substr(value,2,length(value)-2)
+                }
+                if (index(value,sq) || index(value,"\"")) exit 1
+                print value; exit
+            }
+        ' "$install_dir/.env" || fail 'Unsupported quoting in deployment setting'
+    }
     documents=$(field NAS_DOCUMENTS_PATH)
     photos=$(field NAS_PHOTOS_PATH)
     saved_code=$(field NAS_CODE_PATH)
     code=${saved_code:-/volume1/shared-code}
     data=$(field NAS_INDEX_PATH)
-    allowed=$(field NAS_ALLOWED_FOLDERS)
+    if grep -q '^NAS_BIND_IP=' "$install_dir/.env"; then bind=$(field NAS_BIND_IP)
+    else bind=$(field NAS_LAN_IP); bind=${bind:-127.0.0.1}; fi
+    queue=$(field NAS_UPGRADE_PATH)
     uid=$(field NAS_UID)
     gid=$(field NAS_GID)
     [ -d "$documents" ] && [ -d "$photos" ] && [ -d "$code" ] && [ -d "$data" ] || fail 'Existing .env source and index directories must exist; refusing automatic recreation'
     case "$uid:$gid" in *[!0-9:]*|:*|*:) fail 'Existing .env UID/GID must be numeric';; esac
 fi
+# Validate effective loaded paths as well as command-line paths.
+queue=${queue:-/volume1/docker/nas-search/upgrades}
+for path in "$documents" "$photos" "$code" "$data" "$queue"; do
+    case "$path" in /*) :;; *) fail 'Effective mount paths must be absolute';; esac
+    case "$path" in */../*|*/..|*/./*|*/.|*[!a-zA-Z0-9_./@\ -]*) fail 'Invalid effective mount path';; esac
+done
+printf '%s\n' "$bind" | awk -F. 'NF != 4 {exit 1} {for(i=1;i<=4;i++) if ($i !~ /^[0-9]+$/ || length($i)>3 || $i+0>255 || (length($i)>1 && substr($i,1,1)=="0")) exit 1}' || fail 'Bind address must be a valid explicit IPv4 address'
+queue=$(canonical "$queue") || fail 'Cannot resolve upgrade queue'
 documents=$(canonical "$documents") || fail 'Cannot resolve Documents source'
 photos=$(canonical "$photos") || fail 'Cannot resolve Photos source'
 code=$(canonical "$code") || fail 'Cannot resolve Code source'
 data=$(canonical "$data") || fail 'Cannot resolve index path'
 install_dir=$(canonical "$install_dir") || fail 'Cannot resolve install path'
+overlap() { [ "$1" = / ] || [ "$2" = / ] && return 0; case "$1/" in "$2/"*) return 0;; esac; case "$2/" in "$1/"*) return 0;; esac; return 1; }
 for source in "$documents" "$photos" "$code"; do
-    case "$data/" in "$source/"*) fail 'Index data must be outside source directories';; esac
+    overlap "$data" "$source" && fail 'Index data must not overlap source directories'
+    overlap "$queue" "$source" && fail 'Upgrade queue must not overlap source directories'
     case "$install_dir/" in "$source/"*) fail 'Installer state must be outside source directories';; esac
 done
+overlap "$data" "$queue" && fail 'Index data and upgrade queue must not overlap'
+case "$install_dir/" in "$data/"*) fail 'Index data must not contain installer state';; esac
+case "$install_dir/" in "$queue/"*) fail 'Upgrade queue must not contain installer state';; esac
 [ "$(id -u)" = 0 ] || fail 'Run on the NAS with sudo/root Docker access'
 PATH=/usr/local/bin:$PATH
 export PATH
@@ -83,10 +136,6 @@ fi
 if [ "$existing_env" = true ]; then
     chmod 600 "$install_dir/.env" || fail 'Cannot secure existing .env permissions'
     chown 0:0 "$install_dir/.env" || fail 'Cannot secure existing .env ownership'
-    if [ -z "$allowed" ]; then
-        awk 'BEGIN {value="NAS_ALLOWED_FOLDERS=Documents,Code,Photos"} /^NAS_ALLOWED_FOLDERS=/ {if (!found++) print value; next} {print} END {if (!found) print value}' "$install_dir/.env" > "$install_dir/.env.tmp" || fail 'Cannot set source access scope'
-        chmod 600 "$install_dir/.env.tmp" && chown 0:0 "$install_dir/.env.tmp" && mv "$install_dir/.env.tmp" "$install_dir/.env" || fail 'Cannot save source access scope'
-    fi
 fi
 # No deployment/index state is changed before image/actual kernel limit validation.
 docker pull "$image"
@@ -122,11 +171,18 @@ if [ -f "$install_dir/compose.yaml" ]; then
     previous_compose=$install_dir/compose.yaml.previous
     cp "$install_dir/compose.yaml" "$previous_compose"
 fi
-awk -v image="$image" '/^[ ]*build:/ {next} /^[ ]*image:/ {print "    image: " image; next} /^[ ]*cpus:/ {next} /^[ ]*pids_limit:/ {next} {print}' "$project_dir/compose.yaml" > "$install_dir/compose.yaml.tmp"
+awk -v image="$image" -v bind="$bind" '/NAS_BIND_IP.*8080:8080/ {print "      - \"" bind ":8080:8080\""; if (bind != "127.0.0.1" && bind != "0.0.0.0") print "      - \"127.0.0.1:8080:8080\""; next} /^[ ]*build:/ {next} /^[ ]*image:/ {print "    image: " image; next} /^[ ]*cpus:/ {next} /^[ ]*pids_limit:/ {next} {print}' "$project_dir/compose.yaml" > "$install_dir/compose.yaml.tmp"
 mv "$install_dir/compose.yaml.tmp" "$install_dir/compose.yaml"
 previous=
 [ ! -f "$install_dir/current-image" ] || previous=$(cat "$install_dir/current-image")
-compose() { docker compose --project-name nas-search --project-directory "$install_dir" -f "$install_dir/compose.yaml" "$@"; }
+compose() (
+    # The checked private file is authoritative. Ambient overrides could otherwise
+    # reopen denied folders, change credentials, or bypass mount-path validation.
+    for name in $(env | sed -n 's/^\(NAS_[A-Za-z0-9_]*\)=.*/\1/p'); do
+        unset "$name"
+    done
+    docker compose --env-file "$install_dir/.env" --project-name nas-search --project-directory "$install_dir" -f "$install_dir/compose.yaml" "$@"
+)
 rollback() {
     if [ -n "$previous" ]; then
         printf 'Deployment checks failed; rolling back to the previous image.\n' >&2
@@ -145,7 +201,7 @@ rollback() {
 }
 compose up -d --no-build || rollback
 # Check authenticated MCP status inside the container, without exposing tokens in args.
-check='import json,os,urllib.request
+check='import json,os,urllib.request,urllib.error
 url="http://127.0.0.1:8080"
 assert urllib.request.urlopen(url+"/healthz",timeout=5).status==200
 body={"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"index_status","arguments":{}}}
@@ -154,6 +210,18 @@ reply=urllib.request.urlopen(r,timeout=15).read().decode()
 if not reply.lstrip().startswith("{"): reply="\n".join(line[5:].strip() for line in reply.splitlines() if line.startswith("data:"))
 result=json.loads(reply)
 assert "result" in result and not result["result"].get("isError",False), "Authenticated index_status failed"
+issuer=os.environ.get("NAS_OAUTH_ISSUER", "")
+if issuer:
+    oauth="http://127.0.0.1:8082"
+    metadata=urllib.request.urlopen(oauth+"/.well-known/oauth-authorization-server",timeout=5)
+    assert metadata.status==200
+    assert json.loads(metadata.read())["issuer"]==issuer, "OAuth issuer changed"
+    try:
+        urllib.request.urlopen(oauth+"/mcp",timeout=5)
+    except urllib.error.HTTPError as error:
+        assert error.code==401 and "resource_metadata" in error.headers.get("WWW-Authenticate", ""), "OAuth discovery challenge missing"
+    else:
+        raise AssertionError("Anonymous OAuth MCP must require authentication")
 '
 ready=false
 for attempt in 1 2 3; do
