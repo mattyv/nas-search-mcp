@@ -237,7 +237,11 @@ func buildMCPServer(a *app.App) *mcp.Server {
 		out, err := a.ReadDocumentWithOCR(ctx, in.Path, in.Offset, in.MaxChars, in.ForceOCR)
 		return nil, out, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "fetch_file", Description: "Fetch exact original file bytes, including binary PDF/Office/image files, as base64 batches. max_bytes defaults to 65536, capped at 262144; source limit 32 MiB. Reassemble decoded data locally, following next_offset until complete. Send the first response's version as expected_version on every subsequent batch to reject changed files. This does not create a chat attachment automatically; to let the user see or save the file, use download_link instead. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in FetchInput) (*mcp.CallToolResult, app.FetchResult, error) {
+	fetchDescription := "Fetch exact original file bytes, including binary PDF/Office/image files, as base64 batches. max_bytes defaults to 65536, capped at 262144; source limit 32 MiB. Reassemble decoded data locally, following next_offset until complete. Send the first response's version as expected_version on every subsequent batch to reject changed files. This does not create a chat attachment automatically. Read-only."
+	if a.LinksEnabled() {
+		fetchDescription = strings.Replace(fetchDescription, "automatically.", "automatically; to let the user see or save the file, use download_link instead.", 1)
+	}
+	mcp.AddTool(server, &mcp.Tool{Name: "fetch_file", Description: fetchDescription}, func(ctx context.Context, req *mcp.CallToolRequest, in FetchInput) (*mcp.CallToolResult, app.FetchResult, error) {
 		out, err := a.FetchFile(in.Path, in.Offset, in.MaxBytes, in.ExpectedVersion)
 		return nil, out, err
 	})
@@ -263,7 +267,7 @@ func buildPrivateHandler(server *mcp.Server, token string, a *app.App) http.Hand
 	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true})
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", app.Protect(token, handler))
-	mux.Handle("/download/", hardenDownloads(http.HandlerFunc(a.ServeLink), log.Default()))
+	mux.Handle("/download/", hardenDownloads(http.HandlerFunc(a.ServeLink), a.LinkKnown, log.Default()))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200); fmt.Fprint(w, "ok") })
 	return mux
 }

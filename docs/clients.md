@@ -28,13 +28,13 @@ Ask: **“Give me a link to Melody.pdf.”** Claude replies with a link; tap it 
 
 This is the way to *see* a file. `fetch_file` only hands raw bytes to the model, which cannot turn them into an attachment for you.
 
-- Links work in Claude web, mobile, Desktop, and the CLIs, wherever your browser can reach the link address.
-- Each link opens one file and expires after 10 minutes (`NAS_DOWNLOAD_LINK_MINUTES`, 1–60). Restarting the service cancels all links. Ask again for a fresh one.
+- Links should work in any Claude app, wherever your browser can reach the link address. Use in Claude web and mobile is not yet confirmed.
+- Each link opens one file and expires after 10 minutes (`NAS_DOWNLOAD_LINK_MINUTES`, 1–60). Restarting the service cancels all links. Ask again for a fresh one. If a long PDF stops loading pages partway through, the link has expired; ask for a new one.
 - Anyone holding an unexpired link can open that file without logging in. Don't forward links to sensitive documents.
 - A link stops working if the file changes, or its folder leaves `NAS_ALLOWED_FOLDERS`.
 - The limit is 32 MiB per file and 200 active links.
 
-Links use `NAS_DOWNLOAD_URL`, or the public `NAS_OAUTH_ISSUER` if that is empty. With neither set, the tool is hidden. For LAN-only use, set `NAS_DOWNLOAD_URL=http://192.0.2.10:8080`.
+Links use `NAS_DOWNLOAD_URL`, or the public `NAS_OAUTH_ISSUER` if that is empty. With neither set, the tool is hidden. To keep links private, set `NAS_DOWNLOAD_URL` to an address your devices can reach without Funnel: `http://192.0.2.10:8080` at home, or the NAS's private Tailscale Serve address away from home. Check the address opens in your phone's browser first; this setup is untested.
 
 ## Read complete documents and retrieve originals
 

@@ -204,3 +204,26 @@ func TestLinkCapacityRecoversAfterExpiry(t *testing.T) {
 		t.Fatal("expired links were not released", err)
 	}
 }
+
+func TestLinkURLKeepsMarkdownLinksIntact(t *testing.T) {
+	a := linkApp(t)
+	name := "Photo (2024)).jpg"
+	write(t, filepath.Join(a.Root, name), "jpeg")
+	link, err := a.CreateLink(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(link.URL, "()") || !strings.HasSuffix(link.URL, "/Photo%20%282024%29%29.jpg") {
+		t.Fatal(link.URL)
+	}
+	if w := open(t, a, link.URL, "GET", nil); w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	r := httptest.NewRequest("GET", "http://local"+strings.TrimPrefix(link.URL, "https://nas.example"), nil)
+	if !a.LinkKnown(r) {
+		t.Fatal("active link not recognised")
+	}
+	if a.LinkKnown(httptest.NewRequest("GET", "http://local/download/"+strings.Repeat("A", 43)+"/x", nil)) {
+		t.Fatal("unknown link recognised")
+	}
+}
