@@ -115,15 +115,34 @@ func TestPublicOAuthToolFlow(t *testing.T) {
 	}
 	defer sessionMCP.Close()
 	tools, e := sessionMCP.ListTools(ctx, nil)
-	if e != nil || len(tools.Tools) != 7 {
+	expectedTools := 7
+	if os.Getenv("NAS_UPGRADE_DIR") != "" {
+		expectedTools = 9
+	}
+	if e != nil || len(tools.Tools) != expectedTools {
 		t.Fatal("public tool list failed", e)
 	}
 	result, e := sessionMCP.CallTool(ctx, &mcp.CallToolParams{Name: "search", Arguments: map[string]any{"query": "harmless"}})
 	if e != nil || result.IsError {
 		t.Fatal("public search failed", e)
 	}
+	if os.Getenv("NAS_UPGRADE_DIR") != "" {
+		upgraded, err := sessionMCP.CallTool(ctx, &mcp.CallToolParams{Name: "upgrade_from_main", Arguments: map[string]any{}})
+		if err != nil || upgraded.IsError {
+			t.Fatal("OAuth upgrade failed", err, upgraded)
+		}
+		status, err := sessionMCP.CallTool(ctx, &mcp.CallToolParams{Name: "upgrade_status", Arguments: map[string]any{}})
+		if err != nil || status.IsError {
+			t.Fatal("OAuth upgrade status failed", err, status)
+		}
+	}
 	encoded, _ := json.Marshal(result.StructuredContent)
 	if !strings.Contains(string(encoded), "Documents/doc.txt") {
 		t.Fatal("authorized search missed allowed fixture")
 	}
+}
+
+func TestPublicOAuthUpgradeFlow(t *testing.T) {
+	t.Setenv("NAS_UPGRADE_DIR", t.TempDir())
+	TestPublicOAuthToolFlow(t)
 }
