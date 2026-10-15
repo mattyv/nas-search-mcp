@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Restore the original mobile configuration without changing network settings."""
 import argparse
+import contextlib
 import importlib.util
 import json
 import os
 from pathlib import Path
 import re
 import stat
+import signal
+import time
 import subprocess
 import tempfile
 import urllib.error
@@ -74,6 +77,61 @@ def install(installer, install_dir, image, env, log):
     subprocess.run(args, stdout=log, stderr=log, check=True)
 
 
+def process_identity(directory):
+    # Fields after the final ')' start with process state (field 3).
+    return (directory / 'stat').read_text().rsplit(')', 1)[1].split()[19]
+
+
+def worker_matches(directory, install_dir):
+    args = (directory / 'cmdline').read_bytes().rstrip(b'\0').split(b'\0')
+    expected = [str(install_dir / 'upgrade-host.py').encode(), b'--install-dir', str(install_dir).encode()]
+    if len(args) != 4 or not Path(os.fsdecode(args[0])).name.startswith('python') or args[1:] != expected:
+        return False
+    status = (directory / 'status').read_text().splitlines()
+    uid = next(line for line in status if line.startswith('Uid:')).split()[1:]
+    return len(uid) == 4 and all(value == '0' for value in uid)
+
+
+@contextlib.contextmanager
+def pause_workers(install_dir, proc=Path('/proc')):
+    paused = []
+    try:
+        for directory in proc.iterdir():
+            if not directory.name.isdigit():
+                continue
+            try:
+                identity = process_identity(directory)
+                if not worker_matches(directory, install_dir):
+                    continue
+                # Recheck identity after reading command and credentials.
+                if process_identity(directory) != identity:
+                    continue
+                pid = int(directory.name)
+                os.kill(pid, signal.SIGSTOP)
+                paused.append((directory, pid, identity))
+                deadline = time.monotonic() + 5
+                while True:
+                    if process_identity(directory) != identity:
+                        raise ValueError('Worker identity changed')
+                    status = (directory / 'status').read_text().splitlines()
+                    state = next(line for line in status if line.startswith('State:')).split()[1]
+                    if state in ('T', 't'):
+                        break
+                    if time.monotonic() >= deadline:
+                        raise ValueError('Worker did not pause')
+                    time.sleep(0.05)
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+        yield
+    finally:
+        for directory, pid, identity in reversed(paused):
+            try:
+                if process_identity(directory) == identity and worker_matches(directory, install_dir):
+                    os.kill(pid, signal.SIGCONT)
+            except (FileNotFoundError, ProcessLookupError):
+                pass
+
+
 def check_idle(install_dir):
     queue = install_dir / 'upgrades'
     request = queue / 'request.json'
@@ -109,6 +167,7 @@ def main():
     old = None
     changed = False
     log = None
+    maintenance = None
     try:
         if os.geteuid() != 0:
             raise ValueError('Root required')
@@ -143,6 +202,11 @@ def main():
         if args.dry_run:
             print('Mobile configuration is ready to restore. No changes made.')
             return 0
+        stage = 'worker pause'
+        candidate = pause_workers(args.install_dir)
+        candidate.__enter__()
+        maintenance = candidate
+        check_idle(args.install_dir)
         stage = 'backup'
         backup = args.install_dir / '.env.before-mobile-restore'
         fd = os.open(str(backup), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -175,6 +239,8 @@ def main():
         print('Mobile restore failed during ' + stage + '.' + rollback)
         return 1
     finally:
+        if maintenance:
+            maintenance.__exit__(None, None, None)
         if log:
             log.close()
 

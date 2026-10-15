@@ -110,6 +110,16 @@ def test_main_preserves_configuration_and_recovers(tmp_path, monkeypatch, mode):
     (source / '.env').write_text(source_text)
     (target / 'current-image').write_text('ghcr.io/mattyv/nas-search-mcp:' + 'a' * 40)
     # Filesystem privilege validation is tested independently. Exercise orchestration here.
+    import contextlib
+    paused = []
+    @contextlib.contextmanager
+    def maintenance(p):
+        paused.append(True)
+        try:
+            yield
+        finally:
+            paused.pop()
+    monkeypatch.setattr(m, 'pause_workers', maintenance)
     monkeypatch.setattr(m, 'secure_directory', lambda p: None)
     monkeypatch.setattr(m, 'private_file', lambda p: None)
     monkeypatch.setattr(m.os, 'geteuid', lambda: 0)
@@ -124,6 +134,7 @@ def test_main_preserves_configuration_and_recovers(tmp_path, monkeypatch, mode):
     monkeypatch.setattr(m.Path, 'lstat', root_owned)
     calls = []
     def run_installer(installer, install_dir, image, env, log):
+        assert paused == [True]
         calls.append(dict(env))
         if mode == 'failed-install' and len(calls) == 1:
             raise RuntimeError('private adapter error')
@@ -133,6 +144,7 @@ def test_main_preserves_configuration_and_recovers(tmp_path, monkeypatch, mode):
     if mode == 'dry-run': argv.append('--dry-run')
     monkeypatch.setattr(sys, 'argv', argv)
     result = m.main()
+    assert paused == []
     if mode in ('dry-run', 'wrong-token'):
         assert not calls
         assert (target / '.env').read_text() == original
@@ -152,3 +164,21 @@ def test_main_preserves_configuration_and_recovers(tmp_path, monkeypatch, mode):
         backup = target / '.env.before-mobile-restore'
         assert backup.read_text() == original
         assert backup.stat().st_mode & 0o777 == 0o600
+
+
+def test_pause_targets_only_exact_root_worker_and_resumes_on_failure(tmp_path, monkeypatch):
+    m = module()
+    install = Path('/volume1/@nas-search-upgrader')
+    for pid, command, uid in [('10', ['/usr/bin/python3', str(install / 'upgrade-host.py'), '--install-dir', str(install)], 0), ('11', ['/usr/bin/python3', '/other/upgrade-host.py', '--install-dir', str(install)], 0), ('12', ['/usr/bin/python3', str(install / 'upgrade-host.py'), '--install-dir', str(install)], 1000)]:
+        directory = tmp_path / pid
+        directory.mkdir()
+        (directory / 'cmdline').write_bytes(('\0'.join(command) + '\0').encode())
+        (directory / 'status').write_text('Uid:\t%d\t%d\t%d\t%d\nState:\tT (stopped)\n' % (uid, uid, uid, uid))
+        (directory / 'stat').write_text(pid + ' (python3) ' + ' '.join(['S'] + ['0'] * 18 + ['123']))
+    calls = []
+    monkeypatch.setattr(m.os, 'kill', lambda pid, sig: calls.append((pid, sig)))
+    with pytest.raises(RuntimeError):
+        with m.pause_workers(install, tmp_path):
+            assert calls == [(10, m.signal.SIGSTOP)]
+            raise RuntimeError('failure during repair')
+    assert calls == [(10, m.signal.SIGSTOP), (10, m.signal.SIGCONT)]
