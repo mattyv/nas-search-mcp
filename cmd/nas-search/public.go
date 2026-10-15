@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/mattyv/nas-search-mcp/internal/app"
 	"github.com/mattyv/nas-search-mcp/internal/oauth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/time/rate"
@@ -80,10 +81,60 @@ func hardenPublic(next http.Handler, logger *log.Logger) http.Handler {
 	})
 }
 
-func buildPublicHandler(server *mcp.Server, auth *oauth.Server) http.Handler {
+func buildPublicHandler(server *mcp.Server, auth *oauth.Server, a *app.App) http.Handler {
 	mux := http.NewServeMux()
 	h := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	mux.Handle("/mcp", auth.Protect(h))
 	mux.Handle("/", auth.Handler())
-	return hardenPublic(mux, log.Default())
+	routes := http.NewServeMux()
+	routes.Handle("/download/", hardenDownloads(http.HandlerFunc(a.ServeLink), log.Default()))
+	routes.Handle("/", hardenPublic(mux, log.Default()))
+	return routes
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	code  int
+	bytes int64
+}
+
+func (w *statusRecorder) WriteHeader(code int) {
+	if w.code == 0 {
+		w.code = code
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+func (w *statusRecorder) Write(p []byte) (int, error) {
+	if w.code == 0 {
+		w.code = 200
+	}
+	n, err := w.ResponseWriter.Write(p)
+	w.bytes += int64(n)
+	return n, err
+}
+
+// Downloads stream up to the 32 MiB source limit, so they bypass the buffered MCP response cap.
+// The link token is the credential; rate and concurrency bounds limit guessing and load.
+func hardenDownloads(next http.Handler, logger *log.Logger) http.Handler {
+	limiter := rate.NewLimiter(rate.Every(time.Second), 20)
+	gate := make(chan struct{}, 4)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		out := &statusRecorder{ResponseWriter: w}
+		if !limiter.Allow() {
+			out.Header().Set("Retry-After", "1")
+			http.Error(out, "request limit reached", 429)
+		} else {
+			select {
+			case gate <- struct{}{}:
+				next.ServeHTTP(out, r)
+				<-gate
+			default:
+				out.Header().Set("Retry-After", "1")
+				http.Error(out, "server busy", 429)
+			}
+		}
+		// The URL carries the link token and filename, so it never enters logs.
+		logger.Printf("download request status=%d duration_ms=%d bytes=%d", out.code, time.Since(start).Milliseconds(), out.bytes)
+	})
 }

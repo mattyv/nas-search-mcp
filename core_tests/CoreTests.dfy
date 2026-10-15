@@ -34,6 +34,17 @@ module CoreTests {
     expect MatchesTerms("", []);
     expect MatchesTerms("anything", [""]);
     expect !MatchesTerms("abc", ["abcd"]);
+    expect ShowInline("application/pdf");
+    expect ShowInline("image/jpeg");
+    expect ShowInline("image/png");
+    expect ShowInline("text/plain");
+    expect !ShowInline("text/html");
+    expect !ShowInline("image/svg+xml");
+    expect !ShowInline("application/octet-stream");
+    expect !ShowInline("");
+    expect LinkActive(100, 101);
+    expect !LinkActive(101, 101);
+    expect !LinkActive(102, 101);
     print "Dafny core executable tests passed\n";
   }
 }

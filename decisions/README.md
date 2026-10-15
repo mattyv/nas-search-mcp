@@ -207,3 +207,17 @@ Local evidence: Dafny core verification and executable tests passed without a so
 - How to extend OCR languages, unsupported formats, archives, and backups within the resource budget.
 - Which remote-access and ChatGPT connectivity route to validate.
 - Whether scale measurements justify a different vector index; measure the accepted persistent model-worker strategy on the NAS.
+
+## D022 — Show originals through expiring download links
+
+**Date:** 2026-10-15 · **Status:** Accepted; local tests and Dafny verification pass; NAS rollout and Claude web/mobile use unvalidated
+
+The user reported that Claude could fetch a document's bytes but could not show the document to them. `fetch_file` returns base64 to the model; MCP clients do not turn that into a chat attachment, and Claude web and mobile cannot save it locally. Add a `download_link` tool that returns a short-lived URL. Claude posts it as a link; the user taps it and the browser opens or saves the original. This works in every client whose browser can reach the link origin, without client changes.
+
+Each link is 32 random bytes, kept in memory only as a SHA-256 hash, bound to one path and its source version, and valid for `NAS_DOWNLOAD_LINK_MINUTES` (default 10, range 1–60). At most 200 links stay active. Serving reopens the file through the current folder policy, rejects changed files with `410`, and streams up to the 32 MiB source limit with range support, outside the 2 MiB buffered MCP response cap. Downloads have their own rate and concurrency bounds; logs omit the URL. Responses are `private, no-store`, `nosniff`, and `no-referrer`. Only PDF, JPEG, PNG, GIF, WebP, and plain text render inline; all other formats download as `application/octet-stream` under a sandbox policy, so HTML or SVG on the NAS cannot run script on the connector's origin.
+
+Links use `NAS_DOWNLOAD_URL`, falling back to `NAS_OAUTH_ISSUER`; with neither, the tool is hidden. On the current deployment that means the public Funnel origin: anyone holding an unexpired link can open that file without logging in, and the link passes through Anthropic's service in the tool result, as file contents already do. Setting `NAS_DOWNLOAD_URL` to a private address keeps links off the public route at the cost of needing Tailscale on mobile. Restarting cancels all links. Alternatives rejected: MCP image or embedded-resource results (client support varies, PDFs are not shown to the user, and responses exceed the public cap); one-use links (browser PDF viewers issue several range requests).
+
+Proof boundary: the Dafny core proves the inline allowlist excludes HTML, XHTML, SVG, XML, JavaScript, and unknown types, and defines link expiry as strictly before the expiry instant. Token generation, the link table, HTTP serving, rate limiting, and filesystem access are tested Go adapters outside the proof.
+
+Red-to-green evidence: new Dafny executable tests failed to resolve before `ShowInline` and `LinkActive` existed. With empty Go stubs, all eight new Go tests failed on behavior (stub errors, accepted invalid base, missing tool, no rate limit), then passed after implementation. `scripts/build-core.sh` verified and regenerated the core; the Go race suite with `sqlite_fts5` and 104 Python tests pass.

@@ -177,6 +177,12 @@ func (_static *CompanionStruct_Default___) ClampLimit(requested _dafny.Int, maxi
 		return requested
 	}
 }
+func (_static *CompanionStruct_Default___) ShowInline(mediaType _dafny.Sequence) bool {
+	return (Companion_Default___.InlineTypes()).Contains(mediaType)
+}
+func (_static *CompanionStruct_Default___) LinkActive(now _dafny.Int, expires _dafny.Int) bool {
+	return (now).Cmp(expires) < 0
+}
 func (_static *CompanionStruct_Default___) RankScore(lexicalRank _dafny.Int, semanticRank _dafny.Int) _dafny.Int {
 	return ((func() _dafny.Int {
 		if (lexicalRank).Sign() == 0 {
@@ -215,6 +221,9 @@ TAIL_CALL_START:
 		overlap = _in2
 		goto TAIL_CALL_START
 	}
+}
+func (_static *CompanionStruct_Default___) InlineTypes() _dafny.Set {
+	return _dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("application/pdf"), _dafny.UnicodeSeqOfUtf8Bytes("image/jpeg"), _dafny.UnicodeSeqOfUtf8Bytes("image/png"), _dafny.UnicodeSeqOfUtf8Bytes("image/gif"), _dafny.UnicodeSeqOfUtf8Bytes("image/webp"), _dafny.UnicodeSeqOfUtf8Bytes("text/plain"))
 }
 
 // End of class Default__
