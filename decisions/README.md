@@ -196,9 +196,11 @@ Browser integration tests cover authorization, target binding, revocation, forge
 
 ## D031 — Keep deployment identity outside the public checkout
 
-**Status:** Accepted; history rewrite prepared separately
+**Status:** Accepted; public history rewritten 2026-10-16
 
-Use generic paths, folder labels, and network examples in tracked configuration, tests, and documentation. Keep actual source paths, public issuer, numeric user, and credentials in the root-only NAS settings. Preserve the existing logical folder label privately during the migration so the index does not need rebuilding. The owner chose to keep the repository public so credential-free verified upgrades remain available. Current checkout scans and installer tests support the new generic configuration; old public commits require a separately reviewed history rewrite. Rewriting Git history changes commit IDs and does not erase third-party caches or forks. No force-push is authorized yet.
+Use generic paths, folder labels, and network examples in tracked configuration, tests, and documentation. Keep actual source paths, public issuer, numeric user, and credentials in the root-only NAS settings. Preserve the existing logical folder label privately during the migration so the index does not need rebuilding. The owner chose to keep the repository public so credential-free verified upgrades remain available. Current checkout scans and installer tests support the new generic configuration; old public commits require a separately reviewed history rewrite. Rewriting Git history changes commit IDs and does not erase third-party caches or forks.
+
+**2026-10-16 history rewrite:** With the owner's approval, every branch was rewritten to replace the Tailscale hostname, tailnet and public addresses, Tailscale user ID, physical source paths, personal folder label, DSM user ID, VPN handoff reference, a personal document anecdote and a course name with generic values, then force-pushed with leases on the previous commits. A scan of all rewritten commits and messages found none of those values; no credentials had been committed. The rewritten main differs from the previous main only in a renamed test folder; Dafny verification, the Go race suite and 207 Python tests pass on it. Limits: GitHub keeps the closed pull requests' original commits, which only GitHub Support can remove; the `v0.1.0` tag still points to an original commit because the session could not update tags; existing clones must be reset to the new history.
 
 ## Open decisions
 
