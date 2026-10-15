@@ -39,6 +39,15 @@ sudo python3 scripts/enable-upgrades.py \
 
 Replace `COMMIT_SHA` with the full published commit SHA containing these tools. This command cannot enable them in an older image. Python 3.8 or newer is required. Defaults read the existing deployment at `/volume1/docker/nas-search` and create `/volume1/@nas-search-upgrader`. The target and every ancestor must be root-owned and writable only by root; also verify DSM ACLs do not grant another account write/delete permission. The script refuses an existing target. Source paths, token, index and model cache are preserved. It copies private deployment settings into the protected location, deploys the selected image using the existing installer, and starts a host worker. The active Compose project remains `nas-search`; future deployment settings belong in the protected target's `.env`.
 
+If setup failed after creating the protected directory, preserve it and resume from an updated checkout:
+
+```sh
+sudo python3 scripts/enable-upgrades.py --resume \
+  --image ghcr.io/mattyv/nas-search-mcp:COMMIT_SHA
+```
+
+Resume requires complete root-owned settings, a protected worker and the expected queue. It keeps the saved token and configuration instead of copying the old deployment again. Inspect the private setup log if it fails; do not delete the protected folder to retry.
+
 In DSM **Control Panel → Task Scheduler**, create a **Triggered Task → User-defined script** for user `root`, event **Boot-up**, with this command:
 
 ```sh
