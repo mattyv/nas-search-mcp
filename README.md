@@ -70,8 +70,8 @@ For visual image search, start with the [isolated NAS photo pilot](docs/deployme
 | PDFs | Embedded text and optional English OCR, with page references |
 | DOCX, XLSX/XLSM, PPTX | Paragraph/table, worksheet-row, and slide extraction |
 | HTML | Visible text, excluding scripts/styles |
-| JPEG, PNG, WebP, GIF, BMP, TIFF | Metadata; optional visual search using CLIP |
-| Archives, backups, legacy Office, audio/video, RAW/HEIC | Not indexed |
+| JPEG, PNG, WebP, GIF, BMP, TIFF, HEIC/HEIF (iPhone) | Metadata; optional visual search using CLIP |
+| Archives, backups, legacy Office, audio/video, camera RAW | Not indexed |
 
 Files above 32 MiB are skipped with an indexing error; indexing extraction stops at 200,000 characters. Full-document reading uses continuation offsets instead of this index cap. Hidden files/directories, symlinks, dependencies, build outputs, Synology recycle/thumbnail folders, and known Time Machine folders are skipped. Binary files disguised as text are rejected. Transcription, photo OCR, and automatic backup deduplication are not implemented. Blank or unreadable PDF pages can still be flagged as needing OCR. Support depends on the file format; the 32 MiB source limit also applies to reading and downloading.
 

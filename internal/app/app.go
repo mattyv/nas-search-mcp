@@ -121,10 +121,13 @@ func New(root, data, python, worker, extension string, semantic, photos bool) (*
 	}
 	a := &App{Root: root, Data: data, Python: python, Worker: worker, Semantic: semantic, Photos: photos, Store: db, modelKeepalive: keepalive, workerGate: make(chan struct{}, 1)}
 	// Store the extraction/model configuration. Never silently mix incompatible vectors.
-	signature := fmt.Sprintf("v1;bge-small-en-v1.5;clip-ViT-B-32;semantic=%t;photos=%t;root=%s", semantic, photos, root)
+	// Photo vectors live in their own table, so the photo setting is tracked per file instead.
+	signature := fmt.Sprintf("v1;bge-small-en-v1.5;clip-ViT-B-32;semantic=%t;root=%s", semantic, root)
 	file := filepath.Join(data, "pipeline.json")
 	existing, err := os.ReadFile(file)
-	if err == nil && string(existing) != signature {
+	legacy := err == nil && (string(existing) == fmt.Sprintf("v1;bge-small-en-v1.5;clip-ViT-B-32;semantic=%t;photos=false;root=%s", semantic, root) ||
+		string(existing) == fmt.Sprintf("v1;bge-small-en-v1.5;clip-ViT-B-32;semantic=%t;photos=true;root=%s", semantic, root))
+	if err == nil && string(existing) != signature && !legacy {
 		db.Close()
 		return nil, errors.New("pipeline changed: choose a new NAS_DATA directory to rebuild")
 	}
@@ -132,7 +135,7 @@ func New(root, data, python, worker, extension string, semantic, photos bool) (*
 		db.Close()
 		return nil, err
 	}
-	if os.IsNotExist(err) {
+	if os.IsNotExist(err) || legacy {
 		if err = os.WriteFile(file, []byte(signature), 0600); err != nil {
 			db.Close()
 			return nil, err
@@ -693,7 +696,11 @@ var excluded = map[string]bool{"node_modules": true, "vendor": true, "build": tr
 
 func supported(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
-	return strings.Contains("|txt|md|rst|csv|tsv|json|jsonl|xml|yaml|yml|toml|ini|cfg|log|py|go|rs|java|js|jsx|ts|tsx|c|h|cpp|hpp|cs|sh|bash|sql|dfy|css|scss|vue|svelte|rb|php|swift|kt|kts|r|tex|html|htm|pdf|docx|xlsx|xlsm|pptx|jpg|jpeg|png|webp|gif|bmp|tif|tiff|", "|"+strings.TrimPrefix(ext, ".")+"|")
+	return imageFile(name) || strings.Contains("|txt|md|rst|csv|tsv|json|jsonl|xml|yaml|yml|toml|ini|cfg|log|py|go|rs|java|js|jsx|ts|tsx|c|h|cpp|hpp|cs|sh|bash|sql|dfy|css|scss|vue|svelte|rb|php|swift|kt|kts|r|tex|html|htm|pdf|docx|xlsx|xlsm|pptx|", "|"+strings.TrimPrefix(ext, ".")+"|")
+}
+func imageFile(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	return ext != "" && strings.Contains("|jpg|jpeg|png|webp|gif|bmp|tif|tiff|heic|heif|", "|"+strings.TrimPrefix(ext, ".")+"|")
 }
 func fingerprint(path string) (string, error) {
 	f, err := os.Open(path)
@@ -812,7 +819,7 @@ func (a *App) Scan(ctx context.Context) error {
 		if e != nil {
 			return e
 		}
-		if !forceRefresh && !policy.ShouldReplace(old[rel], hash) {
+		if !forceRefresh && !policy.ShouldReplace(old[rel], a.indexedFingerprint(rel, hash)) {
 			return nil
 		}
 		if e = a.indexFile(ctx, snapshot, rel, hash); e != nil {
@@ -910,5 +917,14 @@ func (a *App) indexFile(ctx context.Context, full, relative, hash string) error 
 		return err
 	}
 	a.setScanProgress(relative, "storing")
-	return a.Store.Replace(store.File{Path: relative, Fingerprint: hash, Kind: extract.Kind, Metadata: string(encoded)}, chunks, vectors)
+	return a.Store.Replace(store.File{Path: relative, Fingerprint: a.indexedFingerprint(relative, hash), Kind: extract.Kind, Metadata: string(encoded)}, chunks, vectors)
+}
+
+// indexedFingerprint marks photos indexed with visual vectors, so changing the photo
+// setting reindexes photos only and leaves documents and code untouched.
+func (a *App) indexedFingerprint(relative, hash string) string {
+	if a.Photos && a.Semantic && imageFile(relative) {
+		return hash + ";clip"
+	}
+	return hash
 }

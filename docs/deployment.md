@@ -116,7 +116,7 @@ A 401 from `/mcp` means the bearer token is missing or incorrect. A refused/time
 
 After a successful pilot, point `NAS_DOCUMENTS_PATH` at the intended larger folder and restart the project. Changes are found by periodic scanning and content fingerprints. Keep a record of the source mounts; changing their physical source while keeping the same client prefix changes what that prefix means.
 
-For photos, first choose a small photo folder, set `NAS_PHOTOS=true`, and use a **new** `NAS_INDEX_PATH` directory. The application rejects an existing index created with different pipeline settings; it must be rebuilt. Keep the old data directory until the new pilot works. Photo models use more memory than text models; their fit and performance on the NAS remain unmeasured.
+Turning `NAS_PHOTOS` on or off keeps the existing index. The next scan re-indexes photos only; documents and code are left alone. Indexes created before this change upgrade automatically. Changing `NAS_SEMANTIC` or the source root still requires a new `NAS_INDEX_PATH`.
 
 The container uses CPU affinity (`NAS_CPUSET=0`) to restrict execution to one CPU; the Synology kernel does not support Docker's CFS CPU quota setting. It permits 1 GiB aggregate memory with no extra swap allowance and uses a read-only root filesystem. Authorized source mounts are read-only; only the index/model data folder is writable. Extraction/model workers have a ten-minute timeout. This bounds resource use but does not promise indexing speed or guarantee the models fit the DS220+.
 

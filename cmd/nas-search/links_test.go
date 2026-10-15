@@ -72,8 +72,8 @@ func TestDownloadLinkToolOpensFileOverPrivateListener(t *testing.T) {
 		t.Fatal("download_link tool missing or undocumented")
 	}
 	for _, tool := range tools.Tools {
-		if tool.Name == "fetch_file" && !strings.Contains(tool.Description, "download_link") {
-			t.Fatal("fetch_file should point to download_link when links are enabled")
+		if (tool.Name == "fetch_file" || tool.Name == "search") && !strings.Contains(tool.Description, "download_link") {
+			t.Fatal(tool.Name + " should point to download_link when links are enabled")
 		}
 	}
 	result, e := session.CallTool(ctx, &mcp.CallToolParams{Name: "download_link", Arguments: map[string]any{"path": "Documents/scan.pdf"}})

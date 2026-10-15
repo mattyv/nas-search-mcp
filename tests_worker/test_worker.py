@@ -454,3 +454,38 @@ def test_automatic_ocr_failure_preserves_suspect_layer(monkeypatch, tmp_path):
     assert result['text'] == text
     assert result['metadata']['ocr_failed_pages'] == [1]
     assert result['metadata']['needs_ocr'] is True
+
+
+def test_iphone_heic_photos_are_indexed(tmp_path):
+    import pillow_heif
+    p = tmp_path / 'IMG_0001.HEIC'
+    pillow_heif.from_pillow(Image.new('RGB', (8, 6), 'red')).save(p)
+    result = extract(p)
+    assert result['kind'] == 'photo'
+    assert (result['metadata']['width'], result['metadata']['height']) == (8, 6)
+
+
+def test_image_embedding_uses_small_upright_copy(monkeypatch, tmp_path):
+    p = tmp_path / 'phone.jpg'
+    exif = Image.Exif()
+    exif[0x0112] = 6  # Stored sideways; viewers rotate it 90 degrees to portrait.
+    Image.new('RGB', (1600, 800), 'blue').save(p, exif=exif)
+    heic = tmp_path / 'phone.heic'
+    import pillow_heif
+    pillow_heif.from_pillow(Image.new('RGB', (1200, 900), 'green')).save(heic)
+    received = []
+    class FakeModel:
+        def __init__(self, **kwargs):
+            pass
+        def embed(self, values, **kwargs):
+            received.extend(values)
+            return [[0.1] * 512 for _ in values]
+    monkeypatch.setattr(worker, 'load_embedding_classes', lambda: (FakeModel, FakeModel))
+    for path in (p, heic):
+        worker.handle({'operation': 'image_embed', 'path': str(path)}, worker.ModelCache())
+    portrait, landscape = received
+    for image in received:
+        assert isinstance(image, Image.Image) and image.mode == 'RGB'
+        assert max(image.size) <= 448
+    assert portrait.height > portrait.width
+    assert landscape.width > landscape.height

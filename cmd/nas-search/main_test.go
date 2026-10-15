@@ -92,7 +92,7 @@ func TestMCPHTTPTools(t *testing.T) {
 	names := map[string]bool{}
 	for _, tool := range tools.Tools {
 		names[tool.Name] = true
-		if tool.Name == "fetch_file" && strings.Contains(tool.Description, "download_link") {
+		if (tool.Name == "fetch_file" || tool.Name == "search") && strings.Contains(tool.Description, "download_link") {
 			t.Fatal("fetch_file refers to download_link while links are disabled")
 		}
 		if tool.Name == "read_document" {

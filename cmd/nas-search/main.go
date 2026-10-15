@@ -206,7 +206,11 @@ func folderList(value string) []string {
 
 func buildMCPServer(a *app.App) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "nas-search", Version: "0.1.0"}, nil)
-	mcp.AddTool(server, &mcp.Tool{Name: "search", Description: "Search indexed NAS files using keywords and meaning. Set photos=true for visual photo search. Results include source paths and page/section locations. If the user names a file or this search misses it, use find_files to match live filename and folder terms. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, app.SearchResult, error) {
+	searchDescription := "Search indexed NAS files using keywords and meaning. Set photos=true for visual photo search, describing what the photo shows. Results include source paths and page/section locations. If the user names a file or this search misses it, use find_files to match live filename and folder terms. Read-only."
+	if a.LinksEnabled() {
+		searchDescription = strings.Replace(searchDescription, " Read-only.", " To show the user a result, such as a photo, call download_link with its path. Read-only.", 1)
+	}
+	mcp.AddTool(server, &mcp.Tool{Name: "search", Description: searchDescription}, func(ctx context.Context, req *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, app.SearchResult, error) {
 		if in.Limit == 0 {
 			in.Limit = 10
 		}

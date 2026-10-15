@@ -62,7 +62,10 @@ pillow==11.3.0
     # via
     #   -r worker/requirements.txt
     #   fastembed
+    #   pillow-heif
     #   python-pptx
+pillow-heif==1.8.1
+    # via -r worker/requirements.txt
 protobuf==7.36.2
     # via onnxruntime
 py-rust-stemmers==0.1.8

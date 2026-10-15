@@ -9,7 +9,9 @@ import subprocess
 import tempfile
 
 TEXT_EXTENSIONS = {'.txt', '.md', '.rst', '.csv', '.tsv', '.json', '.jsonl', '.xml', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.log', '.py', '.go', '.rs', '.java', '.js', '.jsx', '.ts', '.tsx', '.c', '.h', '.cpp', '.hpp', '.cs', '.sh', '.bash', '.sql', '.dfy', '.css', '.scss', '.vue', '.svelte', '.rb', '.php', '.swift', '.kt', '.kts', '.r', '.tex'}
-IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tif', '.tiff'}
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tif', '.tiff', '.heic', '.heif'}
+# CLIP sees 224 pixels; a small upright copy decodes faster and bounds memory.
+EMBED_IMAGE_SIZE = (448, 448)
 
 
 def ocr_pdf_page(path, number):
@@ -231,8 +233,7 @@ def extract(request, document_window=False):
                 break
     elif suffix in IMAGE_EXTENSIONS:
         from PIL import Image, ExifTags
-        Image.MAX_IMAGE_PIXELS = 25_000_000
-        with Image.open(path) as image:
+        with open_image(path) as image:
             if image.width * image.height > Image.MAX_IMAGE_PIXELS:
                 raise ValueError('image exceeds pixel limit')
             result['kind'] = 'photo'
@@ -247,6 +248,25 @@ def extract(request, document_window=False):
     else:
         raise ValueError(f'unsupported file type: {suffix or "no extension"}')
     return result
+
+
+def open_image(path):
+    from PIL import Image
+    Image.MAX_IMAGE_PIXELS = 25_000_000
+    if Path(path).suffix.lower() in {'.heic', '.heif'}:
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+    return Image.open(path)
+
+
+def embedding_image(path):
+    from PIL import ImageOps
+    with open_image(path) as image:
+        # JPEG decoders can shrink while decoding; other formats ignore this hint.
+        image.draft('RGB', EMBED_IMAGE_SIZE)
+        upright = ImageOps.exif_transpose(image).convert('RGB')
+    upright.thumbnail(EMBED_IMAGE_SIZE)
+    return upright
 
 
 def read_document(request):
@@ -313,6 +333,7 @@ def handle(request, model_cache=None):
     if operation == 'image_embed':
         # Check decoding dimensions and input size before loading heavyweight models.
         extract({'path': request['path'], 'max_bytes': request.get('max_bytes', 32 * 1024 * 1024), 'max_chars': 1})
+        values = [embedding_image(request['path'])]
     TextEmbedding, ImageEmbedding = load_embedding_classes()
     model_name = {'embed': 'BAAI/bge-small-en-v1.5', 'image_embed': 'Qdrant/clip-ViT-B-32-vision', 'image_query': 'Qdrant/clip-ViT-B-32-text'}[operation]
     cls = ImageEmbedding if operation == 'image_embed' else TextEmbedding
