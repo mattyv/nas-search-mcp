@@ -16,6 +16,7 @@ import (
 	"github.com/mattyv/nas-search-mcp/internal/app"
 	"github.com/mattyv/nas-search-mcp/internal/oauth"
 	"github.com/mattyv/nas-search-mcp/internal/store"
+	"github.com/mattyv/nas-search-mcp/internal/upgrade"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -126,7 +127,7 @@ func main() {
 	server := buildMCPServer(a)
 	var publicServer *http.Server
 	if issuer := os.Getenv("NAS_OAUTH_ISSUER"); issuer != "" && !stdio {
-		auth, authErr := oauth.New(oauth.Config{Issuer: issuer, DatabasePath: env("NAS_OAUTH_DB", a.Data+"/oauth.sqlite3"), PasswordHash: os.Getenv("NAS_OAUTH_PASSWORD_HASH"), ClientID: os.Getenv("NAS_OAUTH_CLIENT_ID"), ClientSecretHash: os.Getenv("NAS_OAUTH_CLIENT_SECRET_HASH"), RedirectURIs: folderList(os.Getenv("NAS_OAUTH_LOCAL_REDIRECTS"))})
+		auth, authErr := oauth.New(oauth.Config{ServiceUpgrades: os.Getenv("NAS_UPGRADE_DIR") != "", Issuer: issuer, DatabasePath: env("NAS_OAUTH_DB", a.Data+"/oauth.sqlite3"), PasswordHash: os.Getenv("NAS_OAUTH_PASSWORD_HASH"), ClientID: os.Getenv("NAS_OAUTH_CLIENT_ID"), ClientSecretHash: os.Getenv("NAS_OAUTH_CLIENT_SECRET_HASH"), RedirectURIs: folderList(os.Getenv("NAS_OAUTH_LOCAL_REDIRECTS"))})
 		if authErr != nil {
 			log.Fatal("OAuth configuration invalid; refusing to start")
 		}
@@ -260,6 +261,17 @@ func buildMCPServer(a *app.App) *mcp.Server {
 		out, err := a.Status()
 		return nil, out, err
 	})
+	if dir := os.Getenv("NAS_UPGRADE_DIR"); dir != "" {
+		q := upgrade.Queue{Dir: dir}
+		mcp.AddTool(server, &mcp.Tool{Name: "upgrade_from_main", Description: "Upgrade the NAS search service to the latest main commit after its CI checks and image publication pass. Call only when the user explicitly requests an upgrade. Changes the running service and may briefly interrupt search. No branch, image, command, or path arguments are accepted. Follow with upgrade_status after reconnecting.", Annotations: &mcp.ToolAnnotations{DestructiveHint: boolPointer(true), IdempotentHint: false, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
+			out, err := q.Request()
+			return nil, out, err
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "upgrade_status", Description: "Read the last requested NAS service upgrade state and installed commit. Read-only.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
+			out, err := q.Status()
+			return nil, out, err
+		})
+	}
 	return server
 }
 
@@ -271,3 +283,5 @@ func buildPrivateHandler(server *mcp.Server, token string, a *app.App) http.Hand
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200); fmt.Fprint(w, "ok") })
 	return mux
 }
+
+func boolPointer(value bool) *bool { return &value }

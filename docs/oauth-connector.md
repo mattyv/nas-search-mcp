@@ -1,6 +1,6 @@
 # Claude web and mobile connector
 
-This connector gives Anthropic's cloud authenticated, read-only access to the folders you select. The selected scope is the existing MCP scope: `Documents`, `Code`, and `Photos`, including sensitive personal documents. Authorization permits Claude to read those documents; OAuth does not prevent an authorized client from receiving their contents.
+This connector gives Anthropic's cloud authenticated access to read the folders you select. If the owner enables [MCP upgrades](deployment.md#upgrade-through-mcp), all authenticated clients can also upgrade the search service from main; there is no separate administrator role. The selected scope is the existing MCP scope: `Documents`, `Code`, and `Photos`, including sensitive personal documents. Authorization permits Claude to read those documents; OAuth does not prevent an authorized client from receiving their contents.
 
 The controlled NAS deployment and public endpoint checks passed. Claude web login and search work, and the connector appears in Claude mobile. Mobile tool calls and NAS Inspector remain unverified.
 
