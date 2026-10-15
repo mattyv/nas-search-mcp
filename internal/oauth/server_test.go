@@ -375,3 +375,13 @@ func TestAuthorizationCodeReplayRevokesFamily(t *testing.T) {
 		t.Fatal("replay did not revoke family")
 	}
 }
+
+func TestConsentDisclosesEnabledServiceUpgrades(t *testing.T) {
+	s := testServer(t)
+	s.cfg.ServiceUpgrades = true
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/authorize?"+authorizeValues(s).Encode(), nil))
+	if !strings.Contains(w.Body.String(), "upgrade the search service") || strings.Contains(w.Body.String(), "Allow read-only access") {
+		t.Fatal("consent does not disclose service upgrade permission")
+	}
+}

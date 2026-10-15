@@ -29,6 +29,7 @@ import (
 const scope = "files:read"
 
 type Config struct {
+	ServiceUpgrades                                                bool
 	Issuer, DatabasePath, PasswordHash, ClientID, ClientSecretHash string
 	RedirectURIs                                                   []string
 }
@@ -168,7 +169,7 @@ func (s *Server) validAuthorize(v url.Values) bool {
 	return v.Get("client_id") == s.cfg.ClientID && redirectOK && v.Get("response_type") == "code" && v.Get("code_challenge_method") == "S256" && e == nil && len(challenge) == 32 && v.Get("resource") == s.resource() && (v.Get("scope") == "" || v.Get("scope") == scope) && len(v.Get("state")) <= 1024
 }
 
-var page = template.Must(template.New("login").Parse(`<!doctype html><html><head><title>Authorize NAS search</title></head><body><h1>Allow read-only NAS access?</h1><p>This connector can search and read the folders enabled by the NAS owner.</p><p>Send authorization to {{.Destination}}.</p>{{if .Loopback}}<p>Warning: another local program could receive this authorization.</p>{{end}}<form method="post" action="/authorize"><input type="hidden" name="session" value="{{.Session}}"><label>NAS connector password <input name="password" type="password" autocomplete="current-password" required maxlength="1024"></label><button name="consent" value="allow">Allow read-only access</button></form></body></html>`))
+var page = template.Must(template.New("login").Parse(`<!doctype html><html><head><title>Authorize NAS search</title></head><body><h1>{{if .ServiceUpgrades}}Allow NAS access and service upgrades?{{else}}Allow read-only NAS access?{{end}}</h1><p>This connector can search and read the folders enabled by the NAS owner.</p>{{if .ServiceUpgrades}}<p>This connector can also upgrade the search service from main when requested. Original files remain read-only.</p>{{end}}<p>Send authorization to {{.Destination}}.</p>{{if .Loopback}}<p>Warning: another local program could receive this authorization.</p>{{end}}<form method="post" action="/authorize"><input type="hidden" name="session" value="{{.Session}}"><label>NAS connector password <input name="password" type="password" autocomplete="current-password" required maxlength="1024"></label><button name="consent" value="allow">{{if .ServiceUpgrades}}Allow access and upgrades{{else}}Allow read-only access{{end}}</button></form></body></html>`))
 
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	if !s.limiter.Allow() {
@@ -195,9 +196,9 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "strict-origin")
 	destination, _ := url.Parse(r.URL.Query().Get("redirect_uri"))
 	page.Execute(w, struct {
-		Session, Destination string
-		Loopback             bool
-	}{session, destination.Host, loopback(destination.Hostname())})
+		Session, Destination      string
+		Loopback, ServiceUpgrades bool
+	}{session, destination.Host, loopback(destination.Hostname()), s.cfg.ServiceUpgrades})
 }
 func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	if !s.limiter.Allow() {
