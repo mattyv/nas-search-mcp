@@ -295,3 +295,17 @@ Integrated local verification: 181 Python tests plus two subtests pass; the full
 Release review found a dotenv ambiguity: the installer previously read the first key while Compose accepted a later duplicate. New failing regression coverage preceded a guard that rejects duplicate or noncanonical NAS assignments before reading settings or mutating files. Quoted values, comments and non-NAS settings remain supported. CI now also validates the base Compose configuration before building the container.
 
 A second release-review regression reproduced unquoted trailing whitespace being interpreted differently by validation and dotenv. Three failing tests preceded the corrected field parser: trim surrounding whitespace, remove only complete matching quotes, preserve quoted inner spaces, and reject unsupported quoting. Astra then cleared the scoped fixes subject to CI. Final local Python verification passes 186 tests plus two subtests; six real-Compose contract cases are skipped locally because Docker is unavailable and must execute on CI. Full Go race tests and the rebuilt Dafny core pass.
+
+## D023 — Turn on photo search without rebuilding the document index
+
+**Date:** 2026-10-15 · **Status:** Accepted; local tests pass; NAS memory fit, indexing speed and search quality unvalidated
+
+The user wants visual photo search working. Enabling `NAS_PHOTOS` previously changed the index's pipeline signature, so the service refused to start until a new index was built, re-indexing all documents with OCR. Photo vectors already live in their own table, so the signature no longer includes the photo setting. Each photo's stored fingerprint now records whether it was indexed with visual vectors; changing the setting re-indexes photos only. Existing signatures from either photo setting upgrade in place when the text-model settings and root match. Changing text embeddings or the root still requires a new index.
+
+Index iPhone HEIC/HEIF photos through `pillow-heif` (BSD-3, bundling LGPL libheif), the only dependency added to the lock file. Embed a small upright copy of each photo (at most 448 pixels, EXIF rotation applied, reduced-size JPEG decoding) instead of passing the file path to the model. This respects phone rotation and reduces decode time and memory for 12-megapixel photos; CLIP itself sees 224 pixels. Search and fetch descriptions point to `download_link` only when links are enabled. Browsers other than Safari usually cannot display HEIC, so HEIC links download instead of opening.
+
+Turning photos on is a settings change in the protected `.env` followed by an upgrade; it is not exposed through MCP. A full library on the J4025 will take many hours and keeps the shared worker busy; searches queue behind at most one photo at a time. The separate photo pilot remains available for a cautious trial.
+
+Proof boundary: no Dafny change. Fingerprint tracking, signature migration, image decoding and model input are tested Go/Python adapters outside the proof.
+
+Red-to-green evidence: three new Go tests failed on behavior (enabling photos demanded a new index, the legacy signature was rejected, enabling photos did not re-index photos), then passed. Two new worker tests failed on unsupported `.heic` input, then passed. The search-description hint was written together with its test, so it is not claimed as TDD. After merging main's upgrade work, the Go race suite with `sqlite_fts5`, 194 Python tests and Dafny verification pass.

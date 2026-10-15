@@ -69,9 +69,22 @@ sudo tail -n 30 /volume1/@nas-search-upgrader/upgrade-host.log
 
 These are tested operating-system and MCP adapters outside the Dafny proof boundary. A live same-version upgrade through MCP passed on the DS220+ on 2026-10-15, including health and authenticated status checks. Reboot recovery and a future version-changing MCP upgrade still need validation. The privileged host worker stays at the version installed during setup; service upgrades do not replace its code. A phone-triggered upgrade applies service and installer fixes, but a host-worker fix needs a separately reviewed administrator update and restart. Release notes must distinguish published fixes from fixes active on that worker.
 
+## Turn on photo search
+
+Photo search finds photos by what they show, such as “a dog on the beach” or “birthday cake”. It covers JPEG, PNG, WebP, GIF, BMP, TIFF and iPhone HEIC/HEIF photos. Camera RAW, faces and text inside photos are not supported. Ask Claude for a link to see a result.
+
+Turning it on keeps your existing document index: only photos are indexed again. In the protected deployment settings (`/volume1/@nas-search-upgrader/.env`), set:
+
+```sh
+NAS_PHOTOS=true
+NAS_PHOTOS_PATH=/volume1/shared-photos
+```
+
+Confirm the photo folder's physical path in DSM first; a smaller subfolder is a safer first step. Then ask Claude: “Upgrade NAS search from main and report the result.” The upgrade applies the changed settings. Check progress with `index_status`; photos are searchable as each one finishes. Indexing a large library takes many hours on the DS220+ and keeps one CPU busy; searches still work meanwhile but can be slower. To turn it off, set `NAS_PHOTOS=false` and upgrade again; documents are not re-indexed.
+
 ## Start a small visual image-search pilot
 
-Visual search is implemented but has not been measured on the DS220+. Start with 20–50 JPEG, PNG, WebP, GIF, BMP, or TIFF images in an existing subfolder under `/volume1/shared-photos`. Images must be at most 32 MiB and 25 megapixels. HEIC, camera RAW, face recognition, and image OCR are outside this pilot. Searches describe visible content, such as “a beach at sunset”; results are candidates to inspect, not confidence scores.
+Use this separate pilot only if you want to test photo search without touching the main service. Start with 20–50 photos in an existing subfolder under `/volume1/shared-photos`. Images must be at most 32 MiB and 25 megapixels. Camera RAW, face recognition, and image OCR are not supported. Searches describe visible content, such as “a beach at sunset”; results are candidates to inspect, not confidence scores.
 
 Run the pilot launcher from an updated checkout on the NAS:
 
@@ -110,7 +123,7 @@ python3 scripts/install-mcp.py --client codex --name nas-photos \
 
 Use the other supported `--client` choices to add the same entry to Claude CLI, Claude Desktop, or ChatGPT Desktop's local Codex connection. Restart the client. Ask it to call `nas-photos` `index_status`, confirm `photos=true`, and report errors. When indexing finishes, ask it to search with `photos=true` for three descriptions of known images and one unrelated description. Confirm that results use visual search (`mode=hybrid`, without a model/vector fallback warning), inspect the returned images, and record elapsed time. Download a result through this connection's `download_file` tool to inspect the original locally. Unrelated queries can still return ranked images; relevance filtering remains uncalibrated.
 
-Do not expand the collection until indexing, descriptive search quality, memory use, and continued document-service availability have been checked on the NAS. The pilot uses a fresh index because changing photo settings on the existing document index requires rebuilding it.
+Do not expand the collection until indexing, descriptive search quality, memory use, and continued document-service availability have been checked on the NAS. The pilot uses its own index so the main service is unaffected.
 
 ## Manual Container Manager setup
 
