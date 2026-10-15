@@ -71,6 +71,11 @@ func TestDownloadLinkToolOpensFileOverPrivateListener(t *testing.T) {
 	if !listed {
 		t.Fatal("download_link tool missing or undocumented")
 	}
+	for _, tool := range tools.Tools {
+		if tool.Name == "fetch_file" && !strings.Contains(tool.Description, "download_link") {
+			t.Fatal("fetch_file should point to download_link when links are enabled")
+		}
+	}
 	result, e := session.CallTool(ctx, &mcp.CallToolParams{Name: "download_link", Arguments: map[string]any{"path": "Matthew/scan.pdf"}})
 	if e != nil || result.IsError {
 		t.Fatal(result, e)
@@ -152,7 +157,7 @@ func TestPublicDownloadsStreamBeyondMCPResponseCap(t *testing.T) {
 
 func TestDownloadRequestsAreRateLimitedAndUnlogged(t *testing.T) {
 	var logs bytes.Buffer
-	h := hardenDownloads(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }), log.New(&logs, "", 0))
+	h := hardenDownloads(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }), func(*http.Request) bool { return false }, log.New(&logs, "", 0))
 	limited := false
 	for i := 0; i < 100; i++ {
 		w := httptest.NewRecorder()
@@ -168,6 +173,49 @@ func TestDownloadRequestsAreRateLimitedAndUnlogged(t *testing.T) {
 	for _, secret := range []string{"secret-link-token", "passport"} {
 		if strings.Contains(logs.String(), secret) {
 			t.Fatal("link details appeared in logs")
+		}
+	}
+}
+
+func TestInvalidDownloadRequestsCannotStarveValidLinks(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(206) })
+	known := func(r *http.Request) bool { return strings.Contains(r.URL.Path, "valid-link") }
+	h := hardenDownloads(ok, known, log.New(io.Discard, "", 0))
+	for i := 0; i < 100; i++ {
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "http://localhost/download/junk/x", nil))
+	}
+	// A PDF viewer issues many range requests for one document.
+	for i := 0; i < 60; i++ {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", "http://localhost/download/valid-link/scan.pdf", nil))
+		if w.Code != 206 {
+			t.Fatalf("valid range request %d refused: %d", i, w.Code)
+		}
+	}
+}
+
+func TestPanickingRequestsReleaseConcurrencySlots(t *testing.T) {
+	panicking := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("panic") != "" {
+			panic("handler failure")
+		}
+		w.WriteHeader(204)
+	})
+	quiet := log.New(io.Discard, "", 0)
+	for name, h := range map[string]http.Handler{
+		"download": hardenDownloads(panicking, func(*http.Request) bool { return true }, quiet),
+		"public":   hardenPublic(panicking, quiet),
+	} {
+		for i := 0; i < 10; i++ {
+			func() {
+				defer func() { recover() }()
+				h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "http://localhost/download/x/y?panic=1", nil))
+			}()
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", "http://localhost/download/x/y", nil))
+		if w.Code != 204 {
+			t.Fatalf("%s: slots leaked after panics: %d", name, w.Code)
 		}
 	}
 }

@@ -132,19 +132,7 @@ func (a *App) ServeLink(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-Robots-Tag", "noindex, nofollow")
-	token, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/download/"), "/")
-	if len(token) != linkTokenLength {
-		http.Error(w, linkGoneMessage, http.StatusNotFound)
-		return
-	}
-	key := sha256.Sum256([]byte(token))
-	a.linkMu.Lock()
-	link, ok := a.links[key]
-	if ok && !policy.LinkActive(a.clock().UnixNano(), link.expires) {
-		delete(a.links, key)
-		ok = false
-	}
-	a.linkMu.Unlock()
+	link, ok := a.activeLink(r)
 	if !ok {
 		http.Error(w, linkGoneMessage, http.StatusNotFound)
 		return
@@ -186,4 +174,26 @@ func mediaType(value string) string {
 		return ""
 	}
 	return strings.ToLower(parsed)
+}
+
+// LinkKnown cheaply reports whether a request names an active link, before any file access.
+func (a *App) LinkKnown(r *http.Request) bool {
+	_, ok := a.activeLink(r)
+	return ok
+}
+
+func (a *App) activeLink(r *http.Request) (downloadLink, bool) {
+	token, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/download/"), "/")
+	if len(token) != linkTokenLength {
+		return downloadLink{}, false
+	}
+	key := sha256.Sum256([]byte(token))
+	a.linkMu.Lock()
+	defer a.linkMu.Unlock()
+	link, ok := a.links[key]
+	if ok && !policy.LinkActive(a.clock().UnixNano(), link.expires) {
+		delete(a.links, key)
+		return downloadLink{}, false
+	}
+	return link, ok
 }

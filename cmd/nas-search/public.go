@@ -52,8 +52,11 @@ func hardenPublic(next http.Handler, logger *log.Logger) http.Handler {
 			select {
 			case gate <- struct{}{}:
 				r.Body = http.MaxBytesReader(out, r.Body, 64*1024)
-				next.ServeHTTP(out, r)
-				<-gate
+				func() {
+					// Release the slot even if the handler panics.
+					defer func() { <-gate }()
+					next.ServeHTTP(out, r)
+				}()
 			default:
 				out.Header().Set("Retry-After", "1")
 				http.Error(out, "server busy", 429)
@@ -87,7 +90,7 @@ func buildPublicHandler(server *mcp.Server, auth *oauth.Server, a *app.App) http
 	mux.Handle("/mcp", auth.Protect(h))
 	mux.Handle("/", auth.Handler())
 	routes := http.NewServeMux()
-	routes.Handle("/download/", hardenDownloads(http.HandlerFunc(a.ServeLink), log.Default()))
+	routes.Handle("/download/", hardenDownloads(http.HandlerFunc(a.ServeLink), a.LinkKnown, log.Default()))
 	routes.Handle("/", hardenPublic(mux, log.Default()))
 	return routes
 }
@@ -114,27 +117,39 @@ func (w *statusRecorder) Write(p []byte) (int, error) {
 }
 
 // Downloads stream up to the 32 MiB source limit, so they bypass the buffered MCP response cap.
-// The link token is the credential; rate and concurrency bounds limit guessing and load.
-func hardenDownloads(next http.Handler, logger *log.Logger) http.Handler {
-	limiter := rate.NewLimiter(rate.Every(time.Second), 20)
-	gate := make(chan struct{}, 4)
+// Requests for unknown links share a strict budget, so guessing cannot starve real links.
+// Active links get a larger budget: browser PDF viewers issue many range requests per file.
+func hardenDownloads(next http.Handler, known func(*http.Request) bool, logger *log.Logger) http.Handler {
+	misses := rate.NewLimiter(rate.Every(time.Second), 20)
+	hits := rate.NewLimiter(20, 100)
+	gate := make(chan struct{}, 6)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		out := &statusRecorder{ResponseWriter: w}
+		// The URL carries the link token and filename, so it never enters logs.
+		defer func() {
+			logger.Printf("download request status=%d duration_ms=%d bytes=%d", out.code, time.Since(start).Milliseconds(), out.bytes)
+		}()
+		limiter := misses
+		if known(r) {
+			limiter = hits
+		}
 		if !limiter.Allow() {
 			out.Header().Set("Retry-After", "1")
 			http.Error(out, "request limit reached", 429)
-		} else {
-			select {
-			case gate <- struct{}{}:
-				next.ServeHTTP(out, r)
-				<-gate
-			default:
-				out.Header().Set("Retry-After", "1")
-				http.Error(out, "server busy", 429)
-			}
+			return
 		}
-		// The URL carries the link token and filename, so it never enters logs.
-		logger.Printf("download request status=%d duration_ms=%d bytes=%d", out.code, time.Since(start).Milliseconds(), out.bytes)
+		// Queue briefly rather than failing a viewer's parallel range requests.
+		wait := time.NewTimer(10 * time.Second)
+		defer wait.Stop()
+		select {
+		case gate <- struct{}{}:
+			defer func() { <-gate }()
+			next.ServeHTTP(out, r)
+		case <-wait.C:
+			out.Header().Set("Retry-After", "1")
+			http.Error(out, "server busy", 429)
+		case <-r.Context().Done():
+		}
 	})
 }

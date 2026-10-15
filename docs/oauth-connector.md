@@ -77,6 +77,8 @@ cd /volume1/nas-search-connector && ./scripts/kill-connector.sh
 
 It stops only `nas-search` first, then revokes OAuth tokens through a one-shot container using the same database without publishing ports. Stopping first prevents an in-flight login or refresh from issuing tokens after revocation. If stopping fails, the connector may still be reachable and revocation is not attempted. If revocation fails, the service remains stopped: do not restart until revocation succeeds. It does not change Tailscale or other containers.
 
+Stopping the service also cancels every download link. `revoke-oauth` alone does not: issued links keep working until they expire, at most 60 minutes.
+
 To remove Funnel, review existing private Serve mappings first, then run after authorization:
 
 ```sh
