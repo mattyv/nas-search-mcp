@@ -34,6 +34,8 @@ sudo sh scripts/install-nas.sh \
 
 Replace `COMMIT_SHA` with a published version whose CI passed; `latest` is deliberately rejected. Existing NAS settings take precedence, so edit `.env` explicitly when changing collection mounts. The installer checks permissions and kernel support, preserves credentials/index data, and checks the started service. See [NAS installation and upgrades](docs/deployment.md#scripted-installation-and-upgrades).
 
+**Upgrade through MCP:** after [one-time NAS setup](docs/deployment.md#upgrade-through-mcp), ask your authenticated assistant “Upgrade NAS search from main, then check upgrade_status.” It only installs the current main commit after verification and image publication succeed. Search may disconnect briefly. This optional feature needs a privileged host worker; ordinary search keeps its existing permissions.
+
 **Let your assistant save an original locally:** after installing the bridge, ask “Download this NAS file to /tmp/nas-melody.pdf using download_file.” Provide the exact NAS path and an absolute destination in an existing folder. Existing files are preserved. Rerun the client installer with `--replace` after updating this checkout, then restart the client to load the tool. See [local downloads](docs/clients.md#read-complete-documents-and-retrieve-originals).
 
 **Download an entire original document** from the command line:

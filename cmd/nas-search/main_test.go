@@ -7,6 +7,7 @@ import (
 	"github.com/mattyv/nas-search-mcp/internal/app"
 	"github.com/mattyv/nas-search-mcp/internal/store"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -238,5 +239,36 @@ json.dump({'kind':'document','text':'forced' if force else 'automatic','sections
 	result, e = session.CallTool(ctx, &mcp.CallToolParams{Name: "search", Arguments: map[string]any{"query": ""}})
 	if e != nil || !result.IsError {
 		t.Fatalf("empty query should be tool error: %v %v", result, e)
+	}
+}
+
+func TestMCPUpgradeAuthenticated(t *testing.T) {
+	t.Setenv("NAS_UPGRADE_DIR", t.TempDir())
+	token := "integration-test-token-at-least-24"
+	ts := httptest.NewServer(buildHTTPHandler(&app.App{}, token))
+	defer ts.Close()
+	for _, authorized := range []bool{false, true} {
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"upgrade_from_main","arguments":{}}}`
+		req, _ := http.NewRequest("POST", ts.URL+"/mcp", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		if authorized {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if !authorized {
+			if resp.StatusCode != 401 {
+				t.Fatal(resp.StatusCode)
+			}
+			continue
+		}
+		if resp.StatusCode != 200 || !strings.Contains(string(data), `"state":"queued"`) {
+			t.Fatalf("upgrade response %d %s", resp.StatusCode, data)
+		}
 	}
 }

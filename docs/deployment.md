@@ -24,6 +24,42 @@ To expand the collection, deliberately edit the existing `.env` mount paths befo
 
 English PDF OCR is enabled by default (`NAS_OCR=true`) and uses Poppler plus Tesseract in the serialized worker queue. Set it to false to disable OCR. Photo OCR and additional recognition languages are not implemented. A one-page scanned-PDF OCR fixture and complete PDF text retrieval have passed on the NAS. Larger scans still need testing.
 
+## Upgrade through MCP
+
+After one-time setup, an authenticated assistant can call `upgrade_from_main` without arguments, then `upgrade_status`. Ask: “Upgrade NAS search from main and report the result.” The request returns immediately. The host worker resolves current `main`, requires successful verification and image publication for that exact commit, and installs its pinned image. If current main has not passed CI, the request fails; it does not silently select an older commit. Search may disconnect briefly; reconnect before checking status.
+
+This is an owner capability. Enabling it grants upgrade access to **all existing authenticated MCP clients**, including OAuth clients. There is no separate administrator role. The OAuth login page discloses service upgrades; original source files remain read-only. Keep upgrades disabled if any authenticated client should have search-only access. Tool descriptions require an explicit user upgrade request, but that instruction is not a technical authorization boundary against an authenticated client.
+
+Use a complete reviewed checkout containing this feature on the NAS, after that commit is merged to main and its CI image publication succeeds:
+
+```sh
+sudo python3 scripts/enable-upgrades.py \
+  --image ghcr.io/mattyv/nas-search-mcp:COMMIT_SHA
+```
+
+Replace `COMMIT_SHA` with the full published commit SHA containing these tools. This command cannot enable them in an older image. Python 3.8 or newer is required. Defaults read the existing deployment at `/volume1/docker/nas-search` and create `/volume1/@nas-search-upgrader`. The target and every ancestor must be root-owned and writable only by root; also verify DSM ACLs do not grant another account write/delete permission. The script refuses an existing target. Source paths, token, index and model cache are preserved. It copies private deployment settings into the protected location, deploys the selected image using the existing installer, and starts a host worker. The active Compose project remains `nas-search`; future deployment settings belong in the protected target's `.env`.
+
+In DSM **Control Panel → Task Scheduler**, create a **Triggered Task → User-defined script** for user `root`, event **Boot-up**, with this command:
+
+```sh
+/usr/bin/python3 /volume1/@nas-search-upgrader/upgrade-host.py \
+  --install-dir /volume1/@nas-search-upgrader \
+  >> /volume1/@nas-search-upgrader/upgrade-host.log 2>&1
+```
+
+The setup starts the worker now; the boot task keeps it available after NAS restarts. A host lock prevents duplicate workers. Reconnect your MCP client to refresh its tool list. If the worker is stopped, requests remain queued until it starts. `upgrade_status` reports `queued`, `running`, `succeeded`, or `failed`, with the attempted commit and a safe failure stage. A stuck installer can remain running indefinitely; inspect the host and Docker before intervening. The worker waits for actual completion rather than releasing the lock while Docker might still be deploying.
+
+The search container receives only a fixed-operation request queue, without a Docker socket or host shell. The root worker downloads bounded source archives from this repository, rejects links and escaping paths, and invokes the existing health-checked installer. The installer attempts image/configuration rollback after failed startup; it does not snapshot or roll back database changes. A failed setup may already have changed the running deployment: inspect health and the private `enable-upgrades.log` before retrying. Do not rerun the old deployment helper after migration without deliberately choosing which protected configuration is active.
+
+For manual inspection on the NAS:
+
+```sh
+sudo cat /volume1/@nas-search-upgrader/current-image
+sudo tail -n 30 /volume1/@nas-search-upgrader/upgrade-host.log
+```
+
+These are tested operating-system and MCP adapters outside the Dafny proof boundary. Local tests do not establish successful NAS upgrade or reboot recovery. The privileged host worker stays at the version installed during setup; service upgrades do not replace its code. Updating that worker needs a separately reviewed administrator action.
+
 ## Start a small visual image-search pilot
 
 Visual search is implemented but has not been measured on the DS220+. Start with 20–50 JPEG, PNG, WebP, GIF, BMP, or TIFF images in an existing subfolder under `/volume1/homes/matt/Photos`. Images must be at most 32 MiB and 25 megapixels. HEIC, camera RAW, face recognition, and image OCR are outside this pilot. Searches describe visible content, such as “a beach at sunset”; results are candidates to inspect, not confidence scores.
