@@ -80,7 +80,7 @@ NAS_PHOTOS=true
 NAS_PHOTOS_PATH=/volume1/shared-photos
 ```
 
-Confirm the photo folder's physical path in DSM first; a smaller subfolder is a safer first step. Then ask Claude: “Upgrade NAS search from main and report the result.” The upgrade applies the changed settings. Check progress with `index_status`; photos are searchable as each one finishes. Indexing a large library takes many hours on the DS220+ and keeps one CPU busy; searches still work meanwhile but can be slower. To turn it off, set `NAS_PHOTOS=false` and upgrade again; documents are not re-indexed.
+Confirm the photo folder's physical path in DSM first; a smaller subfolder is a safer first step. Then ask Claude: “Upgrade NAS search from main and report the result.” The upgrade applies the changed settings. Check progress with `index_status`; photos are searchable as each one finishes. Estimated indexing time on the DS220+ is about 2–4 hours per 10,000 JPEGs, or 7–11 hours per 10,000 iPhone HEIC photos; the first run also downloads 642 MiB of models. These are estimates from a development machine under the same limits, where memory peaked at 774 MB of the 1 GiB limit ([measurements](benchmarks/photo-development.json)). Indexing keeps one CPU busy; searches still work but can be slower. Every photo search returns its closest matches, even when nothing really matches. To turn it off, set `NAS_PHOTOS=false` and upgrade again; documents are not re-indexed.
 
 ## Start a small visual image-search pilot
 

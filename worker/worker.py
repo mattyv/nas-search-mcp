@@ -264,9 +264,9 @@ def embedding_image(path):
     with open_image(path) as image:
         # JPEG decoders can shrink while decoding; other formats ignore this hint.
         image.draft('RGB', EMBED_IMAGE_SIZE)
-        upright = ImageOps.exif_transpose(image).convert('RGB')
-    upright.thumbnail(EMBED_IMAGE_SIZE)
-    return upright
+        # Shrink before rotating or converting: full-size copies of a 24 MP photo cost ~100 MB.
+        image.thumbnail(EMBED_IMAGE_SIZE)
+        return ImageOps.exif_transpose(image).convert('RGB')
 
 
 def read_document(request):

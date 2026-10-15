@@ -1,0 +1,48 @@
+{
+  "recorded_at_utc": "2026-10-15T11:20:00Z",
+  "machine_role": "development cloud VM, not the NAS",
+  "cpu": "Intel Xeon 2.1 GHz with AVX-512 (the DS220+ J4025 has no AVX, AVX2 or FMA)",
+  "limits": "Docker --memory 1g --memory-swap 1g --cpuset-cpus 0 --read-only, GOMEMLIMIT=128MiB, GOMAXPROCS=1, OMP_THREAD_LIMIT=1",
+  "photos": "42 openly licensed Wikimedia Commons photos with known subjects, neutral filenames and EXIF removed; 14 at 6.3-10.6 MP; 4 converted to HEIC",
+  "before_fix": {
+    "commit": "c4889d0",
+    "index_42_photos_seconds": 86,
+    "seconds_per_photo_after_first": 2.0,
+    "cause": "a separate extract call per photo stopped the warm model, so CLIP reloaded for every photo",
+    "peak_memory_indexing_mb": 731,
+    "top1_queries": "13/14",
+    "top3_queries": "14/14"
+  },
+  "after_fix": {
+    "commit": "0937da5",
+    "index_42_photos_seconds": 14.4,
+    "seconds_per_jpeg_median_max": [0.14, 0.16],
+    "seconds_per_heic_2_5_10_mp": [0.27, 0.58, 1.02],
+    "peak_memory_indexing_mb": 774,
+    "peak_memory_photo_search_mb": 636,
+    "peak_memory_document_search_after_photos_mb": 488,
+    "oom_kills": 0,
+    "index_errors": "0/42",
+    "top1_queries": "17/18",
+    "top3_queries": "18/18",
+    "heic_queries_top1": "4/4",
+    "warm_search_ms": [28, 57],
+    "first_search_seconds_including_model_download": 7.1,
+    "model_downloads_mib": 642
+  },
+  "heic_decode_memory_probe": {
+    "method": "Worker image preparation alone, peak RSS in a fresh Python process; baseline about 20 MB",
+    "before_shrink_first_24mp_mb": 309,
+    "after_shrink_first_12mp_mb": 121,
+    "after_shrink_first_24mp_mb": 205,
+    "seconds_24mp": 1.34
+  },
+  "nas_extrapolation": {
+    "assumptions": "J4025 PassMark single-thread 1166; decoding 2-3x slower and inference 4-10x slower than this VM",
+    "jpeg_seconds_per_photo": [0.6, 1.4],
+    "iphone_heic_12mp_seconds_per_photo": [2.4, 4.1],
+    "hours_10000_jpeg": [1.7, 3.9],
+    "hours_10000_heic": [6.7, 11.4]
+  },
+  "limitations": "Not measured on the DS220+. Unrelated queries still return ranked results; there is no no-match signal. A 24 MP HEIC was measured only for decode memory, not end to end in the container."
+}
