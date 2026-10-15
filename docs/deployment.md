@@ -18,7 +18,7 @@ sudo sh scripts/install-nas.sh \
 
 Replace `COMMIT_SHA` with the complete published commit SHA. The installer rejects `latest`. Source folders must exist. `--install-dir` defaults to `/volume1/docker/nas-search`; UID/GID default to the user invoking `sudo`, with explicit `--uid`/`--gid` overrides. `--dry-run` inspects prerequisites without pulling an image or writing files; the actual install also probes kernel limits and mount permissions as the container user.
 
-Existing `.env` contents and index data are preserved, and existing deployment settings take precedence over command-line source settings. The installer secures `.env` permissions, writes pull-only Compose with a persisted image version, starts it, and checks HTTP health and authenticated MCP status. It does not claim initial indexing is finished. On a failed upgrade it restores the previous Compose configuration and restarts that image. This is an image/configuration rollback, not a database snapshot or schema rollback.
+Existing `.env` contents and index data are preserved, and existing deployment settings take precedence over command-line source settings. The installer secures `.env` permissions, writes pull-only Compose with a persisted image version, starts it, and checks HTTP health and authenticated MCP status. If OAuth is configured, its issuer metadata and authentication challenge must also pass before success. It does not claim initial indexing is finished. On a failed upgrade it restores the previous Compose configuration and restarts that image. This is an image/configuration rollback, not a database snapshot or schema rollback.
 
 To expand the collection, deliberately edit the existing `.env` mount paths before running the installer. Do not put index data inside a source mount. The existing pilot can keep the same token and database during this update; extraction-version changes trigger a refresh of unchanged source files.
 
@@ -37,7 +37,7 @@ sudo python3 scripts/enable-upgrades.py \
   --image ghcr.io/mattyv/nas-search-mcp:COMMIT_SHA
 ```
 
-Replace `COMMIT_SHA` with the full published commit SHA containing these tools. This command cannot enable them in an older image. Python 3.8 or newer is required. Defaults read the existing deployment at `/volume1/docker/nas-search` and create `/volume1/@nas-search-upgrader`. The target and every ancestor must be root-owned and writable only by root; also verify DSM ACLs do not grant another account write/delete permission. The script refuses an existing target. Source paths, token, index and model cache are preserved. It copies private deployment settings into the protected location, deploys the selected image using the existing installer, and starts a host worker. The active Compose project remains `nas-search`; future deployment settings belong in the protected target's `.env`.
+Replace `COMMIT_SHA` with the full published commit SHA containing these tools. This command cannot enable them in an older image. Python 3.8 or newer is required. Defaults discover the active Compose deployment and create `/volume1/@nas-search-upgrader`. Fresh installations with no existing container fall back to `/volume1/docker/nas-search`. Explicit `--source-install-dir` overrides discovery. The target and every ancestor must be root-owned and writable only by root; also verify DSM ACLs do not grant another account write/delete permission. The script refuses an existing target. Source paths, token, index and model cache are preserved. It copies private deployment settings into the protected location, deploys the selected image using the existing installer, and starts a host worker. The active Compose project remains `nas-search`; future deployment settings belong in the protected target's `.env`.
 
 If setup failed after creating the protected directory, preserve it and resume from an updated checkout:
 
@@ -67,7 +67,7 @@ sudo cat /volume1/@nas-search-upgrader/current-image
 sudo tail -n 30 /volume1/@nas-search-upgrader/upgrade-host.log
 ```
 
-These are tested operating-system and MCP adapters outside the Dafny proof boundary. Local tests do not establish successful NAS upgrade or reboot recovery. The privileged host worker stays at the version installed during setup; service upgrades do not replace its code. Updating that worker needs a separately reviewed administrator action.
+These are tested operating-system and MCP adapters outside the Dafny proof boundary. A live same-version upgrade through MCP passed on the DS220+ on 2026-10-15, including health and authenticated status checks. Reboot recovery and a future version-changing MCP upgrade still need validation. The privileged host worker stays at the version installed during setup; service upgrades do not replace its code. Updating that worker needs a separately reviewed administrator action.
 
 ## Start a small visual image-search pilot
 
@@ -166,3 +166,11 @@ For photos, first choose a small photo folder, set `NAS_PHOTOS=true`, and use a 
 The container uses CPU affinity (`NAS_CPUSET=0`) to restrict execution to one CPU; the Synology kernel does not support Docker's CFS CPU quota setting. It permits 1 GiB aggregate memory with no extra swap allowance and uses a read-only root filesystem. Authorized source mounts are read-only; only the index/model data folder is writable. Extraction/model workers have a ten-minute timeout. This bounds resource use but does not promise indexing speed or guarantee the models fit the DS220+.
 
 For remote device access, use the existing personal Tailscale setup and an endpoint your device can reach. Preserve the work Tailscale account and enabled local-LAN access. Do not switch accounts to make the pilot work. LAN HTTP transmits the token without TLS; use a trusted LAN for the pilot, and Tailscale encryption or a correctly configured HTTPS reverse proxy for remote use. QuickConnect's DSM URL is not this MCP endpoint.
+
+## Restore mobile login after the earlier upgrade configuration loss
+
+The first upgrade migration copied an older deployment configuration instead of the active mobile connector settings. Private MCP continued working, but the OAuth listener was disabled. Current installer defaults discover the active Compose directory, preserve its settings, and verify configured OAuth before reporting success.
+
+The saved original settings remain in `/volume1/nas-search-connector/.env`. From a reviewed complete checkout staged in a root-owned directory with trusted ancestors, run `scripts/restore-mobile.py` as root. `--dry-run` validates readiness without changing settings. The repair requires matching token, index and source roots, preserves upgrade queue settings, saves a private backup, restores the original OAuth/download/access configuration, and checks metadata plus anonymous OAuth rejection. On failure it restores the prior configuration and attempts to restart it. It does not alter Funnel or Tailscale. The repair pauses the matching root upgrade worker while changing settings and resumes it afterward, including on failure. An already queued or running upgrade blocks the repair.
+
+A user-writable checkout cannot be used directly for this privileged repair. Copy the reviewed checkout into a new root-owned mode-700 directory beneath `/volume1` first. Never print either deployment's environment file. Mobile login must be checked again after repair; private MCP health alone does not establish mobile access.

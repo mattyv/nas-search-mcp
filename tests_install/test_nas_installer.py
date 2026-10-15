@@ -14,6 +14,7 @@ def setup(tmp_path):
 printf '%s\\n' "$*" >> "$DOCKER_LOG"
 case "$1" in
 info) echo 'Server ready';;
+inspect) [ -n "${ACTIVE_INSTALL:-}" ] || exit 1; printf '%s\\n' "$ACTIVE_INSTALL";;
 pull) [ "${FAIL_PULL:-0}" = 0 ];;
 run) [ "${FAIL_LIMITS:-0}" = 0 ];;
 compose) case "$*" in *"exec -T nas-search"*) [ "${FAIL_HEALTH:-0}" = 0 ];; esac;;
@@ -190,3 +191,87 @@ def test_synology_protected_upgrade_path(tmp_path):
     result = subprocess.run(args, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert (protected / 'current-image').read_text().strip().endswith(':def456')
+
+
+def test_default_install_preserves_active_deployment(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    state = tmp_path / 'install'
+    original = (state / '.env').read_bytes()
+    i = args.index('--install-dir')
+    del args[i:i + 2]
+    env['ACTIVE_INSTALL'] = str(state)
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert (state / '.env').read_bytes() == original
+    assert f'--project-directory {state}' in log.read_text()
+
+
+def test_oauth_check_rejects_unavailable_login(monkeypatch):
+    import json
+    import urllib.request
+    import pytest
+    check = SCRIPT.read_text().split("check='", 1)[1].split("'\nready=false", 1)[0]
+    class Reply:
+        status = 200
+        def read(self):
+            return json.dumps({'result': {}}).encode()
+    calls = []
+    def request(url, **kwargs):
+        address = url if isinstance(url, str) else url.full_url
+        calls.append(address)
+        if ':8082/' in address:
+            raise OSError('OAuth unavailable')
+        return Reply()
+    monkeypatch.setenv('NAS_TOKEN', 'private')
+    monkeypatch.setenv('NAS_OAUTH_ISSUER', 'https://nas.example')
+    monkeypatch.setattr(urllib.request, 'urlopen', request)
+    with pytest.raises(OSError, match='OAuth unavailable'):
+        exec(check, {})
+    assert any(':8082/' in address for address in calls)
+
+
+def test_oauth_check_validates_issuer_and_authentication(monkeypatch):
+    import io
+    import json
+    import urllib.request
+    import urllib.error
+    import pytest
+    check = SCRIPT.read_text().split("check='", 1)[1].split("'\nready=false", 1)[0]
+    class Reply:
+        status = 200
+        def __init__(self, body):
+            self.body = body
+        def read(self):
+            return json.dumps(self.body).encode()
+    monkeypatch.setenv('NAS_TOKEN', 'private')
+    monkeypatch.setenv('NAS_OAUTH_ISSUER', 'https://nas.example')
+    scenario = {'issuer': 'https://nas.example', 'challenge': 'Bearer resource_metadata="https://nas.example/.well-known/oauth-protected-resource"', 'status': 401}
+    def request(url, **kwargs):
+        address = url if isinstance(url, str) else url.full_url
+        if address.endswith('/.well-known/oauth-authorization-server'):
+            return Reply({'issuer': scenario['issuer']})
+        if ':8082/mcp' in address:
+            if scenario['status'] == 200:
+                return Reply({})
+            raise urllib.error.HTTPError(address, scenario['status'], 'Unauthorized', {'WWW-Authenticate': scenario['challenge']}, io.BytesIO())
+        return Reply({'result': {}})
+    monkeypatch.setattr(urllib.request, 'urlopen', request)
+    exec(check, {})
+    for key, value in [('issuer', 'https://wrong.example'), ('challenge', 'Bearer'), ('status', 200), ('status', 403)]:
+        original = scenario[key]
+        scenario[key] = value
+        with pytest.raises(AssertionError):
+            exec(check, {})
+        scenario[key] = original
+
+
+def test_default_install_rejects_invalid_detected_path_before_mutation(tmp_path):
+    args, env, log = setup(tmp_path)
+    i = args.index('--install-dir')
+    del args[i:i + 2]
+    env['ACTIVE_INSTALL'] = '/volume1/../private'
+    result = subprocess.run(args, env=env, capture_output=True)
+    assert result.returncode != 0
+    assert 'pull ' not in log.read_text()
+    assert not (tmp_path / 'install').exists()
