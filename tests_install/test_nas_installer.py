@@ -17,7 +17,10 @@ info) echo 'Server ready';;
 inspect) [ -n "${ACTIVE_INSTALL:-}" ] || exit 1; printf '%s\\n' "$ACTIVE_INSTALL";;
 pull) [ "${FAIL_PULL:-0}" = 0 ];;
 run) [ "${FAIL_LIMITS:-0}" = 0 ];;
-compose) case "$*" in *"exec -T nas-search"*) [ "${FAIL_HEALTH:-0}" = 0 ];; esac;;
+compose) if [ "${CHECK_NAS_ENV:-0}" = 1 ] && [ "${2:-}" != version ]; then
+    [ -z "$(env | sed -n '/^NAS_[A-Za-z0-9_]*=/p')" ] || exit 91
+fi
+case "$*" in *"exec -T nas-search"*) [ "${FAIL_HEALTH:-0}" = 0 ];; esac;;
 esac
 ''')
     (binaries / 'chown').write_text('#!/bin/sh\nprintf \"%s\\n\" \"$*\" >> \"$CHOWN_LOG\"\n')
@@ -60,7 +63,7 @@ def test_dry_run_and_reject_latest(tmp_path):
     result = subprocess.run(args + ['--dry-run'], env=env, capture_output=True, text=True)
     assert result.returncode == 0
     assert not (tmp_path / 'install').exists()
-    assert 'pull ' not in log.read_text()
+    assert not log.exists() or 'pull ' not in log.read_text()
     args[args.index('--image') + 1] = 'ghcr.io/mattyv/nas-search-mcp:latest'
     assert subprocess.run(args, env=env, capture_output=True).returncode != 0
 
@@ -87,7 +90,7 @@ def test_existing_state_and_failed_upgrade_rollback(tmp_path):
     assert subprocess.run(args, env=env, capture_output=True).returncode != 0
     updated = (state / '.env').read_text()
     assert token in updated
-    assert 'NAS_ALLOWED_FOLDERS=Documents,Code,Photos' in updated
+    assert 'NAS_ALLOWED_FOLDERS=' not in updated
     assert 'NAS_DENIED_FOLDERS=Photos/private' in updated
     assert (state / 'current-image').read_text().strip().endswith(':abc123')
     assert (tmp_path / 'index' / 'keep.sqlite3').read_bytes() == b'untouched'
@@ -273,5 +276,193 @@ def test_default_install_rejects_invalid_detected_path_before_mutation(tmp_path)
     env['ACTIVE_INSTALL'] = '/volume1/../private'
     result = subprocess.run(args, env=env, capture_output=True)
     assert result.returncode != 0
-    assert 'pull ' not in log.read_text()
+    assert not log.exists() or 'pull ' not in log.read_text()
     assert not (tmp_path / 'install').exists()
+
+
+def test_empty_scope_survives_success_and_failure(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    secret = tmp_path / 'install' / '.env'
+    original = secret.read_bytes().replace(b'NAS_ALLOWED_FOLDERS=Documents,Code,Photos', b'NAS_ALLOWED_FOLDERS=')
+    secret.write_bytes(original)
+    for failure in ['0', '1']:
+        env['FAIL_HEALTH'] = failure
+        result = subprocess.run(args, env=env, capture_output=True)
+        assert (result.returncode == 0) == (failure == '0')
+        assert secret.read_bytes() == original
+
+
+def test_sources_cannot_be_inside_writable_data(tmp_path):
+    args, env, log = setup(tmp_path)
+    args[args.index('--data-path') + 1] = str(tmp_path)
+    result = subprocess.run(args, env=env, capture_output=True)
+    assert result.returncode != 0
+    assert not log.exists() or 'pull ' not in log.read_text()
+
+
+def test_existing_queue_cannot_overlap_sources_or_index(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    secret = tmp_path / 'install' / '.env'
+    original = secret.read_bytes()
+    for queue in [tmp_path / 'Documents', tmp_path / 'Documents' / 'queue', tmp_path, tmp_path / 'index']:
+        secret.write_bytes(original + f'NAS_UPGRADE_PATH={queue}\n'.encode())
+        log.write_text('')
+        result = subprocess.run(args, env=env, capture_output=True)
+        assert result.returncode != 0, queue
+        assert not log.exists() or 'pull ' not in log.read_text()
+
+
+def test_effective_loaded_paths_reject_alias_overlap(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    alias = tmp_path / 'alias'
+    alias.symlink_to(tmp_path / 'Documents', target_is_directory=True)
+    secret = tmp_path / 'install' / '.env'
+    secret.write_text(secret.read_text() + f'NAS_UPGRADE_PATH={alias}/queue\n')
+    log.write_text('')
+    assert subprocess.run(args, env=env, capture_output=True).returncode != 0
+    assert not log.exists() or 'pull ' not in log.read_text()
+
+
+def test_bind_effective_mappings_and_legacy_preservation(tmp_path):
+    args, env, log = setup(tmp_path)
+    state = tmp_path / 'install'
+    for bind in ['127.0.0.1', '192.0.2.10', '0.0.0.0']:
+        args[args.index('--bind-ip') + 1] = bind
+        if (state / '.env').exists():
+            (state / '.env').unlink()
+        assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+        compose = (state / 'compose.yaml').read_text()
+        assert f'"{bind}:8080:8080"' in compose
+        assert compose.count('127.0.0.1:8080:8080') == (0 if bind == '0.0.0.0' else 1)
+        assert ('192.0.2.10:8080:8080' in compose) == (bind == '192.0.2.10')
+    secret = state / '.env'
+    original = secret.read_bytes().replace(b'NAS_BIND_IP=0.0.0.0', b'NAS_LAN_IP=192.168.1.9')
+    secret.write_bytes(original)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    assert '192.168.1.9:8080:8080' in (state / 'compose.yaml').read_text()
+    assert secret.read_bytes() == original
+    env['FAIL_HEALTH'] = '1'
+    assert subprocess.run(args, env=env, capture_output=True).returncode != 0
+    assert secret.read_bytes() == original
+
+
+def test_malformed_bind_rejected_before_pull(tmp_path):
+    args, env, log = setup(tmp_path)
+    for bind in ['999.1.2.3', '127.1', '1..2.3', '01.2.3.4']:
+        args[args.index('--bind-ip') + 1] = bind
+        assert subprocess.run(args, env=env, capture_output=True).returncode != 0
+    assert not log.exists() or 'pull ' not in log.read_text()
+
+
+def test_writable_index_cannot_contain_install_state(tmp_path):
+    args, env, log = setup(tmp_path)
+    args[args.index('--data-path') + 1] = str(tmp_path / 'writable')
+    args[args.index('--install-dir') + 1] = str(tmp_path / 'writable' / 'install')
+    assert subprocess.run(args, env=env, capture_output=True).returncode != 0
+    assert not log.exists() or 'pull ' not in log.read_text()
+
+
+def test_ordinary_install_children_are_allowed(tmp_path):
+    args, env, log = setup(tmp_path)
+    args[args.index('--data-path') + 1] = str(tmp_path / 'install' / 'data')
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    secret = tmp_path / 'install' / '.env'
+    secret.write_text(secret.read_text() + f'NAS_UPGRADE_PATH={tmp_path / "install" / "queue"}\n')
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+
+
+def test_root_writable_mount_rejected(tmp_path):
+    args, env, log = setup(tmp_path)
+    args[args.index('--data-path') + 1] = '/'
+    assert subprocess.run(args, env=env, capture_output=True).returncode != 0
+    assert not log.exists() or 'pull ' not in log.read_text()
+
+
+def test_compose_uses_checked_env_not_ambient_overrides(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    secret = tmp_path / 'install' / '.env'
+    original = secret.read_bytes().replace(b'NAS_ALLOWED_FOLDERS=Documents,Code,Photos', b'NAS_ALLOWED_FOLDERS=')
+    secret.write_bytes(original)
+    env.update(CHECK_NAS_ENV='1', NAS_ALLOWED_FOLDERS='Documents,Code,Photos',
+               NAS_INDEX_PATH=str(tmp_path), NAS_UPGRADE_PATH=str(tmp_path / 'Documents'),
+               NAS_TOKEN='ambient-private-token', NAS_FUTURE_SETTING='future-override')
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert secret.read_bytes() == original
+    assert 'ambient-private-token' not in result.stdout + result.stderr + log.read_text()
+
+
+def test_ambiguous_dotenv_assignments_rejected_without_changes(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    secret = tmp_path / 'install' / '.env'
+    original = secret.read_bytes()
+    for extra in [f'NAS_INDEX_PATH={tmp_path / "Documents"}',
+                  f'export NAS_INDEX_PATH={tmp_path / "Documents"}',
+                  f' NAS_INDEX_PATH = {tmp_path / "Documents"}',
+                  'NAS_ALLOWED_FOLDERS=Documents,Code,Photos',
+                  'NAS_FUTURE_FIELD=one\nNAS_FUTURE_FIELD=two']:
+        contents = original + (extra + '\n').encode()
+        secret.write_bytes(contents)
+        secret.chmod(0o644)
+        log.write_text('')
+        result = subprocess.run(args, env=env, capture_output=True, text=True)
+        assert result.returncode != 0, extra
+        assert 'pull ' not in log.read_text()
+        assert secret.read_bytes() == contents
+        assert secret.stat().st_mode & 0o077 == 0o044
+        assert str(tmp_path / 'Documents') not in result.stderr
+
+
+def test_canonical_dotenv_preserves_quoted_hash_and_space_values(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    secret = tmp_path / 'install' / '.env'
+    original = secret.read_bytes() + b"# NAS_INDEX_PATH=ignored comment\nOTHER_SETTING=value\nNAS_OAUTH_PASSWORD_HASH='$2b$12$literal'\nNAS_FUTURE_FIELD='space value'\n"
+    secret.write_bytes(original)
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert secret.read_bytes() == original
+
+
+def test_dotenv_unquoted_path_whitespace_cannot_hide_source_overlap(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    (tmp_path / 'Documents ').mkdir()
+    secret = tmp_path / 'install' / '.env'
+    original = secret.read_text()
+    for value in [str(tmp_path / 'Documents') + ' ', '  ' + str(tmp_path / 'Documents') + '  ']:
+        secret.write_text(original.replace(f"NAS_INDEX_PATH='{tmp_path / 'index'}'", f'NAS_INDEX_PATH={value}'))
+        log.write_text('')
+        result = subprocess.run(args, env=env, capture_output=True)
+        assert result.returncode != 0
+        assert 'pull ' not in log.read_text()
+
+
+def test_dotenv_quoted_path_inner_spaces_preserved(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    (tmp_path / 'index ').mkdir()
+    secret = tmp_path / 'install' / '.env'
+    original = secret.read_text().replace(f"NAS_INDEX_PATH='{tmp_path / 'index'}'", f'NAS_INDEX_PATH=  "{tmp_path / "index "}"  ')
+    secret.write_text(original)
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert f"{tmp_path / 'index '}:/check-data" in log.read_text()
+    assert secret.read_text() == original
+
+
+def test_dotenv_path_unbalanced_or_internal_quotes_fail_closed(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    secret = tmp_path / 'install' / '.env'
+    original = secret.read_text()
+    for value in [f'"{tmp_path / "index"}', str(tmp_path / 'in"dex'), f"'{tmp_path / 'index'}\"'\""]:
+        secret.write_text(original.replace(f"NAS_INDEX_PATH='{tmp_path / 'index'}'", f'NAS_INDEX_PATH={value}'))
+        log.write_text('')
+        assert subprocess.run(args, env=env, capture_output=True).returncode != 0
+        assert 'pull ' not in log.read_text()

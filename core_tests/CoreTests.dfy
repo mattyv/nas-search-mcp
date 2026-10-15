@@ -45,6 +45,13 @@ module CoreTests {
     expect LinkActive(100, 101);
     expect !LinkActive(101, 101);
     expect !LinkActive(102, 101);
+    expect !LoginAttemptAllowed(-1);
+    expect LoginAttemptAllowed(0);
+    expect LoginAttemptAllowed(4);
+    expect !LoginAttemptAllowed(5);
+    expect !LoginAttemptAllowed(6);
+    expect FailedLoginCount(0) == 1;
+    expect FailedLoginCount(4) == 5;
     print "Dafny core executable tests passed\n";
   }
 }
