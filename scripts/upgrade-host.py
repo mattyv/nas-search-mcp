@@ -134,7 +134,33 @@ def write_status(queue, state, commit='', failure_stage=''):
             os.unlink(name)
 
 
+def retire_request(install_dir, request, original):
+    """Never traverse rejected entries or remove a later replacement request."""
+    try:
+        current = request.lstat()
+        if (current.st_dev, current.st_ino) != (original.st_dev, original.st_ino):
+            return
+        if stat.S_ISDIR(current.st_mode):
+            # Keep at most one opaque rejected directory outside the app queue.
+            # Never recurse: its contents could include links or mount points.
+            quarantine = install_dir / '.rejected-upgrade-request'
+            if not quarantine.exists() and not quarantine.is_symlink():
+                request.rename(quarantine)
+        else:
+            request.unlink()
+    except OSError:
+        pass
+
+
 def process_once(install_dir):
+    # Environmental and status-write errors must not terminate the polling worker.
+    try:
+        return process_request(install_dir)
+    except Exception:
+        return False
+
+
+def process_request(install_dir):
     env = read_env(install_dir / '.env')
     queue = install_dir / 'upgrades'
     if queue.is_symlink():
@@ -147,14 +173,19 @@ def process_once(install_dir):
         queue.chmod(0o1733)
     request = queue / 'request.json'
     try:
-        fd = os.open(request, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        original = request.lstat()
     except FileNotFoundError:
         return False
     sha = ''
     stage = 'request_validation'
     try:
-        with os.fdopen(fd) as source:
-            if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+        if not stat.S_ISREG(original.st_mode):
+            raise ValueError('Invalid request file')
+        fd = os.open(request, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as source:
+            opened = os.fstat(source.fileno())
+            if (not stat.S_ISREG(opened.st_mode) or
+                    (opened.st_dev, opened.st_ino) != (original.st_dev, original.st_ino)):
                 raise ValueError('Invalid request file')
             body = source.read(4097)
         write_status(queue, 'running')
@@ -169,7 +200,7 @@ def process_once(install_dir):
     except Exception:
         write_status(queue, 'failed', sha, stage)
     finally:
-        request.unlink(missing_ok=True)
+        retire_request(install_dir, request, original)
     return True
 
 

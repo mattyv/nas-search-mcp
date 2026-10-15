@@ -38,30 +38,39 @@ func (w *cappedResponse) Write(p []byte) (int, error) {
 	return w.body.Write(p)
 }
 
-// Stateless JSON responses finish before publication, so an oversized response leaks no prefix.
-func hardenPublic(next http.Handler, logger *log.Logger) http.Handler {
+// Admit only bounded work. OAuth and authenticated MCP use separate instances.
+func admitPublic(next http.Handler) http.Handler {
 	limiter := rate.NewLimiter(rate.Every(time.Second), 30)
 	gate := make(chan struct{}, 2)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow() {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "request limit reached", 429)
+			return
+		}
+		select {
+		case gate <- struct{}{}:
+			defer func() { <-gate }()
+			r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+			next.ServeHTTP(w, r)
+		default:
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "server busy", 429)
+		}
+	})
+}
+
+func hardenPublic(next http.Handler, logger *log.Logger) http.Handler {
+	return publicResponseBoundary(admitPublic(next), logger)
+}
+
+// Stateless JSON responses finish before publication, so an oversized response leaks no prefix.
+// This outer boundary also covers authentication failures; it does not allocate worker slots.
+func publicResponseBoundary(next http.Handler, logger *log.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		out := &cappedResponse{header: make(http.Header)}
-		if !limiter.Allow() {
-			out.Header().Set("Retry-After", "1")
-			http.Error(out, "request limit reached", 429)
-		} else {
-			select {
-			case gate <- struct{}{}:
-				r.Body = http.MaxBytesReader(out, r.Body, 64*1024)
-				func() {
-					// Release the slot even if the handler panics.
-					defer func() { <-gate }()
-					next.ServeHTTP(out, r)
-				}()
-			default:
-				out.Header().Set("Retry-After", "1")
-				http.Error(out, "server busy", 429)
-			}
-		}
+		next.ServeHTTP(out, r)
 		if out.overflow {
 			out = &cappedResponse{header: make(http.Header)}
 			http.Error(out, "response exceeds limit", http.StatusBadGateway)
@@ -87,11 +96,11 @@ func hardenPublic(next http.Handler, logger *log.Logger) http.Handler {
 func buildPublicHandler(server *mcp.Server, auth *oauth.Server, a *app.App) http.Handler {
 	mux := http.NewServeMux()
 	h := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
-	mux.Handle("/mcp", auth.Protect(h))
-	mux.Handle("/", auth.Handler())
+	mux.Handle("/mcp", publicResponseBoundary(auth.Protect(admitPublic(h)), log.Default()))
+	mux.Handle("/", hardenPublic(auth.Handler(), log.Default()))
 	routes := http.NewServeMux()
 	routes.Handle("/download/", hardenDownloads(http.HandlerFunc(a.ServeLink), a.LinkKnown, log.Default()))
-	routes.Handle("/", hardenPublic(mux, log.Default()))
+	routes.Handle("/", mux)
 	return routes
 }
 

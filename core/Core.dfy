@@ -184,6 +184,21 @@ module Core {
     now < expires
   }
 
+  // Each expiring browser login has its own bounded failure counter.
+  function LoginAttemptAllowed(failures: int): bool
+    ensures LoginAttemptAllowed(failures) <==> 0 <= failures < 5
+  {
+    0 <= failures < 5
+  }
+
+  function FailedLoginCount(failures: int): int
+    requires LoginAttemptAllowed(failures)
+    ensures FailedLoginCount(failures) == failures + 1
+    ensures 1 <= FailedLoginCount(failures) <= 5
+  {
+    failures + 1
+  }
+
   function RankScore(lexicalRank: nat, semanticRank: nat): int {
     (if lexicalRank == 0 then 0 else 1000000 / (60 + lexicalRank)) +
     (if semanticRank == 0 then 0 else 1000000 / (60 + semanticRank))

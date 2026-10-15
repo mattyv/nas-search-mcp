@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/mattyv/nas-search-mcp/internal/policy"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/sys/unix"
 	"golang.org/x/time/rate"
@@ -34,12 +35,11 @@ type Config struct {
 	RedirectURIs                                                   []string
 }
 type Server struct {
-	cfg           Config
-	db            *sql.DB
-	mu            sync.Mutex
-	limiter       *rate.Limiter
-	loginFailures int
-	lockedUntil   time.Time
+	cfg            Config
+	db             *sql.DB
+	mu             sync.Mutex
+	limiter        *rate.Limiter
+	validationGate chan struct{}
 }
 
 func New(c Config) (*Server, error) {
@@ -83,7 +83,7 @@ func New(c Config) (*Server, error) {
 		db.Close()
 		return nil, e
 	}
-	return &Server{cfg: c, db: db, limiter: rate.NewLimiter(rate.Every(time.Second), 10)}, nil
+	return &Server{cfg: c, db: db, limiter: rate.NewLimiter(rate.Every(time.Second), 10), validationGate: make(chan struct{}, 2)}, nil
 }
 func loopback(h string) bool {
 	return h == "localhost" || (net.ParseIP(h) != nil && net.ParseIP(h).IsLoopback())
@@ -217,10 +217,6 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if time.Now().Before(s.lockedUntil) {
-		oauthError(w, 429, "temporarily_unavailable")
-		return
-	}
 	tx, e := s.db.Begin()
 	if e != nil {
 		oauthError(w, 500, "server_error")
@@ -228,9 +224,16 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 	var raw string
-	e = tx.QueryRow("SELECT redirect FROM oauth_grants WHERE hash=? AND kind='login' AND expires>? AND used=0", hash(session), time.Now().Unix()).Scan(&raw)
+	var failures int
+	e = tx.QueryRow("SELECT redirect,used FROM oauth_grants WHERE hash=? AND kind='login' AND expires>?", hash(session), time.Now().Unix()).Scan(&raw, &failures)
 	if e != nil {
 		oauthError(w, 400, "invalid_request")
+		return
+	}
+	// The existing bounded, expiring login row also holds this browser's attempt count.
+	// An anonymous browser cannot lock other browsers out of the owner's account.
+	if !policy.LoginAttemptAllowed(failures) {
+		oauthError(w, 429, "temporarily_unavailable")
 		return
 	}
 	v, e := url.ParseQuery(raw)
@@ -239,10 +242,9 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(s.cfg.PasswordHash), []byte(r.PostForm.Get("password"))) != nil {
-		s.loginFailures++
-		if s.loginFailures >= 5 {
-			s.lockedUntil = time.Now().Add(15 * time.Minute)
-			s.loginFailures = 0
+		if _, e := tx.Exec("UPDATE oauth_grants SET used=? WHERE hash=? AND kind='login'", policy.FailedLoginCount(failures), hash(session)); e != nil || tx.Commit() != nil {
+			oauthError(w, 500, "server_error")
+			return
 		}
 		oauthError(w, 403, "access_denied")
 		return
@@ -264,7 +266,6 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 500, "server_error")
 		return
 	}
-	s.loginFailures = 0
 	target, _ := url.Parse(v.Get("redirect_uri"))
 	q := target.Query()
 	q.Set("code", code)
@@ -383,18 +384,34 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, 200, map[string]any{"access_token": access, "token_type": "Bearer", "expires_in": 600, "refresh_token": refresh, "scope": scope})
 }
 func (s *Server) Protect(next http.Handler) http.Handler {
+	misses := rate.NewLimiter(rate.Every(time.Second), 30)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := r.Header.Get("Authorization")
 		parts := strings.Fields(header)
 		valid := false
 		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && len(parts[1]) == 43 {
-			var n int
-			e := s.db.QueryRow("SELECT count(*) FROM oauth_grants WHERE hash=? AND kind='access' AND resource=? AND expires>? AND used=0", hash(parts[1]), s.resource(), time.Now().Unix()).Scan(&n)
-			valid = e == nil && n == 1
+			// Opaque credentials require a database lookup. Bound active lookups
+			// instead of allowing unauthenticated requests to queue without limit.
+			select {
+			case s.validationGate <- struct{}{}:
+				var n int
+				e := s.db.QueryRowContext(r.Context(), "SELECT count(*) FROM oauth_grants WHERE hash=? AND kind='access' AND resource=? AND expires>? AND used=0", hash(parts[1]), s.resource(), time.Now().Unix()).Scan(&n)
+				<-s.validationGate
+				valid = e == nil && n == 1
+			default:
+				w.Header().Set("Retry-After", "1")
+				oauthError(w, 429, "temporarily_unavailable")
+				return
+			}
 		}
 		if !valid {
 			w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer resource_metadata=%q, scope=%q", s.cfg.Issuer+"/.well-known/oauth-protected-resource/mcp", scope))
 			w.Header().Set("Cache-Control", "no-store")
+			if !misses.Allow() {
+				w.Header().Set("Retry-After", "1")
+				oauthError(w, 429, "temporarily_unavailable")
+				return
+			}
 			oauthError(w, 401, "invalid_token")
 			return
 		}
