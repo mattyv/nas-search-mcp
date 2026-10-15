@@ -184,7 +184,7 @@ def test_existing_access_scope_is_preserved(tmp_path):
 
 def test_synology_protected_upgrade_path(tmp_path):
     args, env, log = setup(tmp_path)
-    protected = tmp_path / '@nas-search-upgrader'
+    protected = tmp_path / '@protected-upgrader'
     args[args.index('--install-dir') + 1] = str(protected)
     result = subprocess.run(args, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

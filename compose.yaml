@@ -41,8 +41,8 @@ services:
       - "${NAS_DOCUMENTS_PATH:-/volume1/shared-documents}:/files/${NAS_DOCUMENTS_LABEL:-Documents}:ro"
       - "${NAS_CODE_PATH:-/volume1/shared-code}:/files/Code:ro"
       - "${NAS_PHOTOS_PATH:-/volume1/shared-photos}:/files/Photos:ro"
-      - "${NAS_INDEX_PATH:-/volume1/docker/nas-search/data}:/data"
-      - "${NAS_UPGRADE_PATH:-/volume1/docker/nas-search/upgrades}:/upgrades"
+      - "${NAS_INDEX_PATH:-/volume1/app-data/nas-search/index}:/data"
+      - "${NAS_UPGRADE_PATH:-/volume1/app-data/nas-search/upgrades}:/upgrades"
     mem_limit: 1g
     memswap_limit: 1g
     # Synology's kernel lacks CFS quotas; confine execution to one CPU instead.
