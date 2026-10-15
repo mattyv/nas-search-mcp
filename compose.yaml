@@ -6,8 +6,7 @@ services:
     init: true
     user: "${NAS_UID:-1026}:${NAS_GID:-100}"
     ports:
-      - "127.0.0.1:8080:8080"
-      - "${NAS_LAN_IP:-192.168.1.4}:8080:8080"
+      - "${NAS_BIND_IP:-127.0.0.1}:8080:8080"
       - "127.0.0.1:8082:8082"
     environment:
       NAS_TOKEN: ${NAS_TOKEN:?Set a random token of at least 24 characters in .env}

@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -256,6 +257,42 @@ func TestLoginLockout(t *testing.T) {
 	}
 }
 
+// Wrong guesses in one browser must not lock the owner out in a new browser.
+func TestFailedLoginDoesNotLockOtherSession(t *testing.T) {
+	s := testServer(t)
+	h := s.Handler()
+	login := func() *http.Cookie {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", "/authorize?"+authorizeValues(s).Encode(), nil))
+		if w.Code != 200 {
+			t.Fatalf("login page: %d", w.Code)
+		}
+		return w.Result().Cookies()[0]
+	}
+	submit := func(c *http.Cookie, password string) int {
+		form := url.Values{"session": {c.Value}, "password": {password}, "consent": {"allow"}}
+		r := httptest.NewRequest("POST", "/authorize", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.AddCookie(c)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	attacker := login()
+	for i := 0; i < 5; i++ {
+		if got := submit(attacker, "wrong"); got != 403 {
+			t.Fatalf("guess %d: %d", i, got)
+		}
+	}
+	if got := submit(attacker, "correct horse battery staple"); got != 429 {
+		t.Fatalf("spent session: %d", got)
+	}
+	owner := login()
+	if got := submit(owner, "correct horse battery staple"); got != 303 {
+		t.Fatalf("other session locked out: %d", got)
+	}
+}
+
 func authorizeValues(s *Server) url.Values {
 	sum := sha256.Sum256([]byte(strings.Repeat("a", 43)))
 	return url.Values{"client_id": {s.cfg.ClientID}, "redirect_uri": {"https://claude.ai/api/mcp/auth_callback"}, "response_type": {"code"}, "code_challenge_method": {"S256"}, "code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "resource": {s.resource()}}
@@ -307,7 +344,7 @@ func TestInvalidSessionCannotConsumePasswordAttempts(t *testing.T) {
 	r.AddCookie(&http.Cookie{Name: "nas_oauth", Value: session})
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
-	if w.Code != 400 || s.loginFailures != 0 {
+	if w.Code != 400 {
 		t.Fatal("nonexistent login session consumed password attempt")
 	}
 }
@@ -383,5 +420,69 @@ func TestConsentDisclosesEnabledServiceUpgrades(t *testing.T) {
 	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/authorize?"+authorizeValues(s).Encode(), nil))
 	if !strings.Contains(w.Body.String(), "upgrade the search service") || strings.Contains(w.Body.String(), "Allow read-only access") {
 		t.Fatal("consent does not disclose service upgrade permission")
+	}
+}
+
+// Requests with opaque bearer strings cannot queue unbounded SQLite work.
+func TestBearerLookupCapacityAndCancellation(t *testing.T) {
+	s := testServer(t)
+	token := strings.Repeat("v", 43)
+	_, err := s.db.Exec("INSERT INTO oauth_grants(hash,kind,client,redirect,challenge,resource,family,expires) VALUES(?, 'access', ?, '', '', ?, '', ?)", hash(token), s.cfg.ClientID, s.resource(), time.Now().Add(time.Minute).Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := s.Protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	conn, err := s.db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan int, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			r := httptest.NewRequest("POST", "/mcp", nil).WithContext(ctx)
+			r.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			done <- w.Code
+		}()
+	}
+	deadline := time.Now().Add(time.Second)
+	for s.db.Stats().WaitCount < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if s.db.Stats().WaitCount < 2 {
+		t.Fatal("lookups did not reach database")
+	}
+	r := httptest.NewRequest("POST", "/mcp", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 429 {
+		t.Fatalf("unbounded lookup accepted: %d", w.Code)
+	}
+	cancel()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("cancelled lookup did not finish")
+		}
+	}
+	conn.Close()
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 204 {
+		t.Fatalf("lookup capacity not released: %d", w.Code)
+	}
+	if err := s.RevokeAll(); err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 401 {
+		t.Fatalf("revoked token remained authorized: %d", w.Code)
 	}
 }

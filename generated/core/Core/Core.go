@@ -183,6 +183,12 @@ func (_static *CompanionStruct_Default___) ShowInline(mediaType _dafny.Sequence)
 func (_static *CompanionStruct_Default___) LinkActive(now _dafny.Int, expires _dafny.Int) bool {
 	return (now).Cmp(expires) < 0
 }
+func (_static *CompanionStruct_Default___) LoginAttemptAllowed(failures _dafny.Int) bool {
+	return ((failures).Sign() != -1) && ((failures).Cmp(_dafny.IntOfInt64(5)) < 0)
+}
+func (_static *CompanionStruct_Default___) FailedLoginCount(failures _dafny.Int) _dafny.Int {
+	return (failures).Plus(_dafny.One)
+}
 func (_static *CompanionStruct_Default___) RankScore(lexicalRank _dafny.Int, semanticRank _dafny.Int) _dafny.Int {
 	return ((func() _dafny.Int {
 		if (lexicalRank).Sign() == 0 {

@@ -60,3 +60,13 @@ func ShowInline(mediaType string) bool {
 func LinkActive(now, expires int64) bool {
 	return core.Companion_Default___.LinkActive(dafny.IntOfInt64(now), dafny.IntOfInt64(expires))
 }
+
+// LoginAttemptAllowed rejects invalid counts and exhausted browser sessions.
+func LoginAttemptAllowed(failures int) bool {
+	return core.Companion_Default___.LoginAttemptAllowed(dafny.IntOf(failures))
+}
+
+// FailedLoginCount requires LoginAttemptAllowed(failures).
+func FailedLoginCount(failures int) int {
+	return core.Companion_Default___.FailedLoginCount(dafny.IntOf(failures)).Int()
+}
