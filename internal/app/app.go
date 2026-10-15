@@ -853,8 +853,20 @@ func (a *App) Scan(ctx context.Context) error {
 	return err
 }
 func (a *App) indexFile(ctx context.Context, full, relative, hash string) error {
-	a.setScanProgress(relative, "extracting")
-	extract, err := a.worker(ctx, map[string]any{"operation": "extract", "path": full, "max_bytes": 32 * 1024 * 1024, "max_chars": 200000})
+	var extract WorkerResult
+	var err error
+	embedPhoto := a.Photos && a.Semantic && imageFile(relative)
+	if embedPhoto {
+		// One call reads metadata and embeds; a separate extract would unload the warm model.
+		a.setScanProgress(relative, "embedding_photo")
+		extract, err = a.worker(ctx, map[string]any{"operation": "image_embed", "path": full, "max_bytes": 32 * 1024 * 1024})
+		if err == nil && (extract.Kind != "photo" || len(extract.Vectors) != 1) {
+			err = errors.New("photo embedding returned no photo vector")
+		}
+	} else {
+		a.setScanProgress(relative, "extracting")
+		extract, err = a.worker(ctx, map[string]any{"operation": "extract", "path": full, "max_bytes": 32 * 1024 * 1024, "max_chars": 200000})
+	}
 	if err != nil {
 		return err
 	}
@@ -873,13 +885,8 @@ func (a *App) indexFile(ctx context.Context, full, relative, hash string) error 
 	if extract.Kind == "photo" {
 		encoded, _ := json.Marshal(metadata)
 		chunks = []store.Chunk{{Location: "photo", Text: relative + " " + string(encoded)}}
-		if a.Photos && a.Semantic {
-			a.setScanProgress(relative, "embedding_photo")
-			r, e := a.worker(ctx, map[string]any{"operation": "image_embed", "path": full, "max_bytes": 32 * 1024 * 1024})
-			if e != nil {
-				return e
-			}
-			vectors = r.Vectors
+		if embedPhoto {
+			vectors = extract.Vectors
 		}
 	} else if a.Semantic && len(chunks) > 0 {
 		a.setScanProgress(relative, "embedding")

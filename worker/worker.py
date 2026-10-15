@@ -332,7 +332,7 @@ def handle(request, model_cache=None):
         raise ValueError('embedding input exceeds character limit')
     if operation == 'image_embed':
         # Check decoding dimensions and input size before loading heavyweight models.
-        extract({'path': request['path'], 'max_bytes': request.get('max_bytes', 32 * 1024 * 1024), 'max_chars': 1})
+        photo = extract({'path': request['path'], 'max_bytes': request.get('max_bytes', 32 * 1024 * 1024), 'max_chars': 1})
         values = [embedding_image(request['path'])]
     TextEmbedding, ImageEmbedding = load_embedding_classes()
     model_name = {'embed': 'BAAI/bge-small-en-v1.5', 'image_embed': 'Qdrant/clip-ViT-B-32-vision', 'image_query': 'Qdrant/clip-ViT-B-32-text'}[operation]
@@ -342,7 +342,11 @@ def handle(request, model_cache=None):
     dimension = 384 if operation == 'embed' else 512
     if len(vectors) != len(values) or any(len(vector) != dimension for vector in vectors):
         raise ValueError('unexpected embedding dimensions')
-    return {'vectors': vectors, 'dimension': dimension, 'model': model_name}
+    result = {'vectors': vectors, 'dimension': dimension, 'model': model_name}
+    if operation == 'image_embed':
+        # Indexing needs only this call per photo, so the warm model stays loaded.
+        result.update(kind=photo['kind'], metadata=photo['metadata'])
+    return result
 
 
 def serve():

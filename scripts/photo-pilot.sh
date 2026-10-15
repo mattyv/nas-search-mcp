@@ -71,7 +71,7 @@ docker run --rm --user "$uid:$gid" --memory 1g --memory-swap 1g --cpuset-cpus "$
     || fail 'Container user cannot read photos or write pilot data; fix DSM permissions. Normal service is untouched.'
 {
     printf 'NAS_TOKEN=%s\n' "$token"
-    printf '%s\n' NAS_ROOT=/files NAS_DATA=/data NAS_SEMANTIC=true NAS_PHOTOS=true NAS_OCR=false NAS_ALLOWED_FOLDERS=Photos NAS_SCAN_INTERVAL=300 NAS_VEC_EXTENSION=/opt/vec0.so NAS_WORKER=/app/worker/worker.py GOMEMLIMIT=128MiB GOMAXPROCS=1 OMP_THREAD_LIMIT=1 HOME=/data HF_HOME=/data/models/huggingface
+    printf '%s\n' NAS_LISTEN=:8080 NAS_ROOT=/files NAS_DATA=/data NAS_SEMANTIC=true NAS_PHOTOS=true NAS_OCR=false NAS_ALLOWED_FOLDERS=Photos NAS_SCAN_INTERVAL=300 NAS_VEC_EXTENSION=/opt/vec0.so NAS_WORKER=/app/worker/worker.py GOMEMLIMIT=128MiB GOMAXPROCS=1 OMP_THREAD_LIMIT=1 HOME=/data HF_HOME=/data/models/huggingface
 } > "$pilot_env"
 if [ -n "$denied" ]; then printf 'NAS_DENIED_FOLDERS=%s\n' "$denied" >> "$pilot_env"; fi
 unset token

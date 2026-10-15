@@ -55,6 +55,8 @@ def test_isolated_private_bounded_launch(tmp_path):
     pilot_env = install / '.env-photo-pilot'
     assert 'NAS_PHOTOS=true' in pilot_env.read_text()
     assert 'NAS_ALLOWED_FOLDERS=Photos' in pilot_env.read_text()
+    # Without an all-interfaces listener, the published port refuses every connection.
+    assert 'NAS_LISTEN=:8080' in pilot_env.read_text()
     assert 'NAS_DENIED_FOLDERS=Photos/private' in pilot_env.read_text()
     assert pilot_env.stat().st_mode & 0o077 == 0
     assert (install / '.env').read_bytes() == original

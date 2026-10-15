@@ -489,3 +489,17 @@ def test_image_embedding_uses_small_upright_copy(monkeypatch, tmp_path):
         assert max(image.size) <= 448
     assert portrait.height > portrait.width
     assert landscape.width > landscape.height
+
+
+def test_image_embedding_reports_photo_metadata(monkeypatch, tmp_path):
+    p = tmp_path / 'beach.png'
+    Image.new('RGB', (30, 20)).save(p)
+    class FakeModel:
+        def __init__(self, **kwargs):
+            pass
+        def embed(self, values, **kwargs):
+            return [[0.1] * 512 for _ in values]
+    monkeypatch.setattr(worker, 'load_embedding_classes', lambda: (FakeModel, FakeModel))
+    result = worker.handle({'operation': 'image_embed', 'path': str(p)}, worker.ModelCache())
+    assert result['kind'] == 'photo'
+    assert (result['metadata']['width'], result['metadata']['height']) == (30, 20)

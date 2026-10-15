@@ -80,7 +80,7 @@ if op == 'extract':
     photo = request['path'].endswith('.jpg')
     out = {'kind': 'photo' if photo else 'document', 'sections': [] if photo else [{'location': 'text', 'text': 'kitchen plans'}], 'metadata': {}}
 elif op == 'image_embed':
-    out = {'vectors': [[0.1] * 512]}
+    out = {'kind': 'photo', 'metadata': {'width': 4}, 'vectors': [[0.1] * 512]}
 else:
     out = {'vectors': [[0.1] * 384 for _ in request['texts']]}
 json.dump(out, sys.stdout)
@@ -132,8 +132,9 @@ func TestPhotoSettingChangeReindexesOnlyPhotos(t *testing.T) {
 	}
 	a.Photos = true
 	enabled := scan()
-	if strings.Join(enabled, "|") != "extract .jpg|image_embed .jpg" {
-		t.Fatal("enabling photos must reindex only photos:", enabled)
+	// One model call per photo: a separate extract step would stop the warm model.
+	if strings.Join(enabled, "|") != "image_embed .jpg" {
+		t.Fatal("enabling photos must reindex only photos, in one worker call:", enabled)
 	}
 	if again := scan(); again != nil {
 		t.Fatal("photos reindexed repeatedly:", again)
