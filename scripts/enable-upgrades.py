@@ -11,6 +11,21 @@ import subprocess
 import sys
 
 
+def detect_source_install_dir():
+    """Read only the active Compose directory label; never inspect credentials."""
+    docker = '/usr/local/bin/docker' if Path('/usr/local/bin/docker').is_file() else 'docker'
+    result = subprocess.run([docker, 'inspect', '--format', '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}', 'nas-search-nas-search-1'], capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        containers = subprocess.run([docker, 'ps', '-a', '--filter', 'name=^/nas-search-nas-search-1$', '--format', '{{.Names}}'], capture_output=True, text=True, timeout=30, check=True)
+        if containers.stdout.strip():
+            raise ValueError('Cannot inspect active deployment')
+        return Path('/volume1/docker/nas-search')
+    value = result.stdout.rstrip('\n')
+    if not re.fullmatch(r'/[a-zA-Z0-9_./@ -]*', value) or any(part in ('.', '..') for part in value.split('/')):
+        raise ValueError('Active deployment directory is invalid')
+    return Path(value)
+
+
 def validate_image(image):
     if not re.fullmatch(r'ghcr\.io/mattyv/nas-search-mcp:[0-9a-f]{40}', image):
         raise ValueError('Image must name the published repository and exact main commit')
@@ -58,6 +73,8 @@ def validate_preserved_target(target):
 
 def enable(source, target, image, resume=False):
     validate_image(image)
+    if source is None and not resume:
+        source = detect_source_install_dir()
     runner = load_runner()
     if resume:
         validate_preserved_target(target)
@@ -110,7 +127,7 @@ def enable(source, target, image, resume=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', required=True)
-    parser.add_argument('--source-install-dir', type=Path, default=Path('/volume1/docker/nas-search'))
+    parser.add_argument('--source-install-dir', type=Path, default=None)
     parser.add_argument('--install-dir', type=Path, default=Path('/volume1/@nas-search-upgrader'))
     parser.add_argument('--resume', action='store_true', help='Resume a preserved root-owned setup without replacing its credentials or worker')
     args = parser.parse_args()

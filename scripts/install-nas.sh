@@ -3,7 +3,7 @@
 set -eu
 umask 077
 fail() { printf '%s\n' "$*" >&2; exit 1; }
-image= install_dir=/volume1/docker/nas-search documents= photos= code=/volume1/shared-code data= bind=127.0.0.1 dry=false
+image= install_dir= documents= photos= code=/volume1/shared-code data= bind=127.0.0.1 dry=false
 uid=${SUDO_UID:-$(id -u)}
 gid=${SUDO_GID:-$(id -g)}
 while [ "$#" -gt 0 ]; do
@@ -24,6 +24,21 @@ case "$image" in *:latest|*[!a-zA-Z0-9._/:@-]*|*:|*@) fail 'Use an explicit vers
 case "${image##*/}" in *:*|*@sha256:*) :;; *) fail 'Image needs an explicit versioned tag or digest';; esac
 case "$uid:$gid" in *[!0-9:]*|:*|*:) fail 'UID/GID must be numeric';; esac
 case "$bind" in ''|*[!0-9.]* ) fail 'Bind address must be an explicit IPv4 address';; esac
+# Discover the running deployment before selecting any configuration or credentials.
+[ "$(id -u)" = 0 ] || fail 'Run on the NAS with sudo/root Docker access'
+PATH=/usr/local/bin:$PATH
+export PATH
+command -v docker >/dev/null 2>&1 || fail 'Docker is required; install Synology Container Manager'
+if [ -z "$install_dir" ]; then
+    if detected=$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' nas-search-nas-search-1 2>/dev/null); then
+        [ -n "$detected" ] || fail 'Active deployment has no working-directory label; specify --install-dir'
+        install_dir=$detected
+    else
+        containers=$(docker ps -a --filter 'name=^/nas-search-nas-search-1$' --format '{{.Names}}') || fail 'Cannot discover active deployment'
+        [ -z "$containers" ] || fail 'Cannot inspect active deployment; refusing default configuration'
+        install_dir=/volume1/docker/nas-search
+    fi
+fi
 for path in "$install_dir" "$documents" "$photos" "$code" "$data"; do
     case "$path" in /*) :;; *) fail 'All source/install/data paths must be explicit absolute paths';; esac
     case "$path" in */../*|*/..|*/./*|*/.) fail 'Paths must not contain dot traversal segments';; esac
@@ -145,7 +160,7 @@ rollback() {
 }
 compose up -d --no-build || rollback
 # Check authenticated MCP status inside the container, without exposing tokens in args.
-check='import json,os,urllib.request
+check='import json,os,urllib.request,urllib.error
 url="http://127.0.0.1:8080"
 assert urllib.request.urlopen(url+"/healthz",timeout=5).status==200
 body={"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"index_status","arguments":{}}}
@@ -154,6 +169,18 @@ reply=urllib.request.urlopen(r,timeout=15).read().decode()
 if not reply.lstrip().startswith("{"): reply="\n".join(line[5:].strip() for line in reply.splitlines() if line.startswith("data:"))
 result=json.loads(reply)
 assert "result" in result and not result["result"].get("isError",False), "Authenticated index_status failed"
+issuer=os.environ.get("NAS_OAUTH_ISSUER", "")
+if issuer:
+    oauth="http://127.0.0.1:8082"
+    metadata=urllib.request.urlopen(oauth+"/.well-known/oauth-authorization-server",timeout=5)
+    assert metadata.status==200
+    assert json.loads(metadata.read())["issuer"]==issuer, "OAuth issuer changed"
+    try:
+        urllib.request.urlopen(oauth+"/mcp",timeout=5)
+    except urllib.error.HTTPError as error:
+        assert error.code==401 and "resource_metadata" in error.headers.get("WWW-Authenticate", ""), "OAuth discovery challenge missing"
+    else:
+        raise AssertionError("Anonymous OAuth MCP must require authentication")
 '
 ready=false
 for attempt in 1 2 3; do
