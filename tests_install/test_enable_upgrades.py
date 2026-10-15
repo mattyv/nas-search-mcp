@@ -210,3 +210,48 @@ def test_bootstrap_does_not_implicitly_resume_existing_target(tmp_path, monkeypa
     with pytest.raises(FileExistsError):
         m.enable(target, target, 'ghcr.io/mattyv/nas-search-mcp:'+'a'*40)
     assert (target / '.env').read_text() == contents['.env']
+
+
+def test_detect_active_source_uses_compose_label(monkeypatch):
+    from types import SimpleNamespace
+    m = module()
+    calls = []
+    def run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout='/volume1/nas-search-connector\n')
+    monkeypatch.setattr(m.subprocess, 'run', run)
+    assert m.detect_source_install_dir() == Path('/volume1/nas-search-connector')
+    assert 'com.docker.compose.project.working_dir' in ' '.join(calls[0])
+    assert 'nas-search-nas-search-1' in calls[0]
+
+
+@pytest.mark.parametrize('value', ['', '<no value>', 'relative', '/volume1/../secret', '/volume1/a\n/volume1/b'])
+def test_detect_active_source_rejects_invalid_label(monkeypatch, value):
+    from types import SimpleNamespace
+    m = module()
+    monkeypatch.setattr(m.subprocess, 'run', lambda *a, **kw: SimpleNamespace(returncode=0, stdout=value))
+    with pytest.raises(ValueError):
+        m.detect_source_install_dir()
+
+
+def test_detect_source_falls_back_only_when_container_absent(monkeypatch):
+    from types import SimpleNamespace
+    m = module()
+    replies = iter([SimpleNamespace(returncode=1, stdout=''), SimpleNamespace(returncode=0, stdout='')])
+    monkeypatch.setattr(m.subprocess, 'run', lambda *a, **kw: next(replies))
+    assert m.detect_source_install_dir() == Path('/volume1/docker/nas-search')
+    replies = iter([SimpleNamespace(returncode=1, stdout=''), SimpleNamespace(returncode=0, stdout='nas-search-nas-search-1\n')])
+    with pytest.raises(ValueError, match='Cannot inspect'):
+        m.detect_source_install_dir()
+
+
+def test_bootstrap_default_discovers_source_before_loading_configuration(tmp_path, monkeypatch):
+    m = module()
+    source = tmp_path / 'active'
+    source.mkdir()
+    (source / '.env').symlink_to(tmp_path / 'private')
+    (tmp_path / 'private').write_text('secret')
+    monkeypatch.setattr(m, 'detect_source_install_dir', lambda: source)
+    with pytest.raises(ValueError, match='regular files'):
+        m.enable(None, tmp_path / 'target', 'ghcr.io/mattyv/nas-search-mcp:'+'a'*40)
+    assert not (tmp_path / 'target').exists()
