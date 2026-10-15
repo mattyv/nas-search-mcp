@@ -238,10 +238,22 @@ Red-to-green evidence: new Dafny executable tests failed to resolve before `Show
 
 ## D024 — Accept Synology upgrade paths and resume interrupted setup
 
-**Date:** 2026-10-15 · **Status:** Accepted fix; NAS recovery pending
+**Date:** 2026-10-15 · **Status:** Accepted fix; NAS recovery and same-version MCP upgrade passed, reboot recovery pending
 
 The first live setup created the protected deployment snapshots, then failed because the installer rejected the `@` in its own default `/volume1/@nas-search-upgrader` path. Live HTTP health still passed and MCP discovery still showed the earlier seven tools. A regression reproduced the exact path rejection before the fix, then passed initial installation and a subsequent upgrade after allowing literal at signs. Other path restrictions remain in place.
 
 Add explicit `--resume` for an existing protected setup. Require trusted ancestors and complete root-owned snapshots, worker and queue; preserve the target's token and configuration. Default setup continues to refuse an existing target. This avoids deleting saved deployment state and supports recovery after a failed attempt. These are tested shell/Python deployment adapters outside the Dafny proof boundary.
 
-Evidence: eight resume tests failed before implementation and 19 bootstrap tests passed afterward. The complete Python suite passes 136 tests plus two subtests; the Go suite with race detection and sqlite_fts5 passes. Dafny rebuild verifies 37 obligations with zero errors and executable tests, with unchanged generated output. Live recovery is still pending.
+Evidence: eight resume tests failed before implementation and 19 bootstrap tests passed afterward. The complete Python suite passes 136 tests plus two subtests; the Go suite with race detection and sqlite_fts5 passes. Dafny rebuild verifies 37 obligations with zero errors and executable tests, with unchanged generated output. Live recovery passed on the DS220+: the user ran the pinned sudo resume helper, authenticated MCP discovery exposed both upgrade tools, and a real upgrade_from_main request progressed from queued to running to succeeded for b0aa0b569a15762807527d5f527839d629224416. This exercised a same-version upgrade after setup installed the image; a future version-changing MCP upgrade has not yet been observed. HTTP health returned ok and unauthenticated MCP returned 401. The DSM root boot task and reboot recovery remain unvalidated.
+
+## D025 — Preserve the active mobile connector configuration during upgrades
+
+**Date:** 2026-10-15 · **Status:** Accepted repair; mobile restoration pending
+
+The user reported mobile OAuth login timing out after upgrade enablement. The private MCP tools worked, but the local OAuth listener was unavailable. Deployment had copied stale settings from `/volume1/docker/nas-search` instead of the previously active `/volume1/nas-search-connector`. Private health and same-version MCP-upgrade checks did not detect this regression; their earlier evidence applies only to private access.
+
+Discover the active Compose working-directory label when no deployment source is specified. Fall back to the legacy directory only when the service container is absent, and reject inspection errors or invalid paths. Preserve explicit path overrides. Require configured OAuth metadata to report the expected issuer and anonymous MCP to return its authentication challenge before installer success; failed checks use existing rollback.
+
+Provide a root-only one-time repair that restores the saved original configuration while retaining upgrade queue settings. Verify deployment identity, preserve a private environment backup, append protected diagnostics, and restore the prior settings if installation or OAuth checks fail. Keep Funnel, Tailscale and unrelated services unchanged. These Docker, filesystem and HTTP operations remain unproved adapters; no Dafny source changes are needed.
+
+Evidence: eight deployment-preservation regressions failed before their fixes, and seven repair tests initially failed before implementation. Three review regressions then reproduced the wrong OAuth probe port, unchecked issuer, and pending-upgrade handling before correction. Full repair orchestration tests were added after implementation and are not TDD evidence. Final Python, Go and Dafny results are reported with the handoff; NAS restoration remains pending.
