@@ -3,6 +3,7 @@
 package oauth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -18,6 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 	"golang.org/x/time/rate"
 	"html/template"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -28,6 +30,14 @@ import (
 )
 
 const scope = "files:read"
+
+type authenticatedKey struct{}
+
+// AuthenticatedKey identifies a verified bearer without exposing the credential.
+func AuthenticatedKey(ctx context.Context) string {
+	key, _ := ctx.Value(authenticatedKey{}).(string)
+	return key
+}
 
 type Config struct {
 	ServiceUpgrades                                                bool
@@ -84,7 +94,7 @@ func New(c Config) (*Server, error) {
 		db.Close()
 		return nil, e
 	}
-	return &Server{cfg: c, db: db, limiter: rate.NewLimiter(rate.Every(time.Second), 10), validationGate: make(chan struct{}, 2), validationWaiters: make(chan struct{}, 4)}, nil
+	return &Server{cfg: c, db: db, limiter: rate.NewLimiter(rate.Every(time.Second), 10), validationGate: make(chan struct{}, 2), validationWaiters: make(chan struct{}, 60)}, nil
 }
 func loopback(h string) bool {
 	return h == "localhost" || (net.ParseIP(h) != nil && net.ParseIP(h).IsLoopback())
@@ -116,6 +126,9 @@ func jsonReply(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 func oauthError(w http.ResponseWriter, status int, v string) {
+	if status == 429 && w.Header().Get("Retry-After") == "" {
+		w.Header().Set("Retry-After", "1")
+	}
 	jsonReply(w, status, map[string]string{"error": v})
 }
 func (s *Server) Handler() http.Handler {
@@ -418,6 +431,7 @@ func (s *Server) Protect(next http.Handler) http.Handler {
 				<-s.validationGate
 				valid = e == nil && n == 1
 			} else if r.Context().Err() == nil {
+				log.Printf("public rejection reason=token_lookup_busy key=%s method=unread active=%d waiters=%d", hash(parts[1])[:12], len(s.validationGate), len(s.validationWaiters))
 				w.Header().Set("Retry-After", "1")
 				oauthError(w, 429, "temporarily_unavailable")
 				return
@@ -427,6 +441,11 @@ func (s *Server) Protect(next http.Handler) http.Handler {
 			w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer resource_metadata=%q, scope=%q", s.cfg.Issuer+"/.well-known/oauth-protected-resource/mcp", scope))
 			w.Header().Set("Cache-Control", "no-store")
 			if !misses.Allow() {
+				key := "none"
+				if len(parts) == 2 && len(parts[1]) == 43 {
+					key = hash(parts[1])[:12]
+				}
+				log.Printf("public rejection reason=invalid_bearer_rate key=%s method=unread tokens=%.2f", key, misses.Tokens())
 				w.Header().Set("Retry-After", "1")
 				oauthError(w, 429, "temporarily_unavailable")
 				return
@@ -434,7 +453,7 @@ func (s *Server) Protect(next http.Handler) http.Handler {
 			oauthError(w, 401, "invalid_token")
 			return
 		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authenticatedKey{}, hash(parts[1]))))
 	})
 }
 

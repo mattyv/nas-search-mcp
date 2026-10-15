@@ -2,8 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
 	"log"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/mattyv/nas-search-mcp/internal/app"
@@ -38,14 +43,62 @@ func (w *cappedResponse) Write(p []byte) (int, error) {
 	return w.body.Write(p)
 }
 
-// Admit only bounded work. OAuth and authenticated MCP use separate instances.
+type publicCallLimits struct {
+	mu       sync.Mutex
+	byKey    map[string]*rate.Limiter
+	fallback *rate.Limiter
+}
+
+func newPublicCallLimits() *publicCallLimits {
+	return &publicCallLimits{byKey: make(map[string]*rate.Limiter), fallback: rate.NewLimiter(5, 60)}
+}
+
+func (l *publicCallLimits) allow(key, method string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if key == "" {
+		allowed := l.fallback.Allow()
+		if !allowed {
+			log.Printf("public rejection reason=call_rate key=none method=%s tokens=%.2f", method, l.fallback.Tokens())
+		}
+		return allowed
+	}
+	limiter := l.byKey[key]
+	if limiter == nil {
+		if len(l.byKey) >= 128 {
+			clear(l.byKey)
+		}
+		limiter = rate.NewLimiter(5, 60)
+		l.byKey[key] = limiter
+	}
+	allowed := limiter.Allow()
+	if !allowed {
+		id := key
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		log.Printf("public rejection reason=call_rate key=%s method=%s tokens=%.2f", id, method, limiter.Tokens())
+	}
+	return allowed
+}
+
+// Admit bounded MCP work, charging only authenticated tools/call requests.
 func admitPublic(next http.Handler) http.Handler {
-	limiter := rate.NewLimiter(5, 60)
+	callLimits := newPublicCallLimits()
 	gate := make(chan struct{}, 2)
+	queue := make(chan struct{}, 100)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !limiter.Allow() {
+		select {
+		case queue <- struct{}{}:
+			defer func() { <-queue }()
+		default:
+			key := oauth.AuthenticatedKey(r.Context())
+			if len(key) > 12 {
+				key = key[:12]
+			}
+			log.Printf("public rejection reason=queue_full key=%s method=unread active=%d queued=%d", key, len(gate), len(queue)-len(gate))
 			w.Header().Set("Retry-After", "1")
-			http.Error(w, "request limit reached", 429)
+			http.Error(w, "server busy", 429)
 			return
 		}
 		wait := time.NewTimer(15 * time.Second)
@@ -57,8 +110,38 @@ func admitPublic(next http.Handler) http.Handler {
 				return
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				var tooLarge *http.MaxBytesError
+				if errors.As(err, &tooLarge) {
+					http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				} else if r.Context().Err() == nil {
+					http.Error(w, "invalid request body", http.StatusBadRequest)
+				}
+				return
+			}
+			r.Body.Close()
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			var request struct {
+				Method string `json:"method"`
+			}
+			protocol := json.Unmarshal(body, &request) == nil && (request.Method == "initialize" || request.Method == "ping" || request.Method == "tools/list" || strings.HasPrefix(request.Method, "notifications/"))
+			method := "other"
+			if request.Method == "tools/call" {
+				method = "tools/call"
+			}
+			if r.URL.Path == "/mcp" && len(body) > 0 && !protocol && !callLimits.allow(oauth.AuthenticatedKey(r.Context()), method) {
+				w.Header().Set("Retry-After", "1")
+				http.Error(w, "request limit reached", 429)
+				return
+			}
 			next.ServeHTTP(w, r)
 		case <-wait.C:
+			key := oauth.AuthenticatedKey(r.Context())
+			if len(key) > 12 {
+				key = key[:12]
+			}
+			log.Printf("public rejection reason=work_busy key=%s method=unread active=%d", key, len(gate))
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "server busy", 429)
 		case <-r.Context().Done():
@@ -68,7 +151,17 @@ func admitPublic(next http.Handler) http.Handler {
 }
 
 func hardenPublic(next http.Handler, logger *log.Logger) http.Handler {
-	return publicResponseBoundary(admitPublic(next), logger)
+	bounded := admitPublic(next)
+	limiter := rate.NewLimiter(5, 60)
+	return publicResponseBoundary(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow() {
+			log.Printf("public rejection reason=oauth_rate key=anonymous method=http:%s tokens=%.2f", r.Method, limiter.Tokens())
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "request limit reached", 429)
+			return
+		}
+		bounded.ServeHTTP(w, r)
+	}), logger)
 }
 
 // Stateless JSON responses finish before publication, so an oversized response leaks no prefix.

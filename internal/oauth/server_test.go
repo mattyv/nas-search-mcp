@@ -463,6 +463,9 @@ func TestBearerLookupCapacityAndCancellation(t *testing.T) {
 	if w.Code != 429 {
 		t.Fatalf("unbounded lookup accepted: %d", w.Code)
 	}
+	if w.Header().Get("Retry-After") == "" {
+		t.Fatal("busy lookup omitted Retry-After")
+	}
 	cancel()
 	for i := 0; i < 2; i++ {
 		select {
@@ -534,6 +537,48 @@ func TestBearerLookupWaitsBrieflyForCapacity(t *testing.T) {
 			}
 		case <-time.After(2 * time.Second):
 			t.Fatal("queued lookup did not finish")
+		}
+	}
+}
+
+func TestBearerLookupAcceptsReconnectBurst(t *testing.T) {
+	s := testServer(t)
+	token := strings.Repeat("r", 43)
+	_, err := s.db.Exec("INSERT INTO oauth_grants(hash,kind,client,redirect,challenge,resource,family,expires) VALUES(?, 'access', ?, '', '', ?, '', ?)", hash(token), s.cfg.ClientID, s.resource(), time.Now().Add(time.Minute).Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := s.db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := s.Protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AuthenticatedKey(r.Context()) == "" || AuthenticatedKey(r.Context()) == token {
+			w.WriteHeader(500)
+			return
+		}
+		w.WriteHeader(204)
+	}))
+	done := make(chan int, 12)
+	for i := 0; i < cap(done); i++ {
+		go func() {
+			r := httptest.NewRequest("POST", "/mcp", nil)
+			r.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			done <- w.Code
+		}()
+	}
+	time.Sleep(100 * time.Millisecond)
+	conn.Close()
+	for i := 0; i < cap(done); i++ {
+		select {
+		case code := <-done:
+			if code != 204 {
+				t.Fatalf("reconnect request %d returned %d", i+1, code)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("reconnect burst did not drain")
 		}
 	}
 }

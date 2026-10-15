@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -46,8 +47,11 @@ func TestPublicRequestRateLimit(t *testing.T) {
 	limited := false
 	for i := 0; i < 100; i++ {
 		w := httptest.NewRecorder()
-		h.ServeHTTP(w, httptest.NewRequest("GET", "http://localhost/mcp", nil))
+		h.ServeHTTP(w, httptest.NewRequest("POST", "http://localhost/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call"}`)))
 		if w.Code == 429 {
+			if w.Header().Get("Retry-After") == "" {
+				t.Fatal("rate limit omitted Retry-After")
+			}
 			limited = true
 			break
 		}
@@ -57,11 +61,57 @@ func TestPublicRequestRateLimit(t *testing.T) {
 	}
 }
 
+func TestPublicProtocolTrafficDoesNotSpendCallLimit(t *testing.T) {
+	h := admitPublic(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	protocol := []string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"ping"}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`,
+	}
+	for i := 0; i < 100; i++ {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", strings.NewReader(protocol[i%len(protocol)])))
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("protocol request %d got %d", i+1, w.Code)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"search"}}`)))
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("tools/call %d after protocol startup got %d", i+1, w.Code)
+		}
+	}
+}
+
+func TestPublicRequestBodyInspectionStaysBounded(t *testing.T) {
+	var seen int
+	h := admitPublic(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		seen = len(b)
+		if len(b) > 64*1024 || (len(b) == 64*1024 && err == nil) {
+			t.Errorf("body was not bounded: bytes=%d err=%v", len(b), err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for _, tc := range []struct {
+		body string
+		want int
+	}{{"{malformed", http.StatusNoContent}, {strings.Repeat("x", 2*1024*1024), http.StatusRequestEntityTooLarge}} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", strings.NewReader(tc.body)))
+		if w.Code != tc.want || seen > 64*1024 {
+			t.Fatalf("bounded body handling failed: status=%d bytes=%d", w.Code, seen)
+		}
+	}
+}
+
 func TestPublicShortBurstFitsMobileReconnect(t *testing.T) {
 	h := admitPublic(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 	for i := 0; i < 40; i++ {
 		w := httptest.NewRecorder()
-		h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", nil))
+		h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call"}`)))
 		if w.Code != 204 {
 			t.Fatalf("benign reconnect request %d got %d", i+1, w.Code)
 		}
@@ -125,5 +175,44 @@ func TestPublicConcurrentRequestsWaitForSlot(t *testing.T) {
 	}
 	if got != 204 {
 		t.Fatalf("briefly overlapping request got %d", got)
+	}
+}
+
+func TestPublicQueueStaysBounded(t *testing.T) {
+	release := make(chan struct{})
+	closed := false
+	defer func() {
+		if !closed {
+			close(release)
+		}
+	}()
+	h := admitPublic(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	done := make(chan int, 150)
+	for i := 0; i < cap(done); i++ {
+		go func() {
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`)))
+			done <- w.Code
+		}()
+	}
+	select {
+	case code := <-done:
+		if code != 429 {
+			t.Fatalf("full queue returned %d", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("full queue accepted unbounded waiters")
+	}
+	close(release)
+	closed = true
+	for i := 1; i < cap(done); i++ {
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("queued requests did not finish")
+		}
 	}
 }

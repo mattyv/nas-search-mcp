@@ -145,6 +145,17 @@ func TestPublicOAuthToolFlow(t *testing.T) {
 	if e != nil || result.IsError {
 		t.Fatal("public search failed", e)
 	}
+	for _, call := range []mcp.CallToolParams{
+		{Name: "index_status", Arguments: map[string]any{}},
+		{Name: "browse", Arguments: map[string]any{"prefix": "Documents"}},
+		{Name: "find_files", Arguments: map[string]any{"query": "doc.txt"}},
+		{Name: "read_file", Arguments: map[string]any{"path": "Documents/doc.txt"}},
+	} {
+		out, err := sessionMCP.CallTool(ctx, &call)
+		if err != nil || out.IsError {
+			t.Fatalf("public %s failed after startup: %v", call.Name, err)
+		}
+	}
 	if os.Getenv("NAS_UPGRADE_DIR") != "" {
 		upgraded, err := sessionMCP.CallTool(ctx, &mcp.CallToolParams{Name: "upgrade_from_main", Arguments: map[string]any{}})
 		if err != nil || upgraded.IsError {
