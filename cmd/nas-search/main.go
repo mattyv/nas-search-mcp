@@ -124,7 +124,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	server := buildMCPServer(a)
+	server := buildMCPServer(a, nil)
 	var publicServer *http.Server
 	if issuer := os.Getenv("NAS_OAUTH_ISSUER"); issuer != "" && !stdio {
 		auth, authErr := oauth.New(oauth.Config{ServiceUpgrades: os.Getenv("NAS_UPGRADE_DIR") != "", Issuer: issuer, DatabasePath: env("NAS_OAUTH_DB", a.Data+"/oauth.sqlite3"), PasswordHash: os.Getenv("NAS_OAUTH_PASSWORD_HASH"), ClientID: os.Getenv("NAS_OAUTH_CLIENT_ID"), ClientSecretHash: os.Getenv("NAS_OAUTH_CLIENT_SECRET_HASH"), RedirectURIs: folderList(os.Getenv("NAS_OAUTH_LOCAL_REDIRECTS"))})
@@ -132,7 +132,11 @@ func main() {
 			log.Fatal("OAuth configuration invalid; refusing to start")
 		}
 		defer auth.Close()
-		publicServer = &http.Server{Addr: env("NAS_OAUTH_LISTEN", "127.0.0.1:8082"), Handler: buildPublicHandler(server, auth, a), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+		var approval *upgradeApproval
+		if directory := os.Getenv("NAS_UPGRADE_DIR"); directory != "" {
+			approval = newUpgradeApproval(issuer, directory)
+		}
+		publicServer = &http.Server{Addr: env("NAS_OAUTH_LISTEN", "127.0.0.1:8082"), Handler: buildPublicHandler(buildMCPServer(a, approval), auth, a, approval), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 		go func() {
 			if e := publicServer.ListenAndServe(); e != nil && !errors.Is(e, http.ErrServerClosed) {
 				log.Fatal("OAuth listener failed")
@@ -179,7 +183,7 @@ func main() {
 }
 
 func buildHTTPHandler(a *app.App, token string) http.Handler {
-	return buildPrivateHandler(buildMCPServer(a), token, a)
+	return buildPrivateHandler(buildMCPServer(a, nil), token, a)
 }
 
 // configureLinks enables download links on NAS_DOWNLOAD_URL, else on the public OAuth origin.
@@ -205,7 +209,7 @@ func folderList(value string) []string {
 	return out
 }
 
-func buildMCPServer(a *app.App) *mcp.Server {
+func buildMCPServer(a *app.App, approval *upgradeApproval) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "nas-search", Version: "0.1.0"}, nil)
 	searchDescription := "Search indexed NAS files using keywords and meaning. Set photos=true for visual photo search, describing what the photo shows. Results include source paths and page/section locations. If the user names a file or this search misses it, use find_files to match live filename and folder terms. Read-only."
 	if a.LinksEnabled() {
@@ -223,7 +227,7 @@ func buildMCPServer(a *app.App) *mcp.Server {
 		out, err := a.FindFiles(ctx, in.Query, in.Prefix, in.Limit)
 		return nil, out, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "browse", Description: "List indexed files and metadata. Prefix is a relative source path, such as Documents/Course/. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in BrowseInput) (*mcp.CallToolResult, BrowseOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "browse", Description: "List indexed files and metadata. Prefix is a relative source path, such as Documents/Example/. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in BrowseInput) (*mcp.CallToolResult, BrowseOutput, error) {
 		if in.Limit == 0 {
 			in.Limit = 50
 		}
@@ -251,7 +255,7 @@ func buildMCPServer(a *app.App) *mcp.Server {
 		return nil, out, err
 	})
 	if a.LinksEnabled() {
-		mcp.AddTool(server, &mcp.Tool{Name: "download_link", Description: "Create a short-lived link that opens an original NAS file (PDF, photo, Office document, any format up to 32 MiB) in the user's own browser. Use this whenever the user wants to see, open, view, or save a file. Reply with the returned url as a clickable markdown link; you cannot open it yourself, and fetch_file is not needed first. PDFs, common images, and plain text open in the browser; other formats download. Anyone holding the link can open that one file until expires_at. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in LinkInput) (*mcp.CallToolResult, app.LinkResult, error) {
+		mcp.AddTool(server, &mcp.Tool{Name: "download_link", Description: "Create a short-lived link that opens an original NAS file (PDF, photo, Office document, any format up to 32 MiB) in the user's own browser. Use this whenever the user wants to see, open, view, or save a file. Reply with the returned url as a clickable markdown link; you cannot open it yourself, and fetch_file is not needed first. PDFs, common images, and plain text open in the browser; other formats download. Public links require fresh browser OAuth sign-in for that file; private links use the URL as their credential. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in LinkInput) (*mcp.CallToolResult, app.LinkResult, error) {
 			out, err := a.CreateLink(in.Path)
 			if err != nil {
 				return nil, out, err
@@ -267,11 +271,15 @@ func buildMCPServer(a *app.App) *mcp.Server {
 	})
 	if dir := os.Getenv("NAS_UPGRADE_DIR"); dir != "" {
 		q := upgrade.Queue{Dir: dir}
-		mcp.AddTool(server, &mcp.Tool{Name: "upgrade_from_main", Description: "Upgrade the NAS search service to the latest main commit after its CI checks and image publication pass. Call only when the user explicitly requests an upgrade. Changes the running service and may briefly interrupt search. No branch, image, command, or path arguments are accepted. Follow with upgrade_status after reconnecting.", Annotations: &mcp.ToolAnnotations{DestructiveHint: boolPointer(true), IdempotentHint: false, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
+		mcp.AddTool(server, &mcp.Tool{Name: "upgrade_from_main", Description: "Upgrade the NAS search service to the latest verified main build. On the public OAuth connector, this returns an approval link; show it to the user, who must open it, complete fresh browser OAuth sign-in, and explicitly approve. Never ask for a password in chat. The service changes only after owner approval. Private bearer clients queue directly. Follow with upgrade_status after reconnecting.", Annotations: &mcp.ToolAnnotations{DestructiveHint: boolPointer(true), IdempotentHint: false, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
+			if approval != nil {
+				out, err := approval.prepare(ctx)
+				return nil, out, err
+			}
 			out, err := q.Request()
 			return nil, out, err
 		})
-		mcp.AddTool(server, &mcp.Tool{Name: "upgrade_status", Description: "Read the last requested NAS service upgrade state and installed commit. Read-only.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
+		mcp.AddTool(server, &mcp.Tool{Name: "upgrade_status", Description: "Read upgrade state, target commit, installed commit after a successful upgrade, and completion time when available. A requested target is not evidence that it is installed; start time is unavailable.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
 			out, err := q.Status()
 			return nil, out, err
 		})

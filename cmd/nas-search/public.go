@@ -193,13 +193,16 @@ func publicResponseBoundary(next http.Handler, logger *log.Logger) http.Handler 
 	})
 }
 
-func buildPublicHandler(server *mcp.Server, auth *oauth.Server, a *app.App) http.Handler {
+func buildPublicHandler(server *mcp.Server, auth *oauth.Server, a *app.App, approval *upgradeApproval) http.Handler {
 	mux := http.NewServeMux()
 	h := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	mux.Handle("/mcp", publicResponseBoundary(auth.Protect(admitPublic(h)), log.Default()))
 	mux.Handle("/", hardenPublic(auth.Handler(), log.Default()))
 	routes := http.NewServeMux()
-	routes.Handle("/download/", hardenDownloads(http.HandlerFunc(a.ServeLink), a.LinkKnown, log.Default()))
+	routes.Handle("/download/", hardenDownloads(auth.DownloadHandler(http.HandlerFunc(a.ServeLink), a.LinkKnown), a.LinkKnown, log.Default()))
+	if approval != nil {
+		routes.Handle("/upgrade/approve", hardenPublic(auth.BrowserActionHandler(approval, approval.known), log.Default()))
+	}
 	routes.Handle("/", mux)
 	return routes
 }

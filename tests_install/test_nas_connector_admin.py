@@ -13,20 +13,21 @@ def module():
 
 def test_sudo_rule_is_exact_and_removable(tmp_path):
     admin = module()
-    assert admin.SUDO_RULE_TEXT.splitlines() == [
-        'owner ALL=(root) NOPASSWD: /usr/bin/python3 /volume1/nas-search-connector/scripts/nas-connector-admin.py deploy',
-        'owner ALL=(root) NOPASSWD: /usr/bin/python3 /volume1/nas-search-connector/scripts/nas-connector-admin.py cleanup',
+    expected = admin.sudo_rule_text(tmp_path, 'admin-user')
+    assert expected.splitlines() == [
+        f'admin-user ALL=(root) NOPASSWD: /usr/bin/python3 {tmp_path / "scripts/nas-connector-admin.py"} deploy',
+        f'admin-user ALL=(root) NOPASSWD: /usr/bin/python3 {tmp_path / "scripts/nas-connector-admin.py"} cleanup',
     ]
     rule = tmp_path / 'rule'
-    rule.write_text(admin.SUDO_RULE_TEXT + '\n')
-    assert admin.remove_rule(rule)
+    rule.write_text(expected + '\n')
+    assert admin.remove_rule(rule, expected=expected)
     assert not rule.exists()
     rule.write_text('unrelated grant\n')
-    assert not admin.remove_rule(rule)
+    assert not admin.remove_rule(rule, expected=expected)
     assert rule.exists()
     rule.unlink()
     rule.symlink_to(tmp_path / 'missing')
-    assert not admin.remove_rule(rule)
+    assert not admin.remove_rule(rule, expected=expected)
     assert rule.is_symlink()
 
 
@@ -56,8 +57,8 @@ def test_rollback_health_uses_existing_lan_binding():
 
 def test_candidate_env_rejects_comments_and_duplicate_security_values():
     admin = module()
-    valid = ("NAS_TOKEN=" + "x" * 24 + "\nNAS_ALLOWED_FOLDERS=Documents,Code,Photos\n"
-             "NAS_OAUTH_ISSUER=https://nas.example.ts.net\n"
+    valid = ("NAS_TOKEN=" + "x" * 24 + "\nNAS_DOCUMENTS_LABEL=Documents\nNAS_ALLOWED_FOLDERS=Documents,Code,Photos\n"
+             "NAS_OAUTH_ISSUER=https://login.example\n"
              "NAS_OAUTH_CLIENT_ID=nas-claude\n"
              "NAS_OAUTH_PASSWORD_HASH='$2b$12$" + "x" * 53 + "'\n")
     assert admin.valid_candidate_env(valid)

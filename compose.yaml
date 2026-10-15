@@ -4,7 +4,7 @@ services:
     image: nas-search-mcp:local
     restart: unless-stopped
     init: true
-    user: "${NAS_UID:-1000}:${NAS_GID:-100}"
+    user: "${NAS_UID:-1000}:${NAS_GID:-1000}"
     ports:
       - "${NAS_BIND_IP:-127.0.0.1}:8080:8080"
       - "127.0.0.1:8082:8082"
@@ -38,7 +38,7 @@ services:
       HOME: /data
       HF_HOME: /data/models/huggingface
     volumes:
-      - "${NAS_DOCUMENTS_PATH:-/volume1/shared-documents}:/files/Documents:ro"
+      - "${NAS_DOCUMENTS_PATH:-/volume1/shared-documents}:/files/${NAS_DOCUMENTS_LABEL:-Documents}:ro"
       - "${NAS_CODE_PATH:-/volume1/shared-code}:/files/Code:ro"
       - "${NAS_PHOTOS_PATH:-/volume1/shared-photos}:/files/Photos:ro"
       - "${NAS_INDEX_PATH:-/volume1/docker/nas-search/data}:/data"

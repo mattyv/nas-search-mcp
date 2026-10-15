@@ -11,10 +11,14 @@ def setup(tmp_path):
     binaries.mkdir()
     source = tmp_path / 'photos'
     source.mkdir()
+    selected = source / 'sample'
+    selected.mkdir()
+    documents = tmp_path / 'documents'
+    documents.mkdir()
     install = tmp_path / 'install'
     install.mkdir()
     secret = install / '.env'
-    secret.write_text(f'NAS_TOKEN={TOKEN}\nNAS_UID=1000\nNAS_GID=100\nNAS_CPUSET=0\nNAS_DENIED_FOLDERS=Photos/private\n')
+    secret.write_text(f'NAS_TOKEN={TOKEN}\nNAS_UID=1234\nNAS_GID=1234\nNAS_CPUSET=0\nNAS_DOCUMENTS_PATH={documents}\nNAS_DOCUMENTS_LABEL=Documents\nNAS_PHOTOS_PATH={source}\nNAS_BIND_IP=192.0.2.10\nNAS_DENIED_FOLDERS=Photos/private\n')
     secret.chmod(0o600)
     (install / 'compose.yaml').write_text('original')
     log = tmp_path / 'docker.log'
@@ -22,7 +26,7 @@ def setup(tmp_path):
     (binaries / 'cat').write_text('#!/bin/sh\nif [ \"$1\" = /proc/meminfo ]; then echo \"MemAvailable: ${AVAILABLE_KB:-1500000} kB\"; else /bin/cat \"$@\"; fi\n')
     (binaries / 'chown').write_text('#!/bin/sh\nexit 0\n')
     (binaries / 'readlink').write_text('''#!/bin/sh
-if [ "$2" = "$PHOTO_SOURCE" ]; then echo "${RESOLVED_SOURCE:-/volume1/shared-photos/pilot}"; else /usr/bin/readlink "$@"; fi
+if [ "$2" = "$PHOTO_SAMPLE" ]; then echo "${RESOLVED_SOURCE:-$PHOTO_SAMPLE}"; else /usr/bin/readlink "$@"; fi
 ''')
     (binaries / 'docker').write_text('''#!/bin/sh
 printf '%s\\n' "$*" >> "$DOCKER_LOG"
@@ -35,8 +39,8 @@ esac
 ''')
     for binary in binaries.iterdir():
         binary.chmod(0o755)
-    env = dict(os.environ, PATH=str(binaries) + ':' + os.environ['PATH'], PHOTO_SOURCE=str(source), DOCKER_LOG=str(log))
-    args = ['sh', str(SCRIPT), '--image', 'ghcr.io/mattyv/nas-search-mcp@sha256:' + 'a' * 64, '--photos-path', str(source), '--install-dir', str(install)]
+    env = dict(os.environ, PATH=str(binaries) + ':' + os.environ['PATH'], PHOTO_SOURCE=str(source), PHOTO_SAMPLE=str(selected), DOCKER_LOG=str(log))
+    args = ['sh', str(SCRIPT), '--image', 'ghcr.io/mattyv/nas-search-mcp@sha256:' + 'a' * 64, '--photos-path', str(selected), '--install-dir', str(install)]
     return args, env, log, install
 
 
@@ -47,8 +51,9 @@ def test_isolated_private_bounded_launch(tmp_path):
     assert result.returncode == 0, result.stderr
     calls = log.read_text()
     assert '--name nas-search-photo-pilot' in calls
-    for option in ['--memory 1g', '--memory-swap 1g', '--cpuset-cpus 0', '--read-only', '--cap-drop ALL', '--security-opt no-new-privileges:true', '--tmpfs /tmp:size=64m,mode=1777', '192.0.2.10:8081:8080', '/volume1/shared-photos/pilot:/files/Photos:ro']:
+    for option in ['--memory 1g', '--memory-swap 1g', '--cpuset-cpus 0', '--read-only', '--cap-drop ALL', '--security-opt no-new-privileges:true', '--tmpfs /tmp:size=64m,mode=1777', '192.0.2.10:8081:8080', ]:
         assert option in calls
+    assert f'{tmp_path / "photos" / "sample"}:/files/Photos:ro' in calls
     assert '--restart' not in calls
     assert 'exec nas-search-photo-pilot python3' in calls
     assert TOKEN not in calls + result.stdout + result.stderr
@@ -100,7 +105,8 @@ def test_private_credentials_and_input_validation(tmp_path):
     assert result.returncode != 0
     assert 'mode 600 or 400' in result.stderr
     secret.chmod(0o600)
-    result = subprocess.run(args + ['--bind-ip', '999.1.1.1'], env=env, capture_output=True)
+    secret.write_text(secret.read_text().replace('NAS_BIND_IP=192.0.2.10', 'NAS_BIND_IP=999.1.1.1'))
+    result = subprocess.run(args, env=env, capture_output=True)
     assert result.returncode != 0
     original = secret.read_text()
     secret.write_text(original.replace('NAS_CPUSET=0', 'NAS_CPUSET=0;echo BAD'))

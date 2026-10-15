@@ -15,7 +15,7 @@ pytestmark = pytest.mark.skipif(DOCKER is None, reason='Docker Compose is checke
 
 @pytest.mark.parametrize('bind,expected', [
     ('127.0.0.1', {'127.0.0.1'}),
-    ('192.0.2.10', {'127.0.0.1', '192.0.2.10'}),
+    ('192.0.2.4', {'127.0.0.1', '192.0.2.4'}),
     ('0.0.0.0', {'0.0.0.0'}),
 ])
 @pytest.mark.parametrize('quoted_space', [False, True])

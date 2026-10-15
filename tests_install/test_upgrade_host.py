@@ -16,8 +16,8 @@ def module():
 
 def test_env_is_data_and_preserves_spaces(tmp_path):
     env = tmp_path / '.env'
-    env.write_text("NAS_INDEX_PATH='/volume1/My Index'\nNAS_TOKEN=$(touch /tmp/never)\nNAS_UID=1000\n")
-    assert module().read_env(env)['NAS_INDEX_PATH'] == '/volume1/My Index'
+    env.write_text("NAS_INDEX_PATH='/data/My Index'\nNAS_TOKEN=$(touch /tmp/never)\nNAS_UID=1000\n")
+    assert module().read_env(env)['NAS_INDEX_PATH'] == '/data/My Index'
 
 
 @pytest.mark.parametrize('name,kind', [('../escape', 'file'), ('root/link', 'link'), ('/absolute', 'file')])
@@ -52,6 +52,7 @@ def test_process_uses_fixed_commit_and_keeps_errors_private(tmp_path, monkeypatc
     data = tmp_path / 'index'
     data.mkdir()
     (install / '.env').write_text(f"NAS_INDEX_PATH='{data}'\nNAS_DOCUMENTS_PATH=/m\nNAS_PHOTOS_PATH=/p\nNAS_CODE_PATH=/c\nNAS_UID=1\nNAS_GID=2\nNAS_BIND_IP=127.0.0.1\n")
+    (install / 'current-image').write_text('ghcr.io/mattyv/nas-search-mcp:' + 'b' * 40 + '\n')
     queue = install / 'upgrades'
     queue.mkdir()
     (queue / 'request.json').write_text('{"action":"upgrade_main"}')
@@ -62,7 +63,10 @@ def test_process_uses_fixed_commit_and_keeps_errors_private(tmp_path, monkeypatc
     assert m.process_once(install)
     status = json.loads((queue / 'status.json').read_text())
     assert status['state'] == 'failed'
-    assert status['commit'] == 'a'*40
+    assert status['installed_commit'] == 'b'*40
+    assert status['target_commit'] == 'a'*40
+    assert status['started_at'] <= status['finished_at']
+    assert status['failure_reason'] == 'The installer could not complete deployment; credentials and index are preserved.'
     assert 'secret' not in json.dumps(status)
     assert not (queue / 'request.json').exists()
 
@@ -132,6 +136,12 @@ def test_request_outcomes(tmp_path, monkeypatch, action, verified, expected, sta
     assert m.process_once(install)
     result = json.loads((queue / 'status.json').read_text())
     assert result['state'] == expected
+    assert result['target_commit'] == ('c' * 40 if expected == 'succeeded' else '')
+    assert result['installed_commit'] == ('c' * 40 if expected == 'succeeded' else '')
+    assert 'started_at' in result and 'finished_at' in result
+    assert result['started_at'] <= result['finished_at']
+    if expected == 'failed':
+        assert result['failure_reason']
     assert result.get('failure_stage') == stage
     assert bool(installed) == (expected == 'succeeded')
     assert not request.exists()
@@ -229,3 +239,33 @@ def test_filesystem_failure_does_not_escape_poll_iteration(tmp_path, monkeypatch
     monkeypatch.setattr(m, 'write_status', unavailable)
     assert not m.process_once(tmp_path)
     assert not request.exists()
+
+
+def test_status_reports_valid_current_image_commit_without_echoing_file(tmp_path):
+    m = module()
+    (tmp_path / 'current-image').write_text('ghcr.io/mattyv/nas-search-mcp:' + 'd' * 40 + '\n')
+    assert m.read_installed_commit(tmp_path) == 'd' * 40
+    (tmp_path / 'current-image').write_text('private malformed value')
+    assert m.read_installed_commit(tmp_path) == ''
+
+@pytest.mark.parametrize('assignment', [
+    'NAS_PHOTOS=true\nNAS_PHOTOS=false',
+    'export NAS_PHOTOS=true',
+    'NAS_PHOTOS="unterminated',
+])
+def test_invalid_protected_settings_fail_before_release_lookup(tmp_path, monkeypatch, assignment):
+    m = module()
+    install = tmp_path / 'install'
+    install.mkdir()
+    (install / '.env').write_text('NAS_INDEX_PATH=/unused\n' + assignment + '\n')
+    queue = install / 'upgrades'
+    queue.mkdir()
+    (queue / 'request.json').write_text('{"action":"upgrade_main"}')
+    monkeypatch.setattr(m, 'resolve_verified_main', lambda: pytest.fail('must validate settings first'))
+    monkeypatch.setattr(m, 'install_commit', lambda *args: pytest.fail('must validate settings first'))
+    assert m.process_once(install)
+    status = json.loads((queue / 'status.json').read_text())
+    assert status['state'] == 'failed'
+    assert status['failure_stage'] == 'protected_settings_validation'
+    assert status['failure_reason'] == 'Protected deployment settings contain duplicate or unsupported NAS assignments; no update was attempted.'
+    assert 'unterminated' not in json.dumps(status)

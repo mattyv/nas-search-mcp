@@ -51,7 +51,11 @@ func TestPublicOAuthToolFlow(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer auth.Close()
-	handler = buildPublicHandler(buildMCPServer(a), auth, a)
+	var approval *upgradeApproval
+	if directory := os.Getenv("NAS_UPGRADE_DIR"); directory != "" {
+		approval = newUpgradeApproval(ts.URL, directory)
+	}
+	handler = buildPublicHandler(buildMCPServer(a, approval), auth, a, approval)
 	probe, e := ts.Client().Get(ts.URL + "/mcp")
 	if e != nil {
 		t.Fatal(e)
@@ -111,7 +115,11 @@ func TestPublicOAuthToolFlow(t *testing.T) {
 	forgedLimited := false
 	for i := 0; i < 100; i++ {
 		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, httptest.NewRequest("GET", ts.URL+"/unknown", nil))
+		// The base case exhausts anonymous OAuth capacity; the upgrade case
+		// still needs a fresh browser sign-in after its authenticated MCP call.
+		if os.Getenv("NAS_UPGRADE_DIR") == "" {
+			handler.ServeHTTP(w, httptest.NewRequest("GET", ts.URL+"/unknown", nil))
+		}
 		r := httptest.NewRequest("POST", ts.URL+"/mcp", nil)
 		r.Header.Set("Authorization", "Bearer "+strings.Repeat("x", 43))
 		w = httptest.NewRecorder()
@@ -160,6 +168,55 @@ func TestPublicOAuthToolFlow(t *testing.T) {
 		upgraded, err := sessionMCP.CallTool(ctx, &mcp.CallToolParams{Name: "upgrade_from_main", Arguments: map[string]any{}})
 		if err != nil || upgraded.IsError {
 			t.Fatal("OAuth upgrade failed", err, upgraded)
+		}
+		upgradeContent, ok := upgraded.StructuredContent.(map[string]any)
+		if !ok || upgradeContent["state"] != "approval_required" {
+			t.Fatalf("public upgrade must wait for owner approval: %v", upgraded.StructuredContent)
+		}
+		if _, err := os.Stat(filepath.Join(os.Getenv("NAS_UPGRADE_DIR"), "request.json")); !os.IsNotExist(err) {
+			t.Fatalf("upgrade queued before owner approval: %v", err)
+		}
+		approvalURL, ok := upgradeContent["approval_url"].(string)
+		if !ok || !strings.HasPrefix(approvalURL, ts.URL+"/upgrade/approve?request=") {
+			t.Fatalf("invalid approval destination: %v", upgradeContent)
+		}
+		browser := browserOAuthClient(t, ts.Client(), ts.URL, approvalURL, "test-only-password-123")
+		page, err := browser.Get(approvalURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page.Body.Close()
+		if page.StatusCode != 200 || len(page.Cookies()) != 1 {
+			t.Fatalf("approval page unavailable: %d", page.StatusCode)
+		}
+		postApproval := func(csrf bool) int {
+			t.Helper()
+			form := url.Values{"consent": {"approve"}}
+			if csrf {
+				form.Set("csrf", page.Cookies()[0].Value)
+			}
+			req, _ := http.NewRequest(http.MethodPost, approvalURL, strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Origin", ts.URL)
+			response, err := browser.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response.Body.Close()
+			return response.StatusCode
+		}
+		if got := postApproval(false); got != http.StatusForbidden {
+			t.Fatalf("approval without CSRF proof: %d", got)
+		}
+
+		if _, err := os.Stat(filepath.Join(os.Getenv("NAS_UPGRADE_DIR"), "request.json")); !os.IsNotExist(err) {
+			t.Fatalf("upgrade queued after rejected approval: %v", err)
+		}
+		if got := postApproval(true); got != http.StatusOK {
+			t.Fatalf("owner approval failed: %d", got)
+		}
+		if _, err := os.Stat(filepath.Join(os.Getenv("NAS_UPGRADE_DIR"), "request.json")); err != nil {
+			t.Fatalf("approved upgrade was not queued: %v", err)
 		}
 		status, err := sessionMCP.CallTool(ctx, &mcp.CallToolParams{Name: "upgrade_status", Arguments: map[string]any{}})
 		if err != nil || status.IsError {

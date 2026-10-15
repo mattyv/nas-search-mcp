@@ -1,14 +1,6 @@
 {
-  "recorded_at_utc": "2026-10-11T12:33:35.135877+00:00",
-  "machine_role": "development",
+  "machine_role": "anonymized development environment; not a target-device measurement",
   "is_nas_measurement": false,
-  "platform": {
-    "system": "Linux",
-    "kernel": "6.17.0-1033-oem",
-    "architecture": "x86_64",
-    "cpu": "AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M",
-    "python": "3.14.6"
-  },
   "dependencies": {
     "fastembed": "0.7.4",
     "onnxruntime": "1.31.0",

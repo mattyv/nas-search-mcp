@@ -131,7 +131,7 @@ func TestPublicDownloadsStreamBeyondMCPResponseCap(t *testing.T) {
 	if e = a.ConfigureLinks(ts.URL, 10*time.Minute); e != nil {
 		t.Fatal(e)
 	}
-	handler = buildPublicHandler(buildMCPServer(a), auth, a)
+	handler = buildPublicHandler(buildMCPServer(a, nil), auth, a, nil)
 	link, e := a.CreateLink("Documents/scan.pdf")
 	if e != nil {
 		t.Fatal(e)
@@ -140,10 +140,53 @@ func TestPublicDownloadsStreamBeyondMCPResponseCap(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	login, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !bytes.Contains(login, []byte(`name="password"`)) || bytes.Equal(login, content) {
+		t.Fatal("public download did not require sign-in", resp.StatusCode, len(login))
+	}
+	request, _ := http.NewRequest(http.MethodPost, link.URL, strings.NewReader("password=test-only-password-123"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Origin", ts.URL)
+	denied, e := ts.Client().Do(request)
+	if e != nil {
+		t.Fatal(e)
+	}
+	denied.Body.Close()
+	if denied.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatal("password-only download accepted", denied.StatusCode)
+	}
+	browser := browserOAuthClient(t, ts.Client(), ts.URL, link.URL, "test-only-password-123")
+	resp, e = browser.Get(link.URL)
+	if e != nil {
+		t.Fatal(e)
+	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != 200 || !bytes.Equal(body, content) {
 		t.Fatal(resp.StatusCode, len(body))
+	}
+	request, _ = http.NewRequest(http.MethodGet, link.URL, nil)
+	request.Header.Set("Range", "bytes=0-15")
+	resp, e = browser.Do(request)
+	if e != nil {
+		t.Fatal(e)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 206 || !bytes.Equal(body, content[:16]) {
+		t.Fatal("OAuth session did not support PDF range requests", resp.StatusCode)
+	}
+	if e := auth.RevokeAll(); e != nil {
+		t.Fatal(e)
+	}
+	resp, e = browser.Get(link.URL)
+	if e != nil {
+		t.Fatal(e)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 303 {
+		t.Fatal("revoked OAuth still downloads", resp.StatusCode)
 	}
 	probe, e := http.Get(ts.URL + "/mcp")
 	if e != nil {

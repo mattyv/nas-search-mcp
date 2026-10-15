@@ -33,6 +33,25 @@ def read_env(path):
     return result
 
 
+def validate_env_assignments(path):
+    seen = set()
+    for line in path.read_text().splitlines():
+        if not re.match(r'^\s*(?:export\s+)?NAS_[A-Za-z0-9_]+\s*=', line):
+            continue
+        match = re.fullmatch(r'(NAS_[A-Za-z0-9_]+)=(.*)', line)
+        if not match or match.group(1) in seen:
+            raise ValueError('Unsupported deployment settings')
+        key, value = match.groups()
+        seen.add(key)
+        value = value.strip()
+        if value[:1] in ('"', "'"):
+            if len(value) < 2 or value[-1] != value[0]:
+                raise ValueError('Unsupported deployment settings')
+            value = value[1:-1]
+        if '"' in value or "'" in value:
+            raise ValueError('Unsupported deployment settings')
+
+
 def download(url, target, limit):
     request = urllib.request.Request(url, headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'nas-search-upgrader'})
     with urllib.request.urlopen(request, timeout=60) as response:
@@ -118,11 +137,36 @@ def install_commit(install_dir, env, sha):
             subprocess.run(args, stdout=log, stderr=log, check=True)
 
 
-def write_status(queue, state, commit='', failure_stage=''):
-    status = {'state': state, 'commit': commit, 'updated_at': int(time.time())}
+def read_installed_commit(install_dir):
+    try:
+        image = (install_dir / 'current-image').read_text().strip()
+    except OSError:
+        return ''
+    match = re.fullmatch(r'ghcr\.io/mattyv/nas-search-mcp:([0-9a-f]{40})', image)
+    return match.group(1) if match else ''
+
+
+def write_status(queue, state, installed_commit='', target_commit='', failure_stage='', started_at=None):
+    now = int(time.time())
+    status = {
+        'state': state,
+        'installed_commit': installed_commit,
+        'target_commit': target_commit,
+        'updated_at': now,
+    }
+    if started_at is not None:
+        status['started_at'] = started_at
+    if state in ('succeeded', 'failed'):
+        status['finished_at'] = now
     status['message'] = {'running': 'Upgrading to verified main.', 'succeeded': 'Upgrade passed health and authenticated MCP checks.', 'failed': 'Upgrade failed. The installer preserves credentials and index and attempts rollback.'}[state]
     if failure_stage:
         status['failure_stage'] = failure_stage
+        status['failure_reason'] = {
+            'request_validation': 'The upgrade request could not be validated.',
+            'protected_settings_validation': 'Protected deployment settings contain duplicate or unsupported NAS assignments; no update was attempted.',
+            'main_verification': 'The latest main release has not passed verification and publication.',
+            'download_and_install': 'The installer could not complete deployment; credentials and index are preserved.',
+        }.get(failure_stage, 'The upgrade could not be completed.')
     fd, name = tempfile.mkstemp(prefix='.status-', dir=queue)
     try:
         with os.fdopen(fd, 'w') as output:
@@ -161,7 +205,7 @@ def process_once(install_dir):
 
 
 def process_request(install_dir):
-    env = read_env(install_dir / '.env')
+    installed_commit = read_installed_commit(install_dir)
     queue = install_dir / 'upgrades'
     if queue.is_symlink():
         raise ValueError('Queue must not be a symlink')
@@ -177,6 +221,7 @@ def process_request(install_dir):
     except FileNotFoundError:
         return False
     sha = ''
+    started_at = int(time.time())
     stage = 'request_validation'
     try:
         if not stat.S_ISREG(original.st_mode):
@@ -188,17 +233,20 @@ def process_request(install_dir):
                     (opened.st_dev, opened.st_ino) != (original.st_dev, original.st_ino)):
                 raise ValueError('Invalid request file')
             body = source.read(4097)
-        write_status(queue, 'running')
+        write_status(queue, 'running', installed_commit, started_at=started_at)
         if len(body) > 4096 or json.loads(body) != {'action': 'upgrade_main'}:
             raise ValueError('Invalid request')
+        stage = 'protected_settings_validation'
+        validate_env_assignments(install_dir / '.env')
+        env = read_env(install_dir / '.env')
         stage = 'main_verification'
         sha = resolve_verified_main()
-        write_status(queue, 'running', sha)
+        write_status(queue, 'running', installed_commit, sha, started_at=started_at)
         stage = 'download_and_install'
         install_commit(install_dir, env, sha)
-        write_status(queue, 'succeeded', sha)
+        write_status(queue, 'succeeded', sha, sha, started_at=started_at)
     except Exception:
-        write_status(queue, 'failed', sha, stage)
+        write_status(queue, 'failed', installed_commit, sha, stage, started_at)
     finally:
         retire_request(install_dir, request, original)
     return True
@@ -206,7 +254,7 @@ def process_request(install_dir):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--install-dir', type=Path, default=Path('/volume1/@nas-search-upgrader'))
+    parser.add_argument('--install-dir', type=Path, required=True)
     parser.add_argument('--once', action='store_true')
     args = parser.parse_args()
     if os.geteuid() != 0:

@@ -168,7 +168,7 @@ def test_main_preserves_configuration_and_recovers(tmp_path, monkeypatch, mode):
 
 def test_pause_targets_only_exact_root_worker_and_resumes_on_failure(tmp_path, monkeypatch):
     m = module()
-    install = Path('/volume1/@nas-search-upgrader')
+    install = Path('/srv/upgrader')
     for pid, command, uid in [('10', ['/usr/bin/python3', str(install / 'upgrade-host.py'), '--install-dir', str(install)], 0), ('11', ['/usr/bin/python3', '/other/upgrade-host.py', '--install-dir', str(install)], 0), ('12', ['/usr/bin/python3', str(install / 'upgrade-host.py'), '--install-dir', str(install)], 1000)]:
         directory = tmp_path / pid
         directory.mkdir()

@@ -14,7 +14,7 @@
 
 - Target a Synology DS220+ with an Intel Celeron J4025 and 2 GB RAM. Require no hardware upgrades and no second machine to run the service.
 - Deliver a container for Synology Container Manager. Keep memory and CPU bounded; measure actual NAS compatibility and performance before promising either.
-- Support read-only discovery, search, and reading of documents, code, and photos. Mount only authorized sources: the `Documents` share and `shared-photos`. Verify their physical paths at deployment.
+- Support read-only discovery, search, and reading of documents, code, and photos. Mount only owner-authorized sources. Verify their physical paths at deployment; keep site-specific paths in private deployment settings.
 - Use free local embedding models by default. External AI is acceptable when explicitly configured, but must not be required for ordinary local search. Document model downloads, unsupported formats, OCR gaps, and indexing freshness.
 - Provide MCP access for Claude Desktop, Claude CLI, and Codex CLI. Document actual ChatGPT connectivity requirements and limitations.
 - Preserve the user's work Tailscale connection. Do not switch accounts or exit nodes without authorization. Local LAN access is enabled and should remain enabled. Remote access through a free personal Tailscale setup is acceptable.

@@ -9,7 +9,7 @@ def setup(tmp_path):
     binaries = tmp_path / 'bin'
     binaries.mkdir()
     log = tmp_path / 'docker.log'
-    (binaries / 'id').write_text('#!/bin/sh\ncase "$1" in -u) echo 0;; -g) echo 100;; esac\n')
+    (binaries / 'id').write_text('#!/bin/sh\ncase "$1" in -u) echo 0;; -g) echo 1234;; esac\n')
     (binaries / 'docker').write_text('''#!/bin/sh
 printf '%s\\n' "$*" >> "$DOCKER_LOG"
 case "$1" in
@@ -27,14 +27,14 @@ esac
     (binaries / 'sleep').write_text('#!/bin/sh\nexit 0\n')
     for binary in binaries.iterdir():
         binary.chmod(0o755)
-    owner = tmp_path / 'Documents'
+    documents = tmp_path / 'Documents'
     photos = tmp_path / 'Photos'
-    owner.mkdir()
+    documents.mkdir()
     photos.mkdir()
     code = tmp_path / 'Code'
     code.mkdir()
-    env = dict(os.environ, PATH=str(binaries) + ':' + os.environ['PATH'], DOCKER_LOG=str(log), CHOWN_LOG=str(tmp_path / 'chown.log'), SUDO_UID='1000', SUDO_GID='100')
-    args = ['sh', str(SCRIPT), '--image', 'ghcr.io/mattyv/nas-search-mcp:abc123', '--install-dir', str(tmp_path / 'install'), '--documents-path', str(owner), '--photos-path', str(photos), '--code-path', str(code), '--data-path', str(tmp_path / 'index'), '--bind-ip', '192.0.2.10']
+    env = dict(os.environ, PATH=str(binaries) + ':' + os.environ['PATH'], DOCKER_LOG=str(log), CHOWN_LOG=str(tmp_path / 'chown.log'), SUDO_UID='1234', SUDO_GID='1234')
+    args = ['sh', str(SCRIPT), '--image', 'ghcr.io/mattyv/nas-search-mcp:abc123', '--install-dir', str(tmp_path / 'install'), '--documents-path', str(documents), '--photos-path', str(photos), '--code-path', str(code), '--data-path', str(tmp_path / 'index'), '--bind-ip', '192.0.2.10']
     return args, env, log
 
 
@@ -44,8 +44,9 @@ def test_install_order_and_private_state(tmp_path):
     assert result.returncode == 0, result.stderr
     state = tmp_path / 'install'
     contents = (state / '.env').read_text()
-    assert 'NAS_UID=1000' in contents
+    assert 'NAS_UID=1234' in contents
     assert 'NAS_TOKEN=' in contents
+    assert 'NAS_DOCUMENTS_LABEL=Documents' in contents
     assert 'NAS_ALLOWED_FOLDERS=Documents,Code,Photos' in contents
     assert (state / '.env').stat().st_mode & 0o077 == 0
     assert f'0:0 {state / ".env"}' in (tmp_path / 'chown.log').read_text()
@@ -273,7 +274,7 @@ def test_default_install_rejects_invalid_detected_path_before_mutation(tmp_path)
     args, env, log = setup(tmp_path)
     i = args.index('--install-dir')
     del args[i:i + 2]
-    env['ACTIVE_INSTALL'] = '/volume1/../private'
+    env['ACTIVE_INSTALL'] = '/srv/../private'
     result = subprocess.run(args, env=env, capture_output=True)
     assert result.returncode != 0
     assert not log.exists() or 'pull ' not in log.read_text()
@@ -339,10 +340,10 @@ def test_bind_effective_mappings_and_legacy_preservation(tmp_path):
         assert compose.count('127.0.0.1:8080:8080') == (0 if bind == '0.0.0.0' else 1)
         assert ('192.0.2.10:8080:8080' in compose) == (bind == '192.0.2.10')
     secret = state / '.env'
-    original = secret.read_bytes().replace(b'NAS_BIND_IP=0.0.0.0', b'NAS_LAN_IP=192.168.1.9')
+    original = secret.read_bytes().replace(b'NAS_BIND_IP=0.0.0.0', b'NAS_LAN_IP=192.0.2.11')
     secret.write_bytes(original)
     assert subprocess.run(args, env=env, capture_output=True).returncode == 0
-    assert '192.168.1.9:8080:8080' in (state / 'compose.yaml').read_text()
+    assert '192.0.2.11:8080:8080' in (state / 'compose.yaml').read_text()
     assert secret.read_bytes() == original
     env['FAIL_HEALTH'] = '1'
     assert subprocess.run(args, env=env, capture_output=True).returncode != 0
@@ -404,7 +405,6 @@ def test_ambiguous_dotenv_assignments_rejected_without_changes(tmp_path):
     for extra in [f'NAS_INDEX_PATH={tmp_path / "Documents"}',
                   f'export NAS_INDEX_PATH={tmp_path / "Documents"}',
                   f' NAS_INDEX_PATH = {tmp_path / "Documents"}',
-                  'NAS_ALLOWED_FOLDERS=Documents,Code,Photos',
                   'NAS_FUTURE_FIELD=one\nNAS_FUTURE_FIELD=two']:
         contents = original + (extra + '\n').encode()
         secret.write_bytes(contents)

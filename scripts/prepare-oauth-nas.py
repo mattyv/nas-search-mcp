@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install the staged, already-compiled connector with a private password prompt."""
 import getpass
+import argparse
 import os
 from pathlib import Path
 import re
@@ -9,23 +10,31 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 import urllib.request
 from urllib.error import HTTPError
 
 
 PROJECT = Path(__file__).resolve().parents[1]
-EXISTING = Path('/volume1/docker/nas-search')
-SECURE_PROJECT = Path('/volume1/nas-search-connector')
-ISSUER = 'https://nas.example.ts.net'
 DOCKER = '/usr/local/bin/docker'
 SUDO_RULE = Path('/etc/sudoers.d/nas-search-connector')
-INSTALLER_SUDO_RULE = 'owner ALL=(root) NOPASSWD: /usr/bin/python3 /volume1/nas-search-connector/scripts/prepare-oauth-nas.py'
+
+
+def installer_sudo_rule(project, user):
+    if not re.fullmatch(r'[a-z_][a-z0-9_-]*[$]?', user):
+        raise ValueError('Administrator account is invalid.')
+    return f'{user} ALL=(root) NOPASSWD: /usr/bin/python3 {project / "scripts/prepare-oauth-nas.py"}'
 
 
 def prepared_env(original: str, password_hash: str, issuer: str) -> str:
+    label = next((line.partition('=')[2] for line in original.splitlines()
+                  if line.startswith('NAS_DOCUMENTS_LABEL=')), 'Documents')
+    if not re.fullmatch(r'[A-Za-z0-9_-]+', label):
+        raise ValueError('Document label is invalid.')
     updates = {
         'COMPOSE_PROJECT_NAME': 'nas-search',
-        'NAS_ALLOWED_FOLDERS': 'Documents,Code,Photos',
+        'NAS_DOCUMENTS_LABEL': label,
+        'NAS_ALLOWED_FOLDERS': label + ',Code,Photos',
         'NAS_OAUTH_CLIENT_ID': 'nas-claude',
         'NAS_OAUTH_ISSUER': issuer,
         'NAS_OAUTH_PASSWORD_HASH': "'" + password_hash + "'",
@@ -45,7 +54,7 @@ def run(command):
     subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
 
 
-def verify_image_smoke():
+def verify_image_smoke(uid, gid):
     # Exercise vec0 startup before replacing the live container; no source folders are mounted.
     script = '''set -eu
 mkdir /tmp/source /tmp/data
@@ -65,7 +74,7 @@ done
 exit 1
 '''
     args = [DOCKER, 'run', '--rm', '-i', '--network', 'none', '--read-only',
-            '--tmpfs', '/tmp:size=32m,mode=1777', '--user', '1000:100',
+            '--tmpfs', '/tmp:size=32m,mode=1777', '--user', str(uid) + ':' + str(gid),
             '-e', 'NAS_ROOT=/tmp/source', '-e', 'NAS_DATA=/tmp/data',
             '-e', 'NAS_VEC_EXTENSION=/opt/vec0.so', '-e', 'NAS_ALLOWED_FOLDERS=',
             '-e', 'NAS_SEMANTIC=false', '-e', 'NAS_SCAN_INTERVAL=3600',
@@ -92,24 +101,26 @@ def verify_service():
             raise RuntimeError('Public MCP did not return an OAuth challenge.') from None
 
 
-def remove_temporary_sudo_rule(path=SUDO_RULE):
+def remove_temporary_sudo_rule(path=SUDO_RULE, expected=''):
     if not path.exists():
         return True
-    if path.read_text().strip() != INSTALLER_SUDO_RULE:
+    if not expected or path.read_text().strip() != expected:
         return False
     path.unlink()
     return True
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--existing-dir', type=Path, required=True)
+    parser.add_argument('--issuer', required=True)
+    args = parser.parse_args()
     if os.geteuid() != 0:
         raise SystemExit('Run this setup as root from your NAS terminal.')
-    if PROJECT != SECURE_PROJECT:
-        raise SystemExit('Candidate must be copied to the secure root-owned project directory.')
     project_info = PROJECT.lstat()
     if project_info.st_uid != 0 or stat.S_IMODE(project_info.st_mode) != 0o700:
         raise SystemExit('Secure project directory must be root-owned with mode 700.')
-    source = EXISTING / '.env'
+    source = args.existing_dir / '.env'
     if PROJECT.joinpath('.env').exists() or PROJECT.joinpath('.env').is_symlink():
         raise SystemExit('Candidate .env already exists; inspect it before retrying.')
     info = source.lstat()
@@ -123,12 +134,19 @@ def main():
         header = stream.read(20)
     if len(header) < 20 or header[:5] != b'\x7fELF\x02' or header[18:20] != b'\x3e\x00':
         raise SystemExit('Staged service must be a Linux x86_64 binary.')
-    for name in ('/volume1/shared-documents', '/volume1/shared-code', '/volume1/docker/nas-search/pilot-photos'):
+    settings = {}
+    for line in original.splitlines():
+        key, separator, value = line.partition('=')
+        if separator and key.startswith('NAS_'):
+            settings[key] = value.strip().strip("'\"")
+    paths = [settings.get(key, '') for key in ('NAS_DOCUMENTS_PATH', 'NAS_CODE_PATH', 'NAS_PHOTOS_PATH')]
+    for name in paths:
         path = Path(name)
-        if not path.is_dir() or str(path.resolve()) != name:
-            raise SystemExit('A selected source folder no longer resolves to the approved physical path.')
-    data = Path('/volume1/docker/nas-search/data')
-    if not data.is_dir() or stat.S_IMODE(data.stat().st_mode) != 0o700:
+        if not name or not path.is_dir() or str(path.resolve()) != name:
+            raise SystemExit('A configured source folder no longer resolves to its saved physical path.')
+    data_value = settings.get('NAS_INDEX_PATH', '')
+    data = Path(data_value)
+    if not data_value or not data.is_dir() or stat.S_IMODE(data.stat().st_mode) != 0o700:
         raise SystemExit('Private data directory must exist with mode 700.')
     try:
         first = getpass.getpass('New connector password (12–72 bytes): ')
@@ -138,12 +156,18 @@ def main():
     if first != second or not 12 <= len(first.encode()) <= 72:
         raise SystemExit('Passwords differ or fall outside 12–72 bytes.')
     run([DOCKER, 'build', '--pull=false', '--network=none', '--memory=256m', '--cpuset-cpus=0', '-t', 'nas-search-mcp:local', '-f', str(PROJECT / 'Dockerfile.oauth'), str(PROJECT)])
-    verify_image_smoke()
+    uid, gid = settings.get('NAS_UID', ''), settings.get('NAS_GID', '')
+    if not uid.isdigit() or not gid.isdigit():
+        raise SystemExit('Saved container UID/GID must be numeric.')
+    verify_image_smoke(uid, gid)
     hashed = subprocess.run([DOCKER, 'run', '--rm', '-i', '--network=none', '--entrypoint', '/app/nas-search', 'nas-search-mcp:local', 'hash-password'], input=first.encode(), capture_output=True, check=True).stdout.decode()
     first = second = ''
     if not re.fullmatch(r'\$2[aby]\$12\$[A-Za-z0-9./]{53}', hashed):
         raise SystemExit('Password hashing failed; service unchanged.')
-    content = prepared_env(original, hashed, ISSUER)
+    issuer = urllib.parse.urlsplit(args.issuer)
+    if issuer.scheme != 'https' or not issuer.hostname or issuer.username or issuer.password or issuer.query or issuer.fragment:
+        raise SystemExit('Issuer must be an HTTPS URL without credentials, query, or fragment.')
+    content = prepared_env(original, hashed, args.issuer)
     fd, temp = tempfile.mkstemp(prefix='.env-', dir=PROJECT)
     try:
         os.fchmod(fd, 0o600)
@@ -158,7 +182,7 @@ def main():
             os.unlink(temp)
     # Recreate only this project's service. Roll back its old image if startup fails.
     new = [DOCKER, 'compose', '--project-name', 'nas-search', '--project-directory', str(PROJECT), '-f', str(PROJECT / 'compose.yaml')]
-    old = [DOCKER, 'compose', '--project-name', 'nas-search', '--project-directory', str(EXISTING), '-f', str(EXISTING / 'compose.yaml')]
+    old = [DOCKER, 'compose', '--project-name', 'nas-search', '--project-directory', str(args.existing_dir), '-f', str(args.existing_dir / 'compose.yaml')]
     try:
         run(new + ['up', '-d', '--no-build', '--no-deps', 'nas-search'])
         for attempt in range(10):
@@ -185,7 +209,8 @@ if __name__ == '__main__':
     finally:
         if os.geteuid() == 0:
             try:
-                if not remove_temporary_sudo_rule():
+                expected = installer_sudo_rule(PROJECT, os.environ.get('SUDO_USER', ''))
+                if not remove_temporary_sudo_rule(expected=expected):
                     print('Temporary sudo rule differs from the installer grant; remove it manually.', file=sys.stderr)
             except OSError:
                 print('Temporary sudo rule could not be removed; remove it manually.', file=sys.stderr)

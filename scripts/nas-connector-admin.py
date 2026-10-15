@@ -13,18 +13,21 @@ import urllib.request
 from urllib.error import HTTPError
 
 
-PROJECT = Path('/volume1/nas-search-connector')
-OLD = Path('/volume1/docker/nas-search')
+PROJECT = Path(__file__).resolve().parents[1]
 DOCKER = '/usr/local/bin/docker'
 RULE = Path('/etc/sudoers.d/nas-search-connector')
-SUDO_RULE_TEXT = '\n'.join(
-    'owner ALL=(root) NOPASSWD: /usr/bin/python3 /volume1/nas-search-connector/scripts/nas-connector-admin.py ' + operation
-    for operation in ('deploy', 'cleanup'))
+def sudo_rule_text(project=PROJECT, user=None):
+    user = user or os.environ.get('SUDO_USER', '')
+    if not re.fullmatch(r'[a-z_][a-z0-9_-]*[$]?', user):
+        raise ValueError('Administrator account is invalid.')
+    return '\n'.join(
+        f'{user} ALL=(root) NOPASSWD: /usr/bin/python3 {project / "scripts/nas-connector-admin.py"} ' + operation
+        for operation in ('deploy', 'cleanup'))
 
 
 def valid_candidate_env(content):
     required = {'NAS_TOKEN', 'NAS_ALLOWED_FOLDERS', 'NAS_OAUTH_ISSUER',
-                'NAS_OAUTH_CLIENT_ID', 'NAS_OAUTH_PASSWORD_HASH'}
+                'NAS_OAUTH_CLIENT_ID', 'NAS_OAUTH_PASSWORD_HASH', 'NAS_DOCUMENTS_LABEL'}
     values = {}
     for line in content.splitlines():
         line = line.strip()
@@ -35,21 +38,23 @@ def valid_candidate_env(content):
             if key in values:
                 return False
             values[key] = value
+    label = values.get('NAS_DOCUMENTS_LABEL', '')
     return (len(values.get('NAS_TOKEN', '')) >= 24
-            and values.get('NAS_ALLOWED_FOLDERS') == 'Documents,Code,Photos'
-            and values.get('NAS_OAUTH_ISSUER') == 'https://nas.example.ts.net'
+            and re.fullmatch(r'[A-Za-z0-9_-]+', label) is not None
+            and values.get('NAS_ALLOWED_FOLDERS') == label + ',Code,Photos'
+            and re.fullmatch(r'https://[^/@?#]+(?::[0-9]+)?(?:/[^?#]*)?', values.get('NAS_OAUTH_ISSUER', '')) is not None
             and values.get('NAS_OAUTH_CLIENT_ID') == 'nas-claude'
             and re.fullmatch(r"'\$2[aby]\$12\$[A-Za-z0-9./]{53}'", values.get('NAS_OAUTH_PASSWORD_HASH', '')) is not None)
 
 
-def remove_rule(path=RULE):
+def remove_rule(path=RULE, expected=None):
     try:
         info = path.lstat()
     except FileNotFoundError:
         return True
     if not stat.S_ISREG(info.st_mode):
         return False
-    if path.read_text().strip() != SUDO_RULE_TEXT:
+    if path.read_text().strip() != (expected or sudo_rule_text()):
         return False
     path.unlink()
     return True
@@ -83,6 +88,16 @@ def command(args, timeout=45):
 def compose(project):
     return [DOCKER, 'compose', '--project-name', 'nas-search',
             '--project-directory', str(project), '-f', str(project / 'compose.yaml')]
+
+
+def previous_project():
+    value = command([DOCKER, 'inspect', '--format', '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}', 'nas-search-nas-search-1']).strip()
+    if not value.startswith('/') or any(part in ('.', '..') for part in value.split('/')):
+        raise RuntimeError('Previous deployment location is unavailable.')
+    project = Path(value)
+    if not (project / 'compose.yaml').is_file():
+        raise RuntimeError('Previous deployment configuration is unavailable.')
+    return project
 
 
 def logs_category(container):
@@ -145,6 +160,7 @@ def deploy():
         raise RuntimeError('Candidate environment must be a root-owned mode-600 regular file.')
     if not valid_candidate_env(env.read_text()):
         raise RuntimeError('Candidate OAuth or access configuration is incomplete.')
+    old_project = previous_project()
     try:
         command(compose(PROJECT) + ['up', '-d', '--no-build', '--no-deps', 'nas-search'], timeout=90)
         if not wait_healthy(True, 90):
@@ -152,8 +168,8 @@ def deploy():
     except RuntimeError as error:
         category = logs_category('nas-search-nas-search-1')
         print('New service: ' + category, file=sys.stderr)
-        command(compose(OLD) + ['up', '-d', '--no-build', '--no-deps', 'nas-search'], timeout=90)
-        if not wait_healthy(False, 60, 'http://192.0.2.10:8080/healthz'):
+        command(compose(old_project) + ['up', '-d', '--no-build', '--no-deps', 'nas-search'], timeout=90)
+        if not wait_healthy(False, 60):
             raise RuntimeError('Rollback did not restore LAN health; inspect the project immediately.') from error
         raise RuntimeError('New service failed; previous LAN service restored.') from error
     print('New service passed local health and OAuth rejection checks. Funnel state unchanged.')
@@ -173,7 +189,7 @@ def main():
         diagnose()
     elif sys.argv[1] == 'deploy':
         deploy()
-    elif not remove_rule():
+    elif not remove_rule(expected=sudo_rule_text()):
         raise SystemExit('Temporary sudo rule differs; inspect it before removal.')
 
 

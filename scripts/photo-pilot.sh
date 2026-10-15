@@ -3,7 +3,7 @@
 set -eu
 umask 077
 fail() { printf '%s\n' "$*" >&2; exit 1; }
-image= photos= install_dir=/volume1/docker/nas-search bind=192.0.2.10 dry=false
+image= photos= install_dir= bind= dry=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --dry-run) dry=true; shift;;
@@ -15,7 +15,6 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 printf '%s\n' "$image" | LC_ALL=C grep -Eq '^ghcr\.io/mattyv/nas-search-mcp(@sha256:[a-f0-9]{64}|:[a-f0-9]{40})$' || fail 'Specify the published ghcr.io/mattyv/nas-search-mcp image pinned by SHA256 digest or full commit tag'
-printf '%s\n' "$bind" | awk -F. 'NF != 4 {exit 1} {for(i=1;i<=4;i++) if($i !~ /^[0-9]+$/ || $i>255) exit 1}' || fail 'Bind address must be an IPv4 address'
 for path in "$photos" "$install_dir"; do
     case "$path" in /*) :;; *) fail 'Specify absolute paths';; esac
     case "$path" in *[!a-zA-Z0-9_./\ -]*|*/../*|*/..|*/./*|*/.) fail 'Paths contain unsupported characters or traversal';; esac
@@ -23,8 +22,6 @@ for path in "$photos" "$install_dir"; do
 done
 photos=$(readlink -f "$photos") || fail 'Cannot resolve photo folder'
 install_dir=$(readlink -f "$install_dir") || fail 'Cannot resolve deployment directory'
-case "$photos" in /volume1/shared-photos|/volume1/shared-photos/*|/volume1/shared|/volume1/shared/*) :;; *) fail 'Physical photo folder must be within /volume1/shared-photos or /volume1/shared';; esac
-case "$install_dir/" in /volume1/shared-photos/*|/volume1/shared/*) fail 'Pilot state must be outside authorized source roots';; esac
 secret=$install_dir/.env
 pilot_env=$install_dir/.env-photo-pilot
 data=$install_dir/data-photo-pilot
@@ -41,8 +38,18 @@ uid=$(field NAS_UID)
 gid=$(field NAS_GID)
 cpuset=$(field NAS_CPUSET)
 denied=$(field NAS_DENIED_FOLDERS)
+documents_root=$(field NAS_DOCUMENTS_PATH)
+photos_root=$(field NAS_PHOTOS_PATH)
+saved_bind=$(field NAS_BIND_IP)
+bind=${saved_bind:-${bind:-127.0.0.1}}
 [ "${#token}" -ge 24 ] || fail 'Deployment token must have at least 24 characters'
 case "$token" in *[!a-zA-Z0-9_-]*) fail 'Deployment token has unsupported characters';; esac
+case "$documents_root:$photos_root" in /*:/*) :;; *) fail 'Protected source paths are required';; esac
+documents_root=$(readlink -f "$documents_root") || fail 'Cannot resolve protected document source'
+photos_root=$(readlink -f "$photos_root") || fail 'Cannot resolve protected photo source'
+case "$photos" in "$photos_root"|"$photos_root"/*|"$documents_root"|"$documents_root"/*) :;; *) fail 'Photo folder must stay within a protected source';; esac
+case "$install_dir/" in "$photos_root/"*|"$documents_root/"*) fail 'Pilot state must be outside protected source roots';; esac
+printf '%s\n' "$bind" | awk -F. 'NF != 4 {exit 1} {for(i=1;i<=4;i++) if($i !~ /^[0-9]+$/ || $i>255) exit 1}' || fail 'Bind address must be an IPv4 address'
 case "$uid:$gid" in *[!0-9:]*|:*|*:) fail 'Deployment UID/GID must be numeric';; esac
 printf '%s\n' "$cpuset" | LC_ALL=C grep -Eq '^[0-9]+$' || fail 'Deployment CPU affinity must select one CPU'
 [ "$(id -u)" = 0 ] || fail 'Run on the NAS with sudo/root Docker access'

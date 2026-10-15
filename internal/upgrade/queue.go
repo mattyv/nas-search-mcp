@@ -39,6 +39,20 @@ func (q Queue) Status() (map[string]any, error) {
 	if pending && out["state"] != "running" {
 		return map[string]any{"state": "queued"}, nil
 	}
+	if target, ok := out["commit"]; ok {
+		out["target_commit"] = target
+		delete(out, "commit")
+		if out["state"] == "succeeded" {
+			if targetCommit, ok := target.(string); ok && targetCommit != "" {
+				out["installed_commit"] = targetCommit
+			}
+		}
+	}
+	if out["state"] == "succeeded" || out["state"] == "failed" {
+		if updatedAt, ok := out["updated_at"]; ok {
+			out["finished_at"] = updatedAt
+		}
+	}
 	return out, nil
 }
 

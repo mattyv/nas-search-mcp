@@ -1,8 +1,8 @@
 # Connect your MCP clients
 
-The service uses Streamable HTTP at `/mcp` with a static bearer token. For the LAN pilot the URL is `http://192.0.2.10:8080/mcp`. Substitute a reachable Tailscale/HTTPS address when configured. The server, index, and models remain on the NAS; the desktop bridge forwards requests and can save downloaded originals on its own computer.
+The service uses Streamable HTTP at `/mcp` with a static bearer token. Use `http://NAS_LAN_ADDRESS:8080/mcp` for a trusted local network, or the private HTTPS/Tailscale address configured for your own service. The server, index, and models remain on the NAS; the desktop bridge forwards requests and can save downloaded originals on its own computer.
 
-Claude web and mobile use a separate OAuth-protected listener on port `8082`; they do not use the static token or the private listener on `8080`. That connector is not deployed or publicly reachable yet. See [Claude web and mobile connector](oauth-connector.md) for the setup, selected folder scope, and pending checks.
+Claude web and mobile can use a separate OAuth-protected listener on port `8082`; they do not use the static token or private listener. Configure its public endpoint and access scope for your own service as described in [Claude web and mobile connector](oauth-connector.md).
 
 ## Install the MCP connection
 
@@ -12,7 +12,7 @@ Run from the project checkout on your client computer (Python 3.10 or newer):
 
 ```sh
 python3 scripts/install-mcp.py --client codex \
-  --url http://192.0.2.10:8080/mcp \
+  --url http://NAS_LAN_ADDRESS:8080/mcp \
   --token-file build/nas-deployment/.env
 ```
 
@@ -24,23 +24,23 @@ Start a new CLI session or fully restart the desktop app. Config installation an
 
 ## Open originals in your browser
 
-Ask: **“Give me a link to Melody.pdf.”** Claude replies with a link; tap it and the original opens in your browser. PDFs, JPEG/PNG/GIF/WebP photos, and plain text display directly. Word, Excel, HTML, SVG, and other formats download instead, so they cannot run anything on the NAS's web address.
+Ask: **“Give me a link to example.pdf.”** Claude replies with a link; tap it and complete a fresh browser OAuth sign-in to open the original. Never enter the NAS password in Claude chat. PDFs, JPEG/PNG/GIF/WebP photos, and plain text display directly. Word, Excel, HTML, SVG, and other formats download instead, so they cannot run anything on the NAS's web address.
 
 This is the way to *see* a file. `fetch_file` only hands raw bytes to the model, which cannot turn them into an attachment for you.
 
-- Links should work in any Claude app, wherever your browser can reach the link address. Use in Claude web and mobile is not yet confirmed.
+- Links work wherever your browser can reach the configured address. Confirm access from each client and network you plan to use.
 - Each link opens one file and expires after 10 minutes (`NAS_DOWNLOAD_LINK_MINUTES`, 1–60). Restarting the service cancels all links. Ask again for a fresh one. If a long PDF stops loading pages partway through, the link has expired; ask for a new one.
-- Anyone holding an unexpired link can open that file without logging in. Don't forward links to sensitive documents.
+- Public links require fresh browser OAuth sign-in and unlock only that file for at most ten minutes in the signed-in browser. Private links on the LAN or tailnet still use the unguessable URL as their credential; don't forward them to sensitive documents.
 - A link stops working if the file changes, or its folder leaves `NAS_ALLOWED_FOLDERS`.
 - The limit is 32 MiB per file and 200 active links.
 
-Links use `NAS_DOWNLOAD_URL`, or the public `NAS_OAUTH_ISSUER` if that is empty. With neither set, the tool is hidden. To keep links private, set `NAS_DOWNLOAD_URL` to an address your devices can reach without Funnel: `http://192.0.2.10:8080` at home, or the NAS's private Tailscale Serve address away from home. Check the address opens in your phone's browser first; this setup is untested.
+Links use `NAS_DOWNLOAD_URL`, or the configured `NAS_OAUTH_ISSUER` if that is empty. With neither set, the tool is hidden. To keep links private, set `NAS_DOWNLOAD_URL` to an address your devices can reach without public exposure, such as `http://NAS_LAN_ADDRESS:8080` at home or a private Tailscale address away from home. Check that the address opens in your browser before relying on it.
 
 ## Read complete documents and retrieve originals
 
 `read_document` returns extracted text and page/section locations. Continue with its `next_offset` until `complete=true`; offsets count Unicode characters. This bypasses the search index's 200,000-character extraction cap, but source files still have a 32 MiB safety limit. English OCR is used for PDF pages without embedded text when `NAS_OCR=true`. Check OCR metadata; an unreadable scan can still contain missing text. Long scanned documents may repeat OCR of earlier pages during pagination, so reading can be slow.
 
-With the installed stdio bridge, ask your assistant: **“Download this NAS file to /tmp/nas-melody.pdf using download_file.”** Supply the exact NAS `path` and an absolute local `output` path. The destination folder must already exist. The tool saves the complete original and returns its local path and byte count; it refuses to overwrite existing files. Downloads retain the 32 MiB source limit and source-version checks.
+With the installed stdio bridge, ask your assistant: **“Download this NAS file to /tmp/nas-original.pdf using download_file.”** Supply the exact NAS `path` and an absolute local `output` path. The destination folder must already exist. The tool saves the complete original and returns its local path and byte count; it refuses to overwrite existing files. Downloads retain the 32 MiB source limit and source-version checks.
 
 The file is saved on the computer running the bridge. A bridge running on a remote host saves there. Native HTTP connections do not offer `download_file`; use the helper below or reconnect through the installed bridge. A saved file does not automatically become a chat attachment.
 
@@ -49,9 +49,9 @@ After updating this checkout, rerun the client installation command with `--repl
 `fetch_file` returns original bytes in base64 batches, without conversion. For continuation calls, supply the first response's `version` as `expected_version`. A client must reassemble the bytes; receiving them does not establish that its model can interpret PDF/image attachments. To download the entire original to your computer:
 
 ```sh
-python3 scripts/fetch-file.py --url http://192.0.2.10:8080/mcp \
+python3 scripts/fetch-file.py --url http://NAS_LAN_ADDRESS:8080/mcp \
   --token-file build/nas-deployment/.env \
-  --path 'Documents/Course/Week 10/Melody.pdf' --output /tmp/nas-melody.pdf
+  --path 'Documents/example.pdf' --output /tmp/nas-original.pdf
 ```
 
 The helper uses authenticated MCP and writes a private local file. Existing output files are preserved unless `--replace` is explicit. PDFs are not converted to Markdown, and original NAS files stay read-only.
@@ -66,7 +66,7 @@ Set `NAS_SEARCH_TOKEN` to the same token as the NAS `.env`, then run:
 
 ```sh
 claude mcp add --transport http --scope user nas-search \
-  http://192.0.2.10:8080/mcp \
+  http://NAS_LAN_ADDRESS:8080/mcp \
   --header "Authorization: Bearer ${NAS_SEARCH_TOKEN}"
 claude mcp list
 ```
@@ -79,7 +79,7 @@ Add this table to your existing `~/.codex/config.toml`; keep existing entries:
 
 ```toml
 [mcp_servers.nas_search]
-url = "http://192.0.2.10:8080/mcp"
+url = "http://NAS_LAN_ADDRESS:8080/mcp"
 bearer_token_env_var = "NAS_SEARCH_TOKEN"
 startup_timeout_sec = 30
 tool_timeout_sec = 600
@@ -91,11 +91,11 @@ Export `NAS_SEARCH_TOKEN` in the environment that launches Codex, then restart i
 
 For ChatGPT Desktop's local Codex connection, run the client installer with `--client chatgpt-desktop`. This is an explicit alias for installing into the shared Codex configuration through `codex mcp`; the Codex CLI must be available. It uses the protected token file and stdio bridge, so no shell token export is needed. Existing entries require `--replace` to change them.
 
-[Official OpenAI documentation](https://learn.chatgpt.com/docs/extend/mcp) confirms that ChatGPT Desktop, Codex CLI, and the IDE extension share MCP configuration for the same Codex host. Restart the connection from Settings → MCP servers, start a new local Codex chat, and use `/mcp` to check availability. Desktop conversation use remains unverified here. Cloud Work chats do not load this local configuration, even when opened in the desktop app; see [developer settings](https://learn.chatgpt.com/docs/developer-settings).
+[Official OpenAI documentation](https://learn.chatgpt.com/docs/extend/mcp) confirms that ChatGPT Desktop, Codex CLI, and the IDE extension share MCP configuration for the same Codex host. Restart the connection from Settings → MCP servers, start a new local Codex chat, and use `/mcp` to check availability. Cloud Work chats do not load this local configuration, even when opened in the desktop app; see [developer settings](https://learn.chatgpt.com/docs/developer-settings).
 
-ChatGPT's **cloud** custom-MCP connection cannot directly reach a LAN address or your private Tailscale address. OpenAI documents [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels), which could run beside the server on the NAS and make an outbound connection. It requires a Platform tunnel identity, runtime API key, and relevant organization/workspace permissions. A publicly reachable HTTPS service is another route. Neither is configured for ChatGPT in this pilot. The separate OAuth listener described in the [Claude connector guide](oauth-connector.md) is intended for Claude web/mobile and does not establish ChatGPT cloud compatibility.
+ChatGPT's **cloud** custom-MCP connection cannot directly reach a LAN or private Tailscale address. OpenAI documents [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels), which could run beside the server and make an outbound connection. It requires a Platform tunnel identity, runtime API key, and relevant organization/workspace permissions. A publicly reachable HTTPS service is another route. The separate OAuth listener described in the [Claude connector guide](oauth-connector.md) does not establish ChatGPT cloud compatibility.
 
-Do not expose port 8080 to the public internet to bypass that limitation. First prove LAN/client access; verify the tunnel/authentication path and account support as a separate integration.
+Do not expose the private bearer listener to the public internet to bypass that limitation. Verify the tunnel/authentication path and account support as a separate integration.
 
 ## First requests
 

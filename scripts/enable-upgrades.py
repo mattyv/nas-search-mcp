@@ -19,7 +19,7 @@ def detect_source_install_dir():
         containers = subprocess.run([docker, 'ps', '-a', '--filter', 'name=^/nas-search-nas-search-1$', '--format', '{{.Names}}'], capture_output=True, text=True, timeout=30, check=True)
         if containers.stdout.strip():
             raise ValueError('Cannot inspect active deployment')
-        return Path('/volume1/docker/nas-search')
+        raise ValueError('No active deployment found; specify --source-install-dir')
     value = result.stdout.rstrip('\n')
     if not re.fullmatch(r'/[a-zA-Z0-9_./@ -]*', value) or any(part in ('.', '..') for part in value.split('/')):
         raise ValueError('Active deployment directory is invalid')
@@ -71,7 +71,7 @@ def validate_preserved_target(target):
         raise ValueError('Preserved queue must be a root-owned directory with mode 1733')
 
 
-def enable(source, target, image, resume=False):
+def enable(source, target, image, resume=False, code_path=None, documents_path=None, documents_label=None):
     validate_image(image)
     if source is None and not resume:
         source = detect_source_install_dir()
@@ -88,8 +88,13 @@ def enable(source, target, image, resume=False):
             if not stat.S_ISREG(info.st_mode):
                 raise ValueError('Existing deployment snapshots must be regular files')
         env = runner.read_env(source / '.env')
-    fields = [('documents-path', 'NAS_DOCUMENTS_PATH'), ('photos-path', 'NAS_PHOTOS_PATH'), ('code-path', 'NAS_CODE_PATH'), ('data-path', 'NAS_INDEX_PATH'), ('uid', 'NAS_UID'), ('gid', 'NAS_GID'), ('bind-ip', 'NAS_BIND_IP')]
-    env.setdefault('NAS_CODE_PATH', '/volume1/shared-code')
+    fields = [('documents-path', 'NAS_DOCUMENTS_PATH'), ('documents-label', 'NAS_DOCUMENTS_LABEL'), ('photos-path', 'NAS_PHOTOS_PATH'), ('code-path', 'NAS_CODE_PATH'), ('data-path', 'NAS_INDEX_PATH'), ('uid', 'NAS_UID'), ('gid', 'NAS_GID'), ('bind-ip', 'NAS_BIND_IP')]
+    if code_path:
+        env.setdefault('NAS_CODE_PATH', code_path)
+    if documents_path:
+        env.setdefault('NAS_DOCUMENTS_PATH', documents_path)
+    if documents_label:
+        env.setdefault('NAS_DOCUMENTS_LABEL', documents_label)
     env.setdefault('NAS_BIND_IP', '127.0.0.1')
     for _, key in fields:
         if not env.get(key):
@@ -128,14 +133,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', required=True)
     parser.add_argument('--source-install-dir', type=Path, default=None)
-    parser.add_argument('--install-dir', type=Path, default=Path('/volume1/@nas-search-upgrader'))
+    parser.add_argument('--install-dir', type=Path, required=True)
+    parser.add_argument('--code-path', help='Supply a code source only when the existing .env has no NAS_CODE_PATH')
+    parser.add_argument('--documents-path', help='Supply a document source only when the existing .env has no NAS_DOCUMENTS_PATH')
+    parser.add_argument('--documents-label', help='Supply a document label only when the existing .env has no NAS_DOCUMENTS_LABEL')
     parser.add_argument('--resume', action='store_true', help='Resume a preserved root-owned setup without replacing its credentials or worker')
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error('Run with sudo on the NAS')
     os.umask(0o077)
     try:
-        enable(args.source_install_dir, args.install_dir, args.image, resume=args.resume)
+        enable(args.source_install_dir, args.install_dir, args.image, resume=args.resume, code_path=args.code_path, documents_path=args.documents_path, documents_label=args.documents_label)
     except Exception:
         parser.exit(1, 'Upgrade setup failed. Deployment may have changed; inspect protected target logs and service health.\n')
     print('Upgrade service enabled. Configure a root boot task for its worker to survive NAS restarts.')

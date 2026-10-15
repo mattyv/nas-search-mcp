@@ -30,7 +30,7 @@ def test_bootstrap_preserves_credentials_and_launches_after_install(tmp_path, mo
     m = module()
     source = tmp_path / 'old'
     source.mkdir()
-    original = "NAS_TOKEN=private\nNAS_DOCUMENTS_PATH=/m\nNAS_PHOTOS_PATH=/p\nNAS_CODE_PATH=/c\nNAS_INDEX_PATH=/index\nNAS_UID=1\nNAS_GID=2\nNAS_BIND_IP=127.0.0.1\nNAS_UPGRADE_PATH=/unsafe\n"
+    original = "NAS_TOKEN=private\nNAS_DOCUMENTS_PATH=/m\nNAS_DOCUMENTS_LABEL=Documents\nNAS_PHOTOS_PATH=/p\nNAS_CODE_PATH=/c\nNAS_INDEX_PATH=/index\nNAS_UID=1\nNAS_GID=2\nNAS_BIND_IP=127.0.0.1\nNAS_UPGRADE_PATH=/unsafe\n"
     (source / '.env').write_text(original)
     (source / 'compose.yaml').write_text('services: {}\n')
     (source / 'current-image').write_text('old-image\n')
@@ -85,7 +85,7 @@ def test_installer_failure_does_not_launch_worker(tmp_path, monkeypatch):
     m = module()
     source = tmp_path / 'old'
     source.mkdir()
-    (source / '.env').write_text('NAS_TOKEN=private\nNAS_DOCUMENTS_PATH=/m\nNAS_PHOTOS_PATH=/p\nNAS_INDEX_PATH=/index\nNAS_UID=1\nNAS_GID=2\n')
+    (source / '.env').write_text('NAS_TOKEN=private\nNAS_DOCUMENTS_PATH=/m\nNAS_DOCUMENTS_LABEL=Documents\nNAS_PHOTOS_PATH=/p\nNAS_CODE_PATH=/c\nNAS_INDEX_PATH=/index\nNAS_UID=1\nNAS_GID=2\nNAS_BIND_IP=127.0.0.1\n')
     (source / 'compose.yaml').write_text('services: {}')
     (source / 'current-image').write_text('old')
     monkeypatch.setattr(m, 'validate_trusted_ancestors', lambda path: None)
@@ -105,7 +105,7 @@ def test_failure_message_acknowledges_deployment_may_have_changed(monkeypatch, c
     m = module()
     monkeypatch.setattr(m.os, 'geteuid', lambda: 0)
     monkeypatch.setattr(m.os, 'umask', lambda *args: None)
-    monkeypatch.setattr(m.sys, 'argv', ['enable-upgrades.py', '--image', 'ghcr.io/mattyv/nas-search-mcp:'+'a'*40])
+    monkeypatch.setattr(m.sys, 'argv', ['enable-upgrades.py', '--image', 'ghcr.io/mattyv/nas-search-mcp:'+'a'*40, '--install-dir', '/tmp/upgrade'])
     def fail(*args):
         raise RuntimeError('private diagnostic')
     monkeypatch.setattr(m, 'enable', fail)
@@ -129,7 +129,7 @@ def preserved_target(tmp_path, monkeypatch):
     target = tmp_path / 'preserved'
     target.mkdir(mode=0o700)
     contents = {
-        '.env': f'NAS_TOKEN=preserved-secret\nNAS_DOCUMENTS_PATH=/m\nNAS_PHOTOS_PATH=/p\nNAS_CODE_PATH=/custom\nNAS_INDEX_PATH=/index\nNAS_UID=1\nNAS_GID=2\nNAS_BIND_IP=127.0.0.1\nNAS_UPGRADE_DIR=/upgrades\nNAS_UPGRADE_PATH={target}/upgrades\n',
+        '.env': f'NAS_TOKEN=preserved-secret\nNAS_DOCUMENTS_PATH=/m\nNAS_DOCUMENTS_LABEL=Documents\nNAS_PHOTOS_PATH=/p\nNAS_CODE_PATH=/custom\nNAS_INDEX_PATH=/index\nNAS_UID=1\nNAS_GID=2\nNAS_BIND_IP=127.0.0.1\nNAS_UPGRADE_DIR=/upgrades\nNAS_UPGRADE_PATH={target}/upgrades\n',
         'compose.yaml': 'preserved compose', 'current-image': 'preserved image',
         'upgrade-host.py': 'preserved worker', 'enable-upgrades.log': 'previous failure\n',
     }
@@ -218,14 +218,14 @@ def test_detect_active_source_uses_compose_label(monkeypatch):
     calls = []
     def run(args, **kwargs):
         calls.append(args)
-        return SimpleNamespace(returncode=0, stdout='/volume1/nas-search-connector\n')
+        return SimpleNamespace(returncode=0, stdout='/srv/connector\n')
     monkeypatch.setattr(m.subprocess, 'run', run)
-    assert m.detect_source_install_dir() == Path('/volume1/nas-search-connector')
+    assert m.detect_source_install_dir() == Path('/srv/connector')
     assert 'com.docker.compose.project.working_dir' in ' '.join(calls[0])
     assert 'nas-search-nas-search-1' in calls[0]
 
 
-@pytest.mark.parametrize('value', ['', '<no value>', 'relative', '/volume1/../secret', '/volume1/a\n/volume1/b'])
+@pytest.mark.parametrize('value', ['', '<no value>', 'relative', '/srv/../secret', '/srv/a\n/srv/b'])
 def test_detect_active_source_rejects_invalid_label(monkeypatch, value):
     from types import SimpleNamespace
     m = module()
@@ -234,12 +234,13 @@ def test_detect_active_source_rejects_invalid_label(monkeypatch, value):
         m.detect_source_install_dir()
 
 
-def test_detect_source_falls_back_only_when_container_absent(monkeypatch):
+def test_detect_source_requires_explicit_path_when_no_container(monkeypatch):
     from types import SimpleNamespace
     m = module()
     replies = iter([SimpleNamespace(returncode=1, stdout=''), SimpleNamespace(returncode=0, stdout='')])
     monkeypatch.setattr(m.subprocess, 'run', lambda *a, **kw: next(replies))
-    assert m.detect_source_install_dir() == Path('/volume1/docker/nas-search')
+    with pytest.raises(ValueError, match='specify --source-install-dir'):
+        m.detect_source_install_dir()
     replies = iter([SimpleNamespace(returncode=1, stdout=''), SimpleNamespace(returncode=0, stdout='nas-search-nas-search-1\n')])
     with pytest.raises(ValueError, match='Cannot inspect'):
         m.detect_source_install_dir()

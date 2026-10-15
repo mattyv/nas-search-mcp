@@ -58,7 +58,7 @@ func New(c Config) (*Server, error) {
 	if e != nil || u.Host == "" || u.Hostname() == "" || u.ForceQuery || strings.Contains(c.Issuer, "#") || !validPort(u) || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && !(u.Scheme == "http" && loopback(u.Hostname()))) {
 		return nil, errors.New("OAuth issuer must be an HTTPS origin (HTTP loopback permitted)")
 	}
-	if c.DatabasePath == "" || c.ClientID == "" {
+	if c.DatabasePath == "" || c.ClientID == "" || c.ClientID == browserClient {
 		return nil, errors.New("OAuth database and client ID required")
 	}
 	cost, e := bcrypt.Cost([]byte(c.PasswordHash))
@@ -136,9 +136,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
 		methods := []string{"none"}
 		if s.cfg.ClientSecretHash != "" {
-			methods = []string{"client_secret_basic", "client_secret_post"}
+			methods = []string{"client_secret_basic", "client_secret_post", "none"}
 		}
-		jsonReply(w, 200, map[string]any{"issuer": s.cfg.Issuer, "authorization_endpoint": s.cfg.Issuer + "/authorize", "token_endpoint": s.cfg.Issuer + "/token", "response_types_supported": []string{"code"}, "grant_types_supported": []string{"authorization_code", "refresh_token"}, "code_challenge_methods_supported": []string{"S256"}, "token_endpoint_auth_methods_supported": methods, "scopes_supported": []string{scope}})
+		jsonReply(w, 200, map[string]any{"issuer": s.cfg.Issuer, "authorization_endpoint": s.cfg.Issuer + "/authorize", "token_endpoint": s.cfg.Issuer + "/token", "response_types_supported": []string{"code"}, "grant_types_supported": []string{"authorization_code", "refresh_token"}, "code_challenge_methods_supported": []string{"S256"}, "token_endpoint_auth_methods_supported": methods, "scopes_supported": []string{scope, browserScope}})
 	})
 	metadata := func(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 200, map[string]any{"resource": s.resource(), "authorization_servers": []string{s.cfg.Issuer}, "scopes_supported": []string{scope}, "bearer_methods_supported": []string{"header"}})
@@ -148,6 +148,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /authorize", s.authorize)
 	mux.HandleFunc("POST /authorize", s.consent)
 	mux.HandleFunc("POST /token", s.token)
+	mux.HandleFunc("GET "+browserCallbackPath, s.browserCallback)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Pragma", "no-cache")
@@ -155,7 +156,7 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		r.Body = http.MaxBytesReader(w, r.Body, 8192)
-		if r.URL.Path == "/authorize" || r.URL.Path == "/token" {
+		if r.URL.Path == "/authorize" || r.URL.Path == "/token" || r.URL.Path == browserCallbackPath {
 			if _, err := s.db.Exec("DELETE FROM oauth_grants WHERE expires <= ?", time.Now().Unix()); err != nil {
 				oauthError(w, 500, "server_error")
 				return
@@ -176,14 +177,21 @@ func (s *Server) validAuthorize(v url.Values) bool {
 		}
 	}
 	redirectOK := false
-	for _, v2 := range s.cfg.RedirectURIs {
-		redirectOK = redirectOK || v.Get("redirect_uri") == v2
+	client := v.Get("client_id")
+	wantedScope := scope
+	if client == browserClient {
+		redirectOK = v.Get("redirect_uri") == s.cfg.Issuer+browserCallbackPath
+		wantedScope = browserScope
+	} else if client == s.cfg.ClientID {
+		for _, redirect := range s.cfg.RedirectURIs {
+			redirectOK = redirectOK || v.Get("redirect_uri") == redirect
+		}
 	}
 	challenge, e := base64.RawURLEncoding.DecodeString(v.Get("code_challenge"))
-	return v.Get("client_id") == s.cfg.ClientID && redirectOK && v.Get("response_type") == "code" && v.Get("code_challenge_method") == "S256" && e == nil && len(challenge) == 32 && v.Get("resource") == s.resource() && (v.Get("scope") == "" || v.Get("scope") == scope) && len(v.Get("state")) <= 1024
+	return redirectOK && v.Get("response_type") == "code" && v.Get("code_challenge_method") == "S256" && e == nil && len(challenge) == 32 && v.Get("resource") == s.clientResource(client) && (v.Get("scope") == "" || v.Get("scope") == wantedScope) && len(v.Get("state")) <= 1024
 }
 
-var page = template.Must(template.New("login").Parse(`<!doctype html><html><head><title>Authorize NAS search</title></head><body><h1>{{if .ServiceUpgrades}}Allow NAS access and service upgrades?{{else}}Allow read-only NAS access?{{end}}</h1><p>This connector can search and read the folders enabled by the NAS owner.</p>{{if .ServiceUpgrades}}<p>This connector can also upgrade the search service from main when requested. Original files remain read-only.</p>{{end}}<p>Send authorization to {{.Destination}}.</p>{{if .Loopback}}<p>Warning: another local program could receive this authorization.</p>{{end}}<form method="post" action="/authorize"><input type="hidden" name="session" value="{{.Session}}"><label>NAS connector password <input name="password" type="password" autocomplete="current-password" required maxlength="1024"></label><button name="consent" value="allow">{{if .ServiceUpgrades}}Allow access and upgrades{{else}}Allow read-only access{{end}}</button></form></body></html>`))
+var page = template.Must(template.New("login").Parse(`<!doctype html><html><head><title>Authorize NAS search</title></head><body><h1>{{if .Browser}}Sign in to continue{{else if .ServiceUpgrades}}Allow NAS access and service upgrades?{{else}}Allow read-only NAS access?{{end}}</h1>{{if .Browser}}<p>Sign in again to open the requested file or continue to upgrade approval. This sign-in is limited to this browser action.</p>{{else}}<p>This connector can search and read the folders enabled by the NAS owner.</p>{{end}}{{if .ServiceUpgrades}}<p>This connector can also upgrade the search service from main when requested. Original files remain read-only.</p>{{end}}<p>Send authorization to {{.Destination}}.</p>{{if .Loopback}}<p>Warning: another local program could receive this authorization.</p>{{end}}<form method="post" action="/authorize"><input type="hidden" name="session" value="{{.Session}}"><label>NAS connector password <input name="password" type="password" autocomplete="current-password" required maxlength="1024"></label><button name="consent" value="allow">{{if .Browser}}Continue{{else if .ServiceUpgrades}}Allow access and upgrades{{else}}Allow read-only access{{end}}</button></form></body></html>`))
 
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	if !s.limiter.Allow() {
@@ -200,7 +208,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 500, "server_error")
 		return
 	}
-	_, e = s.db.Exec("INSERT INTO oauth_grants(hash,kind,client,redirect,challenge,resource,family,expires) VALUES(?, 'login', ?, ?, ?, ?, ?, ?)", hash(session), s.cfg.ClientID, r.URL.Query().Encode(), "", s.resource(), "", time.Now().Add(5*time.Minute).Unix())
+	_, e = s.db.Exec("INSERT INTO oauth_grants(hash,kind,client,redirect,challenge,resource,family,expires) VALUES(?, 'login', ?, ?, ?, ?, ?, ?)", hash(session), parameters.Get("client_id"), parameters.Encode(), "", parameters.Get("resource"), "", time.Now().Add(5*time.Minute).Unix())
 	if e != nil {
 		grantError(w, e)
 		return
@@ -210,9 +218,9 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "strict-origin")
 	destination, _ := url.Parse(r.URL.Query().Get("redirect_uri"))
 	page.Execute(w, struct {
-		Session, Destination      string
-		Loopback, ServiceUpgrades bool
-	}{session, destination.Host, loopback(destination.Hostname()), s.cfg.ServiceUpgrades})
+		Session, Destination               string
+		Loopback, ServiceUpgrades, Browser bool
+	}{session, destination.Host, loopback(destination.Hostname()), s.cfg.ServiceUpgrades && parameters.Get("client_id") != browserClient, parameters.Get("client_id") == browserClient})
 }
 func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	if !s.limiter.Allow() {
@@ -270,7 +278,7 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	}
 	_, e = tx.Exec("DELETE FROM oauth_grants WHERE hash=?", hash(session))
 	if e == nil {
-		_, e = tx.Exec("INSERT INTO oauth_grants(hash,kind,client,redirect,challenge,resource,family,expires) VALUES(?, 'code', ?, ?, ?, ?, ?, ?)", hash(code), s.cfg.ClientID, v.Get("redirect_uri"), v.Get("code_challenge"), s.resource(), hash(code), time.Now().Add(time.Minute).Unix())
+		_, e = tx.Exec("INSERT INTO oauth_grants(hash,kind,client,redirect,challenge,resource,family,expires) VALUES(?, 'code', ?, ?, ?, ?, ?, ?)", hash(code), v.Get("client_id"), v.Get("redirect_uri"), v.Get("code_challenge"), v.Get("resource"), hash(code), time.Now().Add(time.Minute).Unix())
 	}
 	if e != nil {
 		grantError(w, e)
@@ -311,32 +319,50 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 		client = v.Get("client_id")
 		secret = v.Get("client_secret")
 	}
-	if client != s.cfg.ClientID || (s.cfg.ClientSecretHash != "" && bcrypt.CompareHashAndPassword([]byte(s.cfg.ClientSecretHash), []byte(secret)) != nil) || (s.cfg.ClientSecretHash == "" && secret != "") {
+	validClient := client == browserClient && secret == ""
+	if client == s.cfg.ClientID {
+		validClient = (s.cfg.ClientSecretHash == "" && secret == "") || (s.cfg.ClientSecretHash != "" && bcrypt.CompareHashAndPassword([]byte(s.cfg.ClientSecretHash), []byte(secret)) == nil)
+	}
+	if !validClient {
 		oauthError(w, 401, "invalid_client")
 		return
 	}
-	if v.Get("resource") != s.resource() {
-		oauthError(w, 400, "invalid_target")
+	grant, status, failure := s.exchange(client, v)
+	if status != 200 {
+		oauthError(w, status, failure)
 		return
 	}
+	jsonReply(w, 200, grant)
+}
+
+type tokenGrant struct {
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	Scope        string `json:"scope"`
+}
+
+// The token endpoint and the first-party callback redeem codes through the same checks.
+func (s *Server) exchange(client string, v url.Values) (tokenGrant, int, string) {
+	if v.Get("resource") != s.clientResource(client) {
+		return tokenGrant{}, 400, "invalid_target"
+	}
 	kind, raw := "code", v.Get("code")
-	if v.Get("grant_type") == "refresh_token" {
+	if v.Get("grant_type") == "refresh_token" && client != browserClient {
 		kind = "refresh"
 		raw = v.Get("refresh_token")
 	} else if v.Get("grant_type") != "authorization_code" {
-		oauthError(w, 400, "unsupported_grant_type")
-		return
+		return tokenGrant{}, 400, "unsupported_grant_type"
 	}
 	if len(raw) != 43 {
-		oauthError(w, 400, "invalid_grant")
-		return
+		return tokenGrant{}, 400, "invalid_grant"
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, e := s.db.Begin()
 	if e != nil {
-		oauthError(w, 500, "server_error")
-		return
+		return tokenGrant{}, 500, "server_error"
 	}
 	defer tx.Rollback()
 	var redirect, challenge, resource, family string
@@ -344,58 +370,63 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 	var used int
 	e = tx.QueryRow("SELECT redirect,challenge,resource,family,expires,used FROM oauth_grants WHERE hash=? AND kind=? AND client=?", hash(raw), kind, client).Scan(&redirect, &challenge, &resource, &family, &expires, &used)
 	if e != nil {
-		oauthError(w, 400, "invalid_grant")
-		return
+		return tokenGrant{}, 400, "invalid_grant"
 	}
 	if used != 0 {
 		_, e = tx.Exec("DELETE FROM oauth_grants WHERE family=?", family)
 		if e != nil || tx.Commit() != nil {
-			oauthError(w, 500, "server_error")
-			return
+			return tokenGrant{}, 500, "server_error"
 		}
-		oauthError(w, 400, "invalid_grant")
-		return
+		return tokenGrant{}, 400, "invalid_grant"
 	}
-	if expires <= time.Now().Unix() || resource != s.resource() {
-		oauthError(w, 400, "invalid_grant")
-		return
+	if expires <= time.Now().Unix() || resource != s.clientResource(client) {
+		return tokenGrant{}, 400, "invalid_grant"
 	}
 	if kind == "code" {
 		verifier := v.Get("code_verifier")
 		if !validVerifier(verifier) || v.Get("redirect_uri") != redirect {
-			oauthError(w, 400, "invalid_grant")
-			return
+			return tokenGrant{}, 400, "invalid_grant"
 		}
 		sum := sha256.Sum256([]byte(verifier))
 		if subtle.ConstantTimeCompare([]byte(base64.RawURLEncoding.EncodeToString(sum[:])), []byte(challenge)) != 1 {
-			oauthError(w, 400, "invalid_grant")
-			return
+			return tokenGrant{}, 400, "invalid_grant"
 		}
 		expires = time.Now().Add(7 * 24 * time.Hour).Unix()
 	}
 	access, e := randomToken()
 	if e != nil {
-		oauthError(w, 500, "server_error")
-		return
+		return tokenGrant{}, 500, "server_error"
 	}
-	refresh, e := randomToken()
-	if e != nil {
-		oauthError(w, 500, "server_error")
-		return
+	refresh := ""
+	if client != browserClient {
+		refresh, e = randomToken()
+		if e != nil {
+			return tokenGrant{}, 500, "server_error"
+		}
+	} else {
+		expires = time.Now().Add(10 * time.Minute).Unix()
 	}
 	_, e = tx.Exec("UPDATE oauth_grants SET used=1,expires=? WHERE hash=?", expires, hash(raw))
 	if e == nil {
-		_, e = tx.Exec("INSERT INTO oauth_grants(hash,kind,client,redirect,challenge,resource,family,expires) VALUES(?, 'access', ?, '', '', ?, ?, ?), (?, 'refresh', ?, '', '', ?, ?, ?)", hash(access), client, resource, family, time.Now().Add(10*time.Minute).Unix(), hash(refresh), client, resource, family, expires)
+		_, e = tx.Exec("INSERT INTO oauth_grants(hash,kind,client,redirect,challenge,resource,family,expires) VALUES(?, 'access', ?, '', '', ?, ?, ?)", hash(access), client, resource, family, time.Now().Add(10*time.Minute).Unix())
+	}
+	if e == nil && refresh != "" {
+		_, e = tx.Exec("INSERT INTO oauth_grants(hash,kind,client,redirect,challenge,resource,family,expires) VALUES(?, 'refresh', ?, '', '', ?, ?, ?)", hash(refresh), client, resource, family, expires)
 	}
 	if e != nil {
-		grantError(w, e)
-		return
+		if strings.Contains(e.Error(), "oauth_capacity") {
+			return tokenGrant{}, 503, "temporarily_unavailable"
+		}
+		return tokenGrant{}, 500, "server_error"
 	}
 	if tx.Commit() != nil {
-		oauthError(w, 500, "server_error")
-		return
+		return tokenGrant{}, 500, "server_error"
 	}
-	jsonReply(w, 200, map[string]any{"access_token": access, "token_type": "Bearer", "expires_in": 600, "refresh_token": refresh, "scope": scope})
+	issuedScope := scope
+	if client == browserClient {
+		issuedScope = browserScope
+	}
+	return tokenGrant{AccessToken: access, TokenType: "Bearer", ExpiresIn: 600, RefreshToken: refresh, Scope: issuedScope}, 200, ""
 }
 func (s *Server) Protect(next http.Handler) http.Handler {
 	misses := rate.NewLimiter(rate.Every(time.Second), 30)

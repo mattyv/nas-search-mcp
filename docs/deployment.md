@@ -1,189 +1,98 @@
 # Deploy with Synology Container Manager
 
-Start with a small document/code folder, not your whole 2.3 TB library. A small document pilot has passed on the DS220+; photo models and larger collections still need validation.
+Use a small authorized document/code folder first. Confirm the source folders' physical paths and permissions in DSM before mounting them. A pilot does not establish full-library performance or photo-model compatibility.
 
 ## Scripted installation and upgrades
 
-From a complete project checkout on the NAS, after the desired commit's CI image publication succeeds:
+From a complete project checkout on the NAS, after CI publishes the selected image:
 
 ```sh
 sudo sh scripts/install-nas.sh \
-  --image ghcr.io/mattyv/nas-search-mcp:COMMIT_SHA \
-  --documents-path '/volume1/shared-documents/Course/Week 10' \
-  --code-path /volume1/shared-code \
-  --photos-path /volume1/docker/nas-search/pilot-photos \
-  --data-path /volume1/docker/nas-search/data \
-  --bind-ip 192.0.2.10
+  --image ghcr.io/OWNER/nas-search-mcp:COMMIT_SHA
 ```
 
-Replace `COMMIT_SHA` with the complete published commit SHA. The installer rejects `latest`. Source folders must exist. `--install-dir` defaults to `/volume1/docker/nas-search`; UID/GID default to the user invoking `sudo`, with explicit `--uid`/`--gid` overrides. `--dry-run` inspects prerequisites without pulling an image or writing files; the actual install also probes kernel limits and mount permissions as the container user.
+Replace placeholders with your repository and published commit. The installer rejects `latest`; use a complete published commit SHA. Configure source mounts, private data storage, and listener address in the private `.env` after verifying local paths. The installer preserves existing credentials and index data, checks source and writable-path separation, starts the service, and verifies health and authenticated MCP access. If OAuth is configured, it also checks issuer metadata and the authentication challenge. A failed upgrade restores the previous image/configuration where possible, but does not roll back database changes. Existing settings take precedence over command-line source values; deliberately update the private `.env` when changing mounts.
 
-Existing `.env` contents and index data are preserved, and existing deployment settings take precedence over command-line source settings. Empty or missing `NAS_ALLOWED_FOLDERS` stays deny-all; upgrades never grant access automatically. The installer clears inherited `NAS_*` overrides when invoking Compose, so the checked private settings determine actual mounts and access. Use one canonical `NAS_KEY=value` assignment per setting; duplicate keys, `export` prefixes and whitespace around key names are rejected before any deployment changes. Single-quoted hashes and quoted paths with spaces remain supported. The installer secures `.env` permissions, writes pull-only Compose with a persisted image version, starts it, and checks HTTP health and authenticated MCP status. If OAuth is configured, its issuer metadata and authentication challenge must also pass before success. It does not claim initial indexing is finished. On a failed upgrade it restores the previous Compose configuration and restarts that image. This is an image/configuration rollback, not a database snapshot or schema rollback.
-
-To expand the collection, deliberately edit the existing `.env` mount paths before running the installer. Keep original sources disjoint from both writable index and upgrade-queue directories in either direction. The installer rejects sources inside writable directories as well as writable directories inside sources, including canonical symlink aliases. Writable directories also cannot contain protected installer state. The existing pilot can keep the same token and database during this update; extraction-version changes trigger a refresh of unchanged source files.
-
-English PDF OCR is enabled by default (`NAS_OCR=true`) and uses Poppler plus Tesseract in the serialized worker queue. Set it to false to disable OCR. Photo OCR and additional recognition languages are not implemented. A one-page scanned-PDF OCR fixture and complete PDF text retrieval have passed on the NAS. Larger scans still need testing.
+Keep original sources read-only and disjoint from writable index and upgrade-queue directories. Keep secrets out of source control. English PDF OCR is enabled by default; it uses Poppler and Tesseract. Other OCR languages and photo OCR are not implemented. Unsupported formats are listed in the [coverage table](../README.md#coverage-and-limits).
 
 ## Upgrade through MCP
 
-After one-time setup, an authenticated assistant can call `upgrade_from_main` without arguments, then `upgrade_status`. Ask: “Upgrade NAS search from main and report the result.” The request returns immediately. The host worker resolves current `main`, requires successful verification and image publication for that exact commit, and installs its pinned image. If current main has not passed CI, the request fails; it does not silently select an older commit. Search may disconnect briefly; reconnect before checking status.
+After one-time setup, a private bearer client can call `upgrade_from_main` to queue an upgrade. A public OAuth client receives a short-lived approval link; the owner must complete fresh browser sign-in and click Approve before the upgrade is queued. Call `upgrade_status` after reconnecting. The host worker resolves the current `main` commit, requires successful verification and image publication for that exact commit, and installs its pinned image. If verification has not passed, the request fails rather than selecting an older commit.
 
-This is an owner capability. Enabling it grants upgrade access to **all existing authenticated MCP clients**, including OAuth clients. There is no separate administrator role. The OAuth login page discloses service upgrades; original source files remain read-only. Keep upgrades disabled if any authenticated client should have search-only access. Tool descriptions require an explicit user upgrade request, but that instruction is not a technical authorization boundary against an authenticated client.
+On a public OAuth connection, an upgrade request returns an approval link. Open it in your browser and enter the NAS password on the NAS page; never put the password in chat. The upgrade is queued only after approval. Private bearer clients retain direct queuing. Search may disconnect briefly during an upgrade.
 
-Use a complete reviewed checkout containing this feature on the NAS, after that commit is merged to main and its CI image publication succeeds:
+Enabling this feature grants upgrade capability to all authenticated MCP clients; there is no separate administrator role. Keep it disabled if any authenticated client should have search-only access. The OAuth consent page should disclose service upgrades. Original source files remain read-only.
+
+Use a reviewed checkout containing the feature, merged to `main` and published by CI:
 
 ```sh
 sudo python3 scripts/enable-upgrades.py \
-  --image ghcr.io/mattyv/nas-search-mcp:COMMIT_SHA
+  --image ghcr.io/OWNER/nas-search-mcp:COMMIT_SHA
 ```
 
-Replace `COMMIT_SHA` with the full published commit SHA containing these tools. This command cannot enable them in an older image. Python 3.8 or newer is required. Defaults discover the active Compose deployment and create `/volume1/@nas-search-upgrader`. Fresh installations with no existing container fall back to `/volume1/docker/nas-search`. Explicit `--source-install-dir` overrides discovery. The target and every ancestor must be root-owned and writable only by root; also verify DSM ACLs do not grant another account write/delete permission. The script refuses an existing target. Source paths, token, index and model cache are preserved. It copies private deployment settings into the protected location, deploys the selected image using the existing installer, and starts a host worker. The active Compose project remains `nas-search`; future deployment settings belong in the protected target's `.env`.
+The setup creates a protected host directory and copies the active private settings there. Protect the directory and every ancestor from writes by other accounts, and check DSM ACLs. The host worker performs only the fixed upgrade operation; it does not receive a Docker socket or host shell from the search container. A root boot task keeps the worker available after NAS restarts. Service upgrades do not replace the host-worker code; update that code through a separately reviewed administrator process.
 
-If setup failed after creating the protected directory, preserve it and resume from an updated checkout:
+If setup stops after creating the protected directory, preserve it and resume from an updated checkout:
 
 ```sh
 sudo python3 scripts/enable-upgrades.py --resume \
-  --image ghcr.io/mattyv/nas-search-mcp:COMMIT_SHA
+  --image ghcr.io/OWNER/nas-search-mcp:COMMIT_SHA
 ```
 
-Resume requires complete root-owned settings, a protected worker and the expected queue. It keeps the saved token and configuration instead of copying the old deployment again. Inspect the private setup log if it fails; do not delete the protected folder to retry.
+Resume requires complete root-owned settings, a protected worker, and the expected queue. It keeps the saved credentials and configuration. Do not delete the protected folder to retry. Inspect its private setup log if recovery fails.
 
-In DSM **Control Panel → Task Scheduler**, create a **Triggered Task → User-defined script** for user `root`, event **Boot-up**, with this command:
+In DSM Task Scheduler, create a root **Triggered Task → User-defined script** for the **Boot-up** event. Use the protected worker path shown by setup:
 
 ```sh
-/usr/bin/python3 /volume1/@nas-search-upgrader/upgrade-host.py \
-  --install-dir /volume1/@nas-search-upgrader \
-  >> /volume1/@nas-search-upgrader/upgrade-host.log 2>&1
+/usr/bin/python3 PROTECTED_DIR/upgrade-host.py \
+  --install-dir PROTECTED_DIR \
+  >> PROTECTED_DIR/upgrade-host.log 2>&1
 ```
 
-The setup starts the worker now; the boot task keeps it available after NAS restarts. A host lock prevents duplicate workers. Malformed queue entries are rejected without following links or terminating the worker. A nonempty directory is retained as one opaque private quarantine entry; a later malformed directory may require administrator removal. The worker continues polling instead of recursively deleting untrusted contents. Reconnect your MCP client to refresh its tool list. If the worker is stopped, requests remain queued until it starts. `upgrade_status` reports `queued`, `running`, `succeeded`, or `failed`, with the attempted commit and a safe failure stage. A stuck installer can remain running indefinitely; inspect the host and Docker before intervening. The worker waits for actual completion rather than releasing the lock while Docker might still be deploying.
+The worker serializes upgrades with a host lock. Requests remain queued if it is stopped. `upgrade_status` reports `queued`, `running`, `succeeded`, or `failed`; after failure, inspect the host's private current-image record to identify the running image. A stuck installer can remain running; inspect the host and Docker before intervening.
 
-The search container receives only a fixed-operation request queue, without a Docker socket or host shell. The root worker downloads bounded source archives from this repository, rejects links and escaping paths, and invokes the existing health-checked installer. The installer attempts image/configuration rollback after failed startup; it does not snapshot or roll back database changes. A failed setup may already have changed the running deployment: inspect health and the private `enable-upgrades.log` before retrying. Do not rerun the old deployment helper after migration without deliberately choosing which protected configuration is active.
+## Photo search
 
-For manual inspection on the NAS:
+Photo search can find visible subjects in JPEG, PNG, WebP, GIF, BMP, TIFF, and HEIC/HEIF images. Camera RAW, face recognition, and image OCR are unsupported. Each search returns ranked candidates, including when none are a good match. Public result links require fresh browser OAuth sign-in.
 
-```sh
-sudo cat /volume1/@nas-search-upgrader/current-image
-sudo tail -n 30 /volume1/@nas-search-upgrader/upgrade-host.log
-```
-
-These are tested operating-system and MCP adapters outside the Dafny proof boundary. A live version-changing upgrade through MCP from `4ef8623` to `8aa3264` passed on the DS220+ on 2026-10-15, including health, authenticated status and public OAuth rejection checks. Reboot recovery still needs validation. The privileged host worker stays at the version installed during setup; service upgrades do not replace its code. A phone-triggered upgrade applies service and installer fixes, but a host-worker fix needs a separately reviewed administrator update and restart. Release notes must distinguish published fixes from fixes active on that worker.
-
-## Turn on photo search
-
-Photo search finds photos by what they show, such as “a dog on the beach” or “birthday cake”. It covers JPEG, PNG, WebP, GIF, BMP, TIFF and iPhone HEIC/HEIF photos. Camera RAW, faces and text inside photos are not supported. Ask Claude for a link to see a result.
-
-Turning it on keeps your existing document index: only photos are indexed again. In the protected deployment settings (`/volume1/@nas-search-upgrader/.env`), edit the existing `NAS_PHOTOS` and `NAS_PHOTOS_PATH` assignments to these values. Do not append a second copy of either setting; the installer rejects duplicates.
+Photo embeddings are disabled by default. To enable them, first verify the authorized photo folder's physical path, then update the existing values in the protected deployment `.env`:
 
 ```sh
 NAS_PHOTOS=true
-NAS_PHOTOS_PATH=/volume1/shared-photos
+NAS_PHOTOS_PATH=/path/to/authorized-photos
 ```
 
-Confirm the photo folder's physical path in DSM first; a smaller subfolder is a safer first step. Then ask Claude: “Upgrade NAS search from main and report the result.” The upgrade applies the changed settings. Check progress with `index_status`; photos are searchable as each one finishes. Estimated indexing time on the DS220+ is about 2–4 hours per 10,000 JPEGs, or 7–11 hours per 10,000 iPhone HEIC photos; the first run also downloads 642 MiB of models. These are estimates from a development machine under the same limits, where memory peaked at 774 MB of the 1 GiB limit ([measurements](benchmarks/photo-development.json)). Indexing keeps one CPU busy; searches still work but can be slower. Every photo search returns its closest matches, even when nothing really matches. To turn it off, set `NAS_PHOTOS=false` and upgrade again; documents are not re-indexed.
+Do not add duplicate setting lines. Apply the settings through the normal deployment upgrade. Check `index_status`; photos become searchable as indexing completes. Enabling photos keeps the document index. To turn photo embeddings off, set `NAS_PHOTOS=false` and redeploy.
 
-## Start a small visual image-search pilot
+Photo indexing uses local CLIP models, downloaded on first use, and can keep one CPU busy. Measure memory, indexing time, and search quality on the target NAS before expanding the collection. Development measurements are not NAS performance guarantees.
 
-Use this separate pilot only if you want to test photo search without touching the main service. Start with 20–50 photos in an existing subfolder under `/volume1/shared-photos`. Images must be at most 32 MiB and 25 megapixels. Camera RAW, face recognition, and image OCR are not supported. Searches describe visible content, such as “a beach at sunset”; results are candidates to inspect, not confidence scores.
-
-Run the pilot launcher from an updated checkout on the NAS:
+For an isolated pilot, start with a small read-only folder and keep the document service running:
 
 ```sh
 sudo sh scripts/photo-pilot.sh \
-  --image ghcr.io/mattyv/nas-search-mcp:e3ae38e943786aa2e3d6a2ac017b05e6099b55dc \
-  --photos-path '/volume1/shared-photos/YOUR_SMALL_FOLDER' \
+  --image ghcr.io/OWNER/nas-search-mcp:COMMIT_SHA \
+  --photos-path /path/to/small-photo-folder \
   --dry-run
 ```
 
-Replace the folder with its actual physical path. The image above passed CI and includes the existing visual-search support. A successful dry run checks prerequisites without downloading models or starting a container. Remove `--dry-run` to start the pilot. Keep the main document service running: this uses a separate container, port 8081, and data directory. The launcher refuses to replace an existing pilot or reuse an existing pilot data directory. It checks available NAS memory before starting; insufficient memory leaves the document service alone.
-
-The pilot mounts only the selected source folder, read-only, as `Photos/`. It uses the existing protected NAS token. Models download on first use, which can take several minutes and require internet access. The container is limited to one CPU and 1 GiB memory without extra swap. These limits do not prove compatibility: monitor the actual container and DSM while indexing.
-
-On the NAS, inspect the pilot:
-
-```sh
-sudo docker stats --no-stream nas-search-photo-pilot
-sudo docker logs --tail 40 nas-search-photo-pilot
-sudo docker inspect --format '{{.State.Status}} OOMKilled={{.State.OOMKilled}}' nas-search-photo-pilot
-```
-
-Record memory during indexing and during the first descriptive search, not just when idle. An OOM-killed container, unexpected stop, model error, or keyword-only fallback means the visual-search check has not passed. Stop the pilot if DSM slows down:
-
-```sh
-sudo docker stop nas-search-photo-pilot
-```
-
-Connect a separate local MCP entry so ordinary document search stays available. On your computer, from this checkout:
-
-```sh
-python3 scripts/install-mcp.py --client codex --name nas-photos \
-  --url http://192.0.2.10:8081/mcp \
-  --token-file ~/.config/nas-search/token
-```
-
-Use the other supported `--client` choices to add the same entry to Claude CLI, Claude Desktop, or ChatGPT Desktop's local Codex connection. Restart the client. Ask it to call `nas-photos` `index_status`, confirm `photos=true`, and report errors. When indexing finishes, ask it to search with `photos=true` for three descriptions of known images and one unrelated description. Confirm that results use visual search (`mode=hybrid`, without a model/vector fallback warning), inspect the returned images, and record elapsed time. Download a result through this connection's `download_file` tool to inspect the original locally. Unrelated queries can still return ranked images; relevance filtering remains uncalibrated.
-
-Do not expand the collection until indexing, descriptive search quality, memory use, and continued document-service availability have been checked on the NAS. The pilot uses its own index so the main service is unaffected.
+Remove `--dry-run` to start it. The pilot uses a separate container, port, and data directory. Monitor DSM and the container during model download, indexing, and search. Stop the pilot if it affects NAS responsiveness. Do not expand the collection until you have checked memory, descriptive search, and continued document-service availability.
 
 ## Manual Container Manager setup
 
-Use this route if you prefer DSM to the installer. Create `/volume1/docker/nas-search` using DSM File Station. Put the repository files there, preserving `worker/`, `generated/`, `internal/`, and `cmd/`. Either download the repository ZIP and extract its contents, or clone it using SSH if you already use SSH:
+If you prefer DSM to the installer, create a private deployment folder and copy the repository there, preserving its directory structure. Copy `.env.example` to `.env`. Set a random `NAS_TOKEN` of at least 24 characters; keep `.env` private. Configure the source folders, index directory, container user/group, and bind address using the setting names shown in `.env.example`. Grant the container user read access to source folders and write access to the index directory. Mount sources read-only and keep the index outside them.
+
+In Container Manager, create a Project using the deployment folder and `compose.yaml`, then build and start it. Building on the NAS can be slow and is not covered by the running container's resource limits. For a published image, use its full commit-SHA tag and remove `build: .` from the deployment copy.
+
+## Check the deployment
+
+Check container logs for scan, extraction, and model errors. First model use requires outbound internet access. On a computer that can reach the NAS, check the health endpoint:
 
 ```sh
-git clone https://github.com/mattyv/nas-search-mcp.git /volume1/docker/nas-search
+curl --fail http://NAS_LAN_ADDRESS:8080/healthz
 ```
 
-Copy `.env.example` to `.env`. Set:
+This confirms only that the HTTP process is alive. Connect an MCP client and call `index_status` to check indexing and errors; then search for a phrase from a known pilot document and compare the result with its source.
 
-- `NAS_TOKEN`: generate a random token locally with `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`. Minimum 24 characters. Keep `.env` private.
-- `NAS_DOCUMENTS_PATH`: an existing pilot subfolder under `/volume1/shared`, for example `/volume1/shared/SearchPilot`. Confirm the volume/share path first. The pilot folder still appears to clients as `Documents/`.
-- `NAS_CODE_PATH`: `/volume1/shared-code`, mounted separately as `Code/`. When searching Documents and Code together, set `NAS_DOCUMENTS_PATH=/volume1/shared-documents` so code is not mounted twice under the full Documents share.
-- `NAS_PHOTOS_PATH`: confirm `/volume1/shared-photos` exists. It is mounted read-only; with photo embeddings disabled, image metadata is still catalogued. To keep the first pilot small, choose a small subfolder here too.
-- `NAS_INDEX_PATH`: `/volume1/docker/nas-search/data`. Create this directory. It must be outside the source folders.
-- `NAS_UID` and `NAS_GID`: numeric IDs of the DSM account used to read your sources and write the index. Defaults are placeholders. With SSH, `id owner` shows the actual IDs. In DSM grant this account read access to sources and write access to the data folder; verify permissions work for that numeric container user.
-- `NAS_BIND_IP`: use `192.0.2.10` for home LAN testing. The default `127.0.0.1` only accepts connections on the NAS. Installer-managed LAN deployments also retain a separate loopback listener for existing private Tailscale Serve routes. Direct Compose uses a single `NAS_BIND_IP` listener; add an explicit loopback mapping if you choose a LAN address and need private Serve. Existing installer configurations use `NAS_BIND_IP`; legacy `NAS_LAN_IP` is used only when that setting is absent. Use `100.64.0.10` instead for the NAS's personal Tailscale address if that address can be published by Container Manager; test it before relying on remote access.
-- `NAS_PHOTOS=false`: leave this until the document pilot is healthy.
+A 401 from `/mcp` means the bearer token is missing or incorrect. A refused or timed-out connection suggests checking container status, the published bind address, DSM firewall, and network routing. Permission errors require checking source/data ACLs for the configured numeric user and group. Repeated restarts near the memory cap indicate the workload exceeds its limit; keep photo embeddings disabled and inspect logs.
 
-Container Manager → **Project → Create**: name `nas-search`, path `/volume1/docker/nas-search`, use the existing `compose.yaml`, and build/start it. The Dockerfile builds Go and installs pinned Python libraries. Building on the NAS can be slow and is not covered by the running container's resource limits.
-
-## Use a published image instead of building
-
-After a successful main-branch CI run, the image is published at `ghcr.io/mattyv/nas-search-mcp:latest` and with a commit-SHA tag. Verify that the GitHub package is public; otherwise registry authentication is required. No published image is assumed available before CI succeeds.
-
-For a pull-only Container Manager project, change the service's image line to:
-
-```yaml
-image: ghcr.io/mattyv/nas-search-mcp:COMMIT_SHA
-```
-
-Replace `COMMIT_SHA` with a published commit whose CI passed and remove `build: .` from that deployment copy. Keep the remaining settings. If the image is unavailable, build from the supplied Dockerfile.
-
-## Check the pilot
-
-In Container Manager, inspect logs and memory. First model use requires outbound internet access. Check scan, extraction, and model errors. Initial indexing can queue semantic queries and full-document reads; status checks and original downloads remain available. On a computer that can reach the NAS:
-
-```sh
-curl --fail http://192.0.2.10:8080/healthz
-```
-
-Expected: `ok`. This only confirms the HTTP process is alive, not that indexing succeeded. Connect an MCP client and call `index_status` to check scanning, indexed counts, and errors; then search for a phrase from a known pilot document. Check a result's path and content against the original file.
-
-A 401 from `/mcp` means the bearer token is missing or incorrect. A refused/timed-out connection means check container status, the published bind address, DSM firewall, and network routing. Permission errors require checking source/data ACLs for `NAS_UID:NAS_GID`. Repeated restarts near 1 GiB indicate the pilot/model exceeds the cap; keep photos disabled and inspect logs.
-
-## Expand carefully
-
-After a successful pilot, point `NAS_DOCUMENTS_PATH` at the intended larger folder and restart the project. Changes are found by periodic scanning and content fingerprints. Keep a record of the source mounts; changing their physical source while keeping the same client prefix changes what that prefix means.
-
-Turning `NAS_PHOTOS` on or off keeps the existing index. The next scan re-indexes photos only; documents and code are left alone. Indexes created before this change upgrade automatically. Changing `NAS_SEMANTIC` or the source root still requires a new `NAS_INDEX_PATH`.
-
-The container uses CPU affinity (`NAS_CPUSET=0`) to restrict execution to one CPU; the Synology kernel does not support Docker's CFS CPU quota setting. It permits 1 GiB aggregate memory with no extra swap allowance and uses a read-only root filesystem. Authorized source mounts are read-only; only the index/model data folder is writable. Extraction/model workers have a ten-minute timeout. This bounds resource use but does not promise indexing speed or guarantee the models fit the DS220+.
-
-For remote device access, use the existing personal Tailscale setup and an endpoint your device can reach. Preserve the work Tailscale account and enabled local-LAN access. Do not switch accounts to make the pilot work. LAN HTTP transmits the token without TLS; use a trusted LAN for the pilot, and Tailscale encryption or a correctly configured HTTPS reverse proxy for remote use. QuickConnect's DSM URL is not this MCP endpoint.
-
-## Restore mobile login after the earlier upgrade configuration loss
-
-The first upgrade migration copied an older deployment configuration instead of the active mobile connector settings. Private MCP continued working, but the OAuth listener was disabled. Current installer defaults discover the active Compose directory, preserve its settings, and verify configured OAuth before reporting success.
-
-The saved original settings remain in `/volume1/nas-search-connector/.env`. From a reviewed complete checkout staged in a root-owned directory with trusted ancestors, run `scripts/restore-mobile.py` as root. `--dry-run` validates readiness without changing settings. The repair requires matching token, index and source roots, preserves upgrade queue settings, saves a private backup, restores the original OAuth/download/access configuration, and checks metadata plus anonymous OAuth rejection. On failure it restores the prior configuration and attempts to restart it. It does not alter Funnel or Tailscale. The repair pauses the matching root upgrade worker while changing settings and resumes it afterward, including on failure. An already queued or running upgrade blocks the repair.
-
-A user-writable checkout cannot be used directly for this privileged repair. Copy the reviewed checkout into a new root-owned mode-700 directory beneath `/volume1` first. Never print either deployment's environment file. Mobile login must be checked again after repair; private MCP health alone does not establish mobile access.
+For remote access, use an endpoint your device can reach through your existing personal Tailscale setup or a correctly configured HTTPS proxy. Preserve existing work Tailscale access and local-LAN access. Do not switch accounts or exit nodes to make the service work. LAN HTTP sends the bearer token without TLS; use it only on a trusted LAN. QuickConnect's DSM URL is not the MCP endpoint.

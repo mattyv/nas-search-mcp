@@ -159,8 +159,8 @@ def check_oauth(env):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source-install-dir', type=Path, default=Path('/volume1/nas-search-connector'))
-    parser.add_argument('--install-dir', type=Path, default=Path('/volume1/@nas-search-upgrader'))
+    parser.add_argument('--source-install-dir', type=Path, required=True)
+    parser.add_argument('--install-dir', type=Path, required=True)
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
     stage = 'validation'

@@ -3,16 +3,16 @@
 set -eu
 umask 077
 fail() { printf '%s\n' "$*" >&2; exit 1; }
-image= install_dir= documents= photos= code=/volume1/shared-code data= bind=127.0.0.1 dry=false
+image= install_dir= documents= photos= code= data= bind=127.0.0.1 documents_label=Documents dry=false
 uid=${SUDO_UID:-$(id -u)}
 gid=${SUDO_GID:-$(id -g)}
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --dry-run) dry=true; shift ;;
-        --image|--install-dir|--documents-path|--photos-path|--code-path|--data-path|--bind-ip|--uid|--gid)
+        --image|--install-dir|--documents-path|--documents-label|--photos-path|--code-path|--data-path|--bind-ip|--uid|--gid)
             [ "$#" -ge 2 ] || fail "Missing value for $1"
             case "$1" in
-                --image) image=$2;; --install-dir) install_dir=$2;; --documents-path) documents=$2;;
+                --image) image=$2;; --install-dir) install_dir=$2;; --documents-path) documents=$2;; --documents-label) documents_label=$2;;
                 --photos-path) photos=$2;; --code-path) code=$2;; --data-path) data=$2;; --bind-ip) bind=$2;; --uid) uid=$2;; --gid) gid=$2;;
             esac
             shift 2 ;;
@@ -23,6 +23,7 @@ done
 case "$image" in *:latest|*[!a-zA-Z0-9._/:@-]*|*:|*@) fail 'Use an explicit versioned image tag or SHA digest; latest is rejected';; esac
 case "${image##*/}" in *:*|*@sha256:*) :;; *) fail 'Image needs an explicit versioned tag or digest';; esac
 case "$uid:$gid" in *[!0-9:]*|:*|*:) fail 'UID/GID must be numeric';; esac
+case "$documents_label" in ''|*[!a-zA-Z0-9_-]*) fail 'Document label must use letters, digits, underscores, or hyphens';; esac
 case "$bind" in ''|*[!0-9.]* ) fail 'Bind address must be an explicit IPv4 address';; esac
 # Discover the running deployment before selecting any configuration or credentials.
 [ "$(id -u)" = 0 ] || fail 'Run on the NAS with sudo/root Docker access'
@@ -36,15 +37,15 @@ if [ -z "$install_dir" ]; then
     else
         containers=$(docker ps -a --filter 'name=^/nas-search-nas-search-1$' --format '{{.Names}}') || fail 'Cannot discover active deployment'
         [ -z "$containers" ] || fail 'Cannot inspect active deployment; refusing default configuration'
-        install_dir=/volume1/docker/nas-search
+        fail 'No active deployment found; specify --install-dir'
     fi
 fi
 for path in "$install_dir" "$documents" "$photos" "$code" "$data"; do
+    [ -n "$path" ] || continue
     case "$path" in /*) :;; *) fail 'All source/install/data paths must be explicit absolute paths';; esac
     case "$path" in */../*|*/..|*/./*|*/.) fail 'Paths must not contain dot traversal segments';; esac
     case "$path" in *[!a-zA-Z0-9_./@\ -]*) fail 'Paths must use letters, digits, spaces, underscores, dots, slashes, at signs, or hyphens';; esac
 done
-[ -d "$documents" ] && [ -d "$photos" ] && [ -d "$code" ] || fail 'Selected source directories must already exist'
 # Resolve symlinked existing ancestors without creating anything during preflight.
 canonical() {
     if [ -e "$1" ] || [ -L "$1" ]; then
@@ -84,10 +85,13 @@ if [ -f "$install_dir/.env" ]; then
             }
         ' "$install_dir/.env" || fail 'Unsupported quoting in deployment setting'
     }
-    documents=$(field NAS_DOCUMENTS_PATH)
+    saved_documents=$(field NAS_DOCUMENTS_PATH)
+    documents=${saved_documents:-$documents}
     photos=$(field NAS_PHOTOS_PATH)
     saved_code=$(field NAS_CODE_PATH)
-    code=${saved_code:-/volume1/shared-code}
+    code=${saved_code:-$code}
+    saved_label=$(field NAS_DOCUMENTS_LABEL)
+    documents_label=${saved_label:-$documents_label}
     data=$(field NAS_INDEX_PATH)
     if grep -q '^NAS_BIND_IP=' "$install_dir/.env"; then bind=$(field NAS_BIND_IP)
     else bind=$(field NAS_LAN_IP); bind=${bind:-127.0.0.1}; fi
@@ -97,15 +101,17 @@ if [ -f "$install_dir/.env" ]; then
     [ -d "$documents" ] && [ -d "$photos" ] && [ -d "$code" ] && [ -d "$data" ] || fail 'Existing .env source and index directories must exist; refusing automatic recreation'
     case "$uid:$gid" in *[!0-9:]*|:*|*:) fail 'Existing .env UID/GID must be numeric';; esac
 fi
+[ -d "$documents" ] && [ -d "$photos" ] && [ -d "$code" ] || fail 'Selected source directories must already exist'
+case "$documents_label" in ''|*[!a-zA-Z0-9_-]*) fail 'Document label must use letters, digits, underscores, or hyphens';; esac
 # Validate effective loaded paths as well as command-line paths.
-queue=${queue:-/volume1/docker/nas-search/upgrades}
+queue=${queue:-$install_dir/upgrades}
 for path in "$documents" "$photos" "$code" "$data" "$queue"; do
     case "$path" in /*) :;; *) fail 'Effective mount paths must be absolute';; esac
     case "$path" in */../*|*/..|*/./*|*/.|*[!a-zA-Z0-9_./@\ -]*) fail 'Invalid effective mount path';; esac
 done
 printf '%s\n' "$bind" | awk -F. 'NF != 4 {exit 1} {for(i=1;i<=4;i++) if ($i !~ /^[0-9]+$/ || length($i)>3 || $i+0>255 || (length($i)>1 && substr($i,1,1)=="0")) exit 1}' || fail 'Bind address must be a valid explicit IPv4 address'
 queue=$(canonical "$queue") || fail 'Cannot resolve upgrade queue'
-documents=$(canonical "$documents") || fail 'Cannot resolve Documents source'
+documents=$(canonical "$documents") || fail 'Cannot resolve selected source'
 photos=$(canonical "$photos") || fail 'Cannot resolve Photos source'
 code=$(canonical "$code") || fail 'Cannot resolve Code source'
 data=$(canonical "$data") || fail 'Cannot resolve index path'
@@ -146,8 +152,8 @@ if [ ! -f "$install_dir/.env" ]; then
     [ "${#token}" -eq 64 ] || fail 'Unable to generate a private random token'
     {
         printf 'NAS_TOKEN=%s\n' "$token"
-        printf "NAS_DOCUMENTS_PATH='%s'\nNAS_PHOTOS_PATH='%s'\nNAS_CODE_PATH='%s'\nNAS_INDEX_PATH='%s'\n" "$documents" "$photos" "$code" "$data"
-        printf 'NAS_UID=%s\nNAS_GID=%s\nNAS_BIND_IP=%s\nNAS_CPUSET=0\nNAS_PHOTOS=false\nNAS_ALLOWED_FOLDERS=Documents,Code,Photos\n' "$uid" "$gid" "$bind"
+        printf "NAS_DOCUMENTS_PATH='%s'\nNAS_DOCUMENTS_LABEL=%s\nNAS_PHOTOS_PATH='%s'\nNAS_CODE_PATH='%s'\nNAS_INDEX_PATH='%s'\n" "$documents" "$documents_label" "$photos" "$code" "$data"
+        printf 'NAS_UID=%s\nNAS_GID=%s\nNAS_BIND_IP=%s\nNAS_CPUSET=0\nNAS_PHOTOS=false\nNAS_ALLOWED_FOLDERS=%s,Code,Photos\n' "$uid" "$gid" "$bind" "$documents_label"
     } > "$install_dir/.env"
     unset token
     chmod 600 "$install_dir/.env"
