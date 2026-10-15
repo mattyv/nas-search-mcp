@@ -27,7 +27,7 @@ case "$bind" in ''|*[!0-9.]* ) fail 'Bind address must be an explicit IPv4 addre
 for path in "$install_dir" "$matthew" "$photos" "$code" "$data"; do
     case "$path" in /*) :;; *) fail 'All source/install/data paths must be explicit absolute paths';; esac
     case "$path" in */../*|*/..|*/./*|*/.) fail 'Paths must not contain dot traversal segments';; esac
-    case "$path" in *[!a-zA-Z0-9_./\ -]*) fail 'Paths must use letters, digits, spaces, underscores, dots, slashes, or hyphens';; esac
+    case "$path" in *[!a-zA-Z0-9_./@\ -]*) fail 'Paths must use letters, digits, spaces, underscores, dots, slashes, at signs, or hyphens';; esac
 done
 [ -d "$matthew" ] && [ -d "$photos" ] && [ -d "$code" ] || fail 'Selected source directories must already exist'
 # Resolve symlinked existing ancestors without creating anything during preflight.

@@ -115,3 +115,98 @@ def test_failure_message_acknowledges_deployment_may_have_changed(monkeypatch, c
     message = capsys.readouterr().err
     assert 'Deployment may have changed' in message
     assert 'private diagnostic' not in message
+
+
+def preserved_target(tmp_path, monkeypatch):
+    m = module()
+    monkeypatch.setattr(m, 'validate_trusted_ancestors', lambda path: None)
+    real_lstat = Path.lstat
+    from types import SimpleNamespace
+    def root_lstat(path):
+        info = real_lstat(path)
+        return SimpleNamespace(st_mode=info.st_mode, st_uid=0)
+    monkeypatch.setattr(Path, 'lstat', root_lstat)
+    target = tmp_path / 'preserved'
+    target.mkdir(mode=0o700)
+    contents = {
+        '.env': f'NAS_TOKEN=preserved-secret\nNAS_MATTHEW_PATH=/m\nNAS_PHOTOS_PATH=/p\nNAS_CODE_PATH=/custom\nNAS_INDEX_PATH=/index\nNAS_UID=1\nNAS_GID=2\nNAS_BIND_IP=127.0.0.1\nNAS_UPGRADE_DIR=/upgrades\nNAS_UPGRADE_PATH={target}/upgrades\n',
+        'compose.yaml': 'preserved compose', 'current-image': 'preserved image',
+        'upgrade-host.py': 'preserved worker', 'enable-upgrades.log': 'previous failure\n',
+    }
+    for name, value in contents.items():
+        (target / name).write_text(value)
+        (target / name).chmod(0o600)
+    (target / 'upgrades').mkdir()
+    (target / 'upgrades').chmod(0o1733)
+    return m, target, contents
+
+
+def test_resume_preserves_existing_state_without_source(tmp_path, monkeypatch):
+    m, target, contents = preserved_target(tmp_path, monkeypatch)
+    calls = []
+    def install(args, **kwargs):
+        calls.append('install')
+        kwargs['stdout'].write(b'resumed install\n')
+        assert args[args.index('--code-path') + 1] == '/custom'
+    monkeypatch.setattr(m.subprocess, 'run', install)
+    monkeypatch.setattr(m.subprocess, 'Popen', lambda *a, **kw: calls.append('launch'))
+    m.enable(tmp_path / 'missing-source', target, 'ghcr.io/mattyv/nas-search-mcp:'+'a'*40, resume=True)
+    assert calls == ['install', 'launch']
+    for name, value in contents.items():
+        assert (target / name).read_text() == value + ('resumed install\n' if name == 'enable-upgrades.log' else '')
+
+
+@pytest.mark.parametrize('unsafe', ['missing', 'symlink', 'writable', 'queue', 'target', 'env'])
+def test_resume_rejects_unsafe_or_incomplete_state(tmp_path, monkeypatch, unsafe):
+    m, target, _ = preserved_target(tmp_path, monkeypatch)
+    if unsafe == 'missing':
+        (target / 'current-image').unlink()
+    elif unsafe == 'symlink':
+        (target / 'upgrade-host.py').unlink()
+        (target / 'upgrade-host.py').symlink_to(target / 'compose.yaml')
+    elif unsafe == 'writable':
+        (target / '.env').chmod(0o666)
+    elif unsafe == 'queue':
+        (target / 'upgrades').chmod(0o777)
+    elif unsafe == 'target':
+        target.chmod(0o777)
+    else:
+        (target / '.env').write_text((target / '.env').read_text().replace('NAS_UPGRADE_DIR=/upgrades', 'NAS_UPGRADE_DIR=/other'))
+    monkeypatch.setattr(m.subprocess, 'run', lambda *a, **kw: pytest.fail('Unsafe state reached installer'))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        m.enable(tmp_path / 'missing', target, 'ghcr.io/mattyv/nas-search-mcp:'+'a'*40, resume=True)
+
+
+def test_resume_failed_install_retains_log_and_does_not_launch(tmp_path, monkeypatch):
+    m, target, _ = preserved_target(tmp_path, monkeypatch)
+    def fail(*a, **kw):
+        kw['stdout'].write(b'new failure\n')
+        raise m.subprocess.CalledProcessError(1, 'installer')
+    monkeypatch.setattr(m.subprocess, 'run', fail)
+    monkeypatch.setattr(m.subprocess, 'Popen', lambda *a, **kw: pytest.fail('Started after failure'))
+    with pytest.raises(m.subprocess.CalledProcessError):
+        m.enable(tmp_path / 'missing', target, 'ghcr.io/mattyv/nas-search-mcp:'+'a'*40, resume=True)
+    assert (target / 'enable-upgrades.log').read_text() == 'previous failure\nnew failure\n'
+
+
+def test_resume_rejects_nonroot_file_and_checks_ancestors(tmp_path, monkeypatch):
+    m, target, _ = preserved_target(tmp_path, monkeypatch)
+    ancestors = []
+    monkeypatch.setattr(m, 'validate_trusted_ancestors', lambda path: ancestors.append(path))
+    root_lstat = Path.lstat
+    from types import SimpleNamespace
+    def untrusted_file(path):
+        info = root_lstat(path)
+        return SimpleNamespace(st_mode=info.st_mode, st_uid=1000 if path == target / '.env' else 0)
+    monkeypatch.setattr(Path, 'lstat', untrusted_file)
+    with pytest.raises(ValueError):
+        m.enable(tmp_path / 'missing', target, 'ghcr.io/mattyv/nas-search-mcp:'+'a'*40, resume=True)
+    assert ancestors == [target]
+
+
+def test_bootstrap_does_not_implicitly_resume_existing_target(tmp_path, monkeypatch):
+    m, target, contents = preserved_target(tmp_path, monkeypatch)
+    monkeypatch.setattr(m.subprocess, 'run', lambda *a, **kw: pytest.fail('Implicitly resumed'))
+    with pytest.raises(FileExistsError):
+        m.enable(target, target, 'ghcr.io/mattyv/nas-search-mcp:'+'a'*40)
+    assert (target / '.env').read_text() == contents['.env']
