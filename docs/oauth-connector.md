@@ -27,7 +27,7 @@ Review these settings locally:
 
 OAuth state is stored in `/data/oauth.sqlite3`, on the existing writable index volume. Access and refresh token values are stored hashed. Access tokens expire after 10 minutes; refresh tokens expire after seven days. Keep that volume private and writable only by the project user and administrators. Original source mounts remain read-only.
 
-Compose binds `8080` to both host loopback and the configured NAS LAN IP (`NAS_LAN_IP`, default `192.168.1.4`) to preserve existing private access. It binds the OAuth port `8082` only to host loopback. Port `8080` retains private bearer-token MCP access. Port `8082` serves OAuth and authenticated MCP at `/mcp`. Container listeners use all container interfaces so loopback publishing works; native listeners default to loopback. Funnel must target `8082`, never the private listener.
+The NAS installer publishes private port `8080` at the checked `NAS_BIND_IP` (default `127.0.0.1`). When a LAN address is selected it also keeps a separate loopback listener for private Serve. Existing legacy `NAS_LAN_IP` is honored only if `NAS_BIND_IP` is absent. Direct Compose publishes a single `NAS_BIND_IP` listener. It binds the OAuth port `8082` only to host loopback. Port `8080` retains private bearer-token MCP access. Port `8082` serves OAuth and authenticated MCP at `/mcp`. Container listeners use all container interfaces so loopback publishing works; native listeners default to loopback. Funnel must target `8082`, never the private listener.
 
 ## Deploy and test before public exposure
 
@@ -86,3 +86,5 @@ tailscale funnel reset
 ```
 
 Reset can remove existing Serve/Funnel configuration; inspect and restore the private mapping if affected. Never reset the separate VPN container's configuration or switch Tailscale accounts as part of this task.
+
+Login failures count against the expiring browser login session, not the owner's whole account. After five incorrect attempts that session is rejected; start a fresh sign-in page to retry. Anonymous OAuth traffic and authenticated MCP have separate request budgets, and forged bearer values never receive the authenticated budget. Token verification has bounded concurrent database lookups and honors cancellation. These controls reduce application-level denial of service; they cannot guarantee availability during sustained network or resource attacks.

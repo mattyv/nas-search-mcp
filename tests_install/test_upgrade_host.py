@@ -145,3 +145,87 @@ def test_download_budget(monkeypatch):
     monkeypatch.setattr(m.urllib.request, 'urlopen', lambda *a, **kw: Response(b'0123456789'))
     with pytest.raises(ValueError, match='too large'):
         m.download('https://example.com', io.BytesIO(), 3)
+
+
+@pytest.mark.parametrize('kind', ['symlink', 'directory', 'fifo', 'invalid_json', 'oversized'])
+def test_malformed_requests_do_not_stop_worker_or_touch_targets(tmp_path, monkeypatch, kind):
+    m = module()
+    install = tmp_path / 'install'
+    install.mkdir()
+    (install / '.env').write_text('NAS_INDEX_PATH=/unused\n')
+    queue = install / 'upgrades'
+    queue.mkdir()
+    request = queue / 'request.json'
+    target = tmp_path / 'private'
+    target.write_text('secret original')
+    if kind == 'symlink':
+        request.symlink_to(target)
+    elif kind == 'directory':
+        request.mkdir()
+        (request / 'link').symlink_to(target)
+    elif kind == 'fifo':
+        m.os.mkfifo(request)
+    else:
+        request.write_text('{' if kind == 'invalid_json' else 'x' * 4097)
+    calls = []
+    monkeypatch.setattr(m, 'resolve_verified_main', lambda: calls.append('resolve') or 'a' * 40)
+    monkeypatch.setattr(m, 'install_commit', lambda *args: calls.append('install'))
+    assert m.process_once(install)
+    assert calls == []
+    assert target.read_text() == 'secret original'
+    status = json.loads((queue / 'status.json').read_text())
+    assert status['state'] == 'failed'
+    assert status['failure_stage'] == 'request_validation'
+    assert 'secret' not in json.dumps(status)
+    assert not request.exists() and not request.is_symlink()
+    request.write_text('{"action":"upgrade_main"}')
+    assert m.process_once(install)
+    assert calls == ['resolve', 'install']
+
+
+def test_request_cleanup_preserves_replacement(tmp_path, monkeypatch):
+    m = module()
+    (tmp_path / '.env').write_text('NAS_INDEX_PATH=/unused\n')
+    queue = tmp_path / 'upgrades'
+    queue.mkdir()
+    request = queue / 'request.json'
+    request.write_text('{"action":"upgrade_main"}')
+    monkeypatch.setattr(m, 'resolve_verified_main', lambda: 'a' * 40)
+    def replace(*args):
+        request.rename(queue / 'old')
+        request.write_text('{"action":"upgrade_main"}')
+    monkeypatch.setattr(m, 'install_commit', replace)
+    assert m.process_once(tmp_path)
+    assert request.exists()
+
+
+def test_rejected_directory_quarantine_is_bounded_and_never_traversed(tmp_path):
+    m = module()
+    (tmp_path / '.env').write_text('NAS_INDEX_PATH=/unused\n')
+    queue = tmp_path / 'upgrades'
+    queue.mkdir()
+    request = queue / 'request.json'
+    request.mkdir()
+    (request / 'retained').write_text('first')
+    assert m.process_once(tmp_path)
+    quarantine = tmp_path / '.rejected-upgrade-request'
+    assert (quarantine / 'retained').read_text() == 'first'
+    request.mkdir()
+    (request / 'retained').write_text('second')
+    assert m.process_once(tmp_path)
+    assert (request / 'retained').read_text() == 'second'
+    assert (quarantine / 'retained').read_text() == 'first'
+
+
+def test_filesystem_failure_does_not_escape_poll_iteration(tmp_path, monkeypatch):
+    m = module()
+    (tmp_path / '.env').write_text('NAS_INDEX_PATH=/unused\n')
+    queue = tmp_path / 'upgrades'
+    queue.mkdir()
+    request = queue / 'request.json'
+    request.write_text('invalid')
+    def unavailable(*args):
+        raise OSError('private path detail')
+    monkeypatch.setattr(m, 'write_status', unavailable)
+    assert not m.process_once(tmp_path)
+    assert not request.exists()
