@@ -486,3 +486,54 @@ func TestBearerLookupCapacityAndCancellation(t *testing.T) {
 		t.Fatalf("revoked token remained authorized: %d", w.Code)
 	}
 }
+
+func TestBearerLookupWaitsBrieflyForCapacity(t *testing.T) {
+	s := testServer(t)
+	token := strings.Repeat("w", 43)
+	_, err := s.db.Exec("INSERT INTO oauth_grants(hash,kind,client,redirect,challenge,resource,family,expires) VALUES(?, 'access', ?, '', '', ?, '', ?)", hash(token), s.cfg.ClientID, s.resource(), time.Now().Add(time.Minute).Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := s.Protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	conn, err := s.db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan int, 3)
+	request := func() {
+		r := httptest.NewRequest("POST", "/mcp", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		done <- w.Code
+	}
+	for i := 0; i < 2; i++ {
+		go request()
+	}
+	deadline := time.Now().Add(time.Second)
+	for s.db.Stats().WaitCount < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if s.db.Stats().WaitCount < 2 {
+		conn.Close()
+		t.Fatal("lookups did not reach database")
+	}
+	go request()
+	select {
+	case code := <-done:
+		conn.Close()
+		t.Fatalf("third lookup did not wait: %d", code)
+	case <-time.After(50 * time.Millisecond):
+	}
+	conn.Close()
+	for i := 0; i < 3; i++ {
+		select {
+		case code := <-done:
+			if code != 204 {
+				t.Fatalf("lookup returned %d, want 204", code)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("queued lookup did not finish")
+		}
+	}
+}

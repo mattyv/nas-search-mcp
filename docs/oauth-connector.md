@@ -69,10 +69,14 @@ With `NAS_OAUTH_ISSUER` set, Claude can create tap-to-open links at `https://nas
 
 ## Stop access
 
-As root, run one command from the candidate project directory:
+For the protected upgrade deployment, run this single command on the NAS:
 
 ```sh
-cd /volume1/nas-search-connector && ./scripts/kill-connector.sh
+sudo /bin/sh -ec '
+cd /volume1/@nas-search-upgrader
+/usr/local/bin/docker compose --env-file .env --project-name nas-search -f compose.yaml stop nas-search
+/usr/local/bin/docker compose --env-file .env --project-name nas-search -f compose.yaml run --rm --no-deps nas-search revoke-oauth
+'
 ```
 
 It stops only `nas-search` first, then revokes OAuth tokens through a one-shot container using the same database without publishing ports. Stopping first prevents an in-flight login or refresh from issuing tokens after revocation. If stopping fails, the connector may still be reachable and revocation is not attempted. If revocation fails, the service remains stopped: do not restart until revocation succeeds. It does not change Tailscale or other containers.

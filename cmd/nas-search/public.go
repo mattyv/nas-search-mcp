@@ -40,7 +40,7 @@ func (w *cappedResponse) Write(p []byte) (int, error) {
 
 // Admit only bounded work. OAuth and authenticated MCP use separate instances.
 func admitPublic(next http.Handler) http.Handler {
-	limiter := rate.NewLimiter(rate.Every(time.Second), 30)
+	limiter := rate.NewLimiter(5, 60)
 	gate := make(chan struct{}, 2)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !limiter.Allow() {
@@ -48,14 +48,21 @@ func admitPublic(next http.Handler) http.Handler {
 			http.Error(w, "request limit reached", 429)
 			return
 		}
+		wait := time.NewTimer(15 * time.Second)
+		defer wait.Stop()
 		select {
 		case gate <- struct{}{}:
 			defer func() { <-gate }()
+			if r.Context().Err() != nil {
+				return
+			}
 			r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 			next.ServeHTTP(w, r)
-		default:
+		case <-wait.C:
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "server busy", 429)
+		case <-r.Context().Done():
+			return
 		}
 	})
 }

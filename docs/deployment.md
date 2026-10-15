@@ -67,13 +67,13 @@ sudo cat /volume1/@nas-search-upgrader/current-image
 sudo tail -n 30 /volume1/@nas-search-upgrader/upgrade-host.log
 ```
 
-These are tested operating-system and MCP adapters outside the Dafny proof boundary. A live same-version upgrade through MCP passed on the DS220+ on 2026-10-15, including health and authenticated status checks. Reboot recovery and a future version-changing MCP upgrade still need validation. The privileged host worker stays at the version installed during setup; service upgrades do not replace its code. A phone-triggered upgrade applies service and installer fixes, but a host-worker fix needs a separately reviewed administrator update and restart. Release notes must distinguish published fixes from fixes active on that worker.
+These are tested operating-system and MCP adapters outside the Dafny proof boundary. A live version-changing upgrade through MCP from `4ef8623` to `8aa3264` passed on the DS220+ on 2026-10-15, including health, authenticated status and public OAuth rejection checks. Reboot recovery still needs validation. The privileged host worker stays at the version installed during setup; service upgrades do not replace its code. A phone-triggered upgrade applies service and installer fixes, but a host-worker fix needs a separately reviewed administrator update and restart. Release notes must distinguish published fixes from fixes active on that worker.
 
 ## Turn on photo search
 
 Photo search finds photos by what they show, such as “a dog on the beach” or “birthday cake”. It covers JPEG, PNG, WebP, GIF, BMP, TIFF and iPhone HEIC/HEIF photos. Camera RAW, faces and text inside photos are not supported. Ask Claude for a link to see a result.
 
-Turning it on keeps your existing document index: only photos are indexed again. In the protected deployment settings (`/volume1/@nas-search-upgrader/.env`), set:
+Turning it on keeps your existing document index: only photos are indexed again. In the protected deployment settings (`/volume1/@nas-search-upgrader/.env`), edit the existing `NAS_PHOTOS` and `NAS_PHOTOS_PATH` assignments to these values. Do not append a second copy of either setting; the installer rejects duplicates.
 
 ```sh
 NAS_PHOTOS=true

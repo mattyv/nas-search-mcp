@@ -35,11 +35,12 @@ type Config struct {
 	RedirectURIs                                                   []string
 }
 type Server struct {
-	cfg            Config
-	db             *sql.DB
-	mu             sync.Mutex
-	limiter        *rate.Limiter
-	validationGate chan struct{}
+	cfg               Config
+	db                *sql.DB
+	mu                sync.Mutex
+	limiter           *rate.Limiter
+	validationGate    chan struct{}
+	validationWaiters chan struct{}
 }
 
 func New(c Config) (*Server, error) {
@@ -83,7 +84,7 @@ func New(c Config) (*Server, error) {
 		db.Close()
 		return nil, e
 	}
-	return &Server{cfg: c, db: db, limiter: rate.NewLimiter(rate.Every(time.Second), 10), validationGate: make(chan struct{}, 2)}, nil
+	return &Server{cfg: c, db: db, limiter: rate.NewLimiter(rate.Every(time.Second), 10), validationGate: make(chan struct{}, 2), validationWaiters: make(chan struct{}, 4)}, nil
 }
 func loopback(h string) bool {
 	return h == "localhost" || (net.ParseIP(h) != nil && net.ParseIP(h).IsLoopback())
@@ -392,13 +393,31 @@ func (s *Server) Protect(next http.Handler) http.Handler {
 		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && len(parts[1]) == 43 {
 			// Opaque credentials require a database lookup. Bound active lookups
 			// instead of allowing unauthenticated requests to queue without limit.
+			acquired := false
 			select {
 			case s.validationGate <- struct{}{}:
+				acquired = true
+			default:
+				select {
+				case s.validationWaiters <- struct{}{}:
+					timer := time.NewTimer(time.Second)
+					select {
+					case s.validationGate <- struct{}{}:
+						acquired = true
+					case <-r.Context().Done():
+					case <-timer.C:
+					}
+					timer.Stop()
+					<-s.validationWaiters
+				default:
+				}
+			}
+			if acquired {
 				var n int
 				e := s.db.QueryRowContext(r.Context(), "SELECT count(*) FROM oauth_grants WHERE hash=? AND kind='access' AND resource=? AND expires>? AND used=0", hash(parts[1]), s.resource(), time.Now().Unix()).Scan(&n)
 				<-s.validationGate
 				valid = e == nil && n == 1
-			default:
+			} else if r.Context().Err() == nil {
 				w.Header().Set("Retry-After", "1")
 				oauthError(w, 429, "temporarily_unavailable")
 				return
