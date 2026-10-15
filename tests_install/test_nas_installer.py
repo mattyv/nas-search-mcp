@@ -175,3 +175,18 @@ def test_existing_access_scope_is_preserved(tmp_path):
     contents = secret.read_text()
     assert 'NAS_ALLOWED_FOLDERS=Documents\n' in contents
     assert 'NAS_DENIED_FOLDERS=Documents/private\n' in contents
+
+
+def test_synology_protected_upgrade_path(tmp_path):
+    args, env, log = setup(tmp_path)
+    protected = tmp_path / '@nas-search-upgrader'
+    args[args.index('--install-dir') + 1] = str(protected)
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert (protected / 'current-image').read_text().strip().endswith(':abc123')
+    assert 'up -d --no-build' in log.read_text()
+    # Every subsequent MCP-triggered upgrade uses this same protected path.
+    args[args.index('--image') + 1] = 'ghcr.io/mattyv/nas-search-mcp:def456'
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert (protected / 'current-image').read_text().strip().endswith(':def456')
