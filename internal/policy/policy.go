@@ -50,3 +50,13 @@ func MatchesTerms(text string, terms []string) bool {
 	}
 	return core.Companion_Default___.MatchesTerms(dafny.UnicodeSeqOfUtf8Bytes(text), dafny.SeqOf(values...))
 }
+
+// ShowInline reports whether a lowercase media type, without parameters, may render in a browser.
+func ShowInline(mediaType string) bool {
+	return core.Companion_Default___.ShowInline(dafny.UnicodeSeqOfUtf8Bytes(mediaType))
+}
+
+// LinkActive reports whether a link expiring at expires is usable at now.
+func LinkActive(now, expires int64) bool {
+	return core.Companion_Default___.LinkActive(dafny.IntOfInt64(now), dafny.IntOfInt64(expires))
+}

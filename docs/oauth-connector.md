@@ -21,6 +21,8 @@ Review these settings locally:
 | `NAS_OAUTH_CLIENT_ID` | `nas-claude`, a pre-registered public client using PKCE. |
 | `NAS_OAUTH_PASSWORD_HASH` | Single-quoted bcrypt hash of your login password; never the plaintext password. |
 | `NAS_OAUTH_CLIENT_SECRET_HASH` | Optional bcrypt hash for a confidential client. Leave empty for the public client; no secret is required. |
+| `NAS_DOWNLOAD_URL` | Origin for tap-to-open file links. Empty uses `NAS_OAUTH_ISSUER`. |
+| `NAS_DOWNLOAD_LINK_MINUTES` | Link lifetime, 1–60 minutes. Default `10`. |
 | `NAS_OAUTH_LOCAL_REDIRECTS` | Exact loopback callback URLs for Inspector testing only; empty in production. |
 
 OAuth state is stored in `/data/oauth.sqlite3`, on the existing writable index volume. Access and refresh token values are stored hashed. Access tokens expire after 10 minutes; refresh tokens expire after seven days. Keep that volume private and writable only by the project user and administrators. Original source mounts remain read-only.
@@ -60,6 +62,10 @@ The verified public hostname is `mattssynology.tail0fe6aa.ts.net`, with DNS answ
 In Claude web, open **Customize → Connectors → Add → Custom → Web**. Choose **Sign in now**, then **Use your own OAuth client**. Enter the name `nas-claude` and URL `https://mattssynology.tail0fe6aa.ts.net/mcp`; leave the client secret blank for the public PKCE client. Complete the password login and consent. The production callback is exactly `https://claude.ai/api/mcp/auth_callback`. Claude web login and search succeeded on 2026-10-14, and the connector appears in Claude mobile. A mobile tool call remains untested.
 
 Then open Claude mobile on the same account, confirm the connector appears, and try a harmless search. A configured connector is not considered verified until the OAuth flow and search succeed. Follow the current [Claude connector authentication documentation](https://claude.com/docs/connectors/building/authentication) and [MCP authorization specification](https://modelcontextprotocol.io/specification/latest/basic/authorization) when diagnosing compatibility.
+
+## Open files from Claude web and mobile
+
+With `NAS_OAUTH_ISSUER` set, Claude can create tap-to-open links at `https://mattssynology.tail0fe6aa.ts.net/download/…`. These pass through the same Funnel route as `/mcp`. The random link is the only credential: anyone holding it can open that one file until it expires, 10 minutes by default. Links are rate-limited and never logged. Set `NAS_DOWNLOAD_URL` to a private address to keep links off the public route; mobile access then needs Tailscale. See [client guide](clients.md#open-originals-in-your-browser).
 
 ## Stop access
 

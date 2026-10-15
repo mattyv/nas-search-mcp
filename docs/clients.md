@@ -22,6 +22,20 @@ The installer checks the MCP handshake and tools before writing settings. It cop
 
 Start a new CLI session or fully restart the desktop app. Config installation and SDK tool calls have passed; conversations inside the client GUIs still need testing. The installed bridge supports this project's stateless HTTP server; it is not a general bridge for server-initiated requests or resumable event streams. You do not need Node.js or a shell-exported token with this installer. Manual native HTTP alternatives follow.
 
+## Open originals in your browser
+
+Ask: **“Give me a link to Melody.pdf.”** Claude replies with a link; tap it and the original opens in your browser. PDFs, JPEG/PNG/GIF/WebP photos, and plain text display directly. Word, Excel, HTML, SVG, and other formats download instead, so they cannot run anything on the NAS's web address.
+
+This is the way to *see* a file. `fetch_file` only hands raw bytes to the model, which cannot turn them into an attachment for you.
+
+- Links work in Claude web, mobile, Desktop, and the CLIs, wherever your browser can reach the link address.
+- Each link opens one file and expires after 10 minutes (`NAS_DOWNLOAD_LINK_MINUTES`, 1–60). Restarting the service cancels all links. Ask again for a fresh one.
+- Anyone holding an unexpired link can open that file without logging in. Don't forward links to sensitive documents.
+- A link stops working if the file changes, or its folder leaves `NAS_ALLOWED_FOLDERS`.
+- The limit is 32 MiB per file and 200 active links.
+
+Links use `NAS_DOWNLOAD_URL`, or the public `NAS_OAUTH_ISSUER` if that is empty. With neither set, the tool is hidden. For LAN-only use, set `NAS_DOWNLOAD_URL=http://192.168.1.4:8080`.
+
 ## Read complete documents and retrieve originals
 
 `read_document` returns extracted text and page/section locations. Continue with its `next_offset` until `complete=true`; offsets count Unicode characters. This bypasses the search index's 200,000-character extraction cap, but source files still have a 32 MiB safety limit. English OCR is used for PDF pages without embedded text when `NAS_OCR=true`. Check OCR metadata; an unreadable scan can still contain missing text. Long scanned documents may repeat OCR of earlier pages during pagination, so reading can be slow.

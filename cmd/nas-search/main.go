@@ -64,6 +64,9 @@ type FetchInput struct {
 	MaxBytes        int    `json:"max_bytes,omitempty"`
 	ExpectedVersion string `json:"expected_version,omitempty"`
 }
+type LinkInput struct {
+	Path string `json:"path"`
+}
 type BrowseOutput struct {
 	Files []store.File `json:"files"`
 }
@@ -113,6 +116,11 @@ func main() {
 	if err = a.ConfigureAccess(folderList(os.Getenv("NAS_ALLOWED_FOLDERS")), folderList(os.Getenv("NAS_DENIED_FOLDERS"))); err != nil {
 		log.Fatal("invalid folder access configuration")
 	}
+	if !stdio {
+		if err = configureLinks(a); err != nil {
+			log.Fatal("invalid download link configuration: set NAS_DOWNLOAD_URL to an http(s) origin and NAS_DOWNLOAD_LINK_MINUTES to 1-60")
+		}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	server := buildMCPServer(a)
@@ -123,7 +131,7 @@ func main() {
 			log.Fatal("OAuth configuration invalid; refusing to start")
 		}
 		defer auth.Close()
-		publicServer = &http.Server{Addr: env("NAS_OAUTH_LISTEN", "127.0.0.1:8082"), Handler: buildPublicHandler(server, auth), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+		publicServer = &http.Server{Addr: env("NAS_OAUTH_LISTEN", "127.0.0.1:8082"), Handler: buildPublicHandler(server, auth, a), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 		go func() {
 			if e := publicServer.ListenAndServe(); e != nil && !errors.Is(e, http.ErrServerClosed) {
 				log.Fatal("OAuth listener failed")
@@ -152,7 +160,7 @@ func main() {
 		}
 		return
 	}
-	mux := buildPrivateHandler(server, token)
+	mux := buildPrivateHandler(server, token, a)
 	httpServer := &http.Server{Addr: env("NAS_LISTEN", "127.0.0.1:8080"), Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 	go func() {
 		<-ctx.Done()
@@ -170,7 +178,20 @@ func main() {
 }
 
 func buildHTTPHandler(a *app.App, token string) http.Handler {
-	return buildPrivateHandler(buildMCPServer(a), token)
+	return buildPrivateHandler(buildMCPServer(a), token, a)
+}
+
+// configureLinks enables download links on NAS_DOWNLOAD_URL, else on the public OAuth origin.
+func configureLinks(a *app.App) error {
+	base := env("NAS_DOWNLOAD_URL", os.Getenv("NAS_OAUTH_ISSUER"))
+	if base == "" {
+		return nil
+	}
+	minutes, err := strconv.Atoi(env("NAS_DOWNLOAD_LINK_MINUTES", "10"))
+	if err != nil {
+		return err
+	}
+	return a.ConfigureLinks(base, time.Duration(minutes)*time.Minute)
 }
 
 func folderList(value string) []string {
@@ -216,10 +237,21 @@ func buildMCPServer(a *app.App) *mcp.Server {
 		out, err := a.ReadDocumentWithOCR(ctx, in.Path, in.Offset, in.MaxChars, in.ForceOCR)
 		return nil, out, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "fetch_file", Description: "Fetch exact original file bytes, including binary PDF/Office/image files, as base64 batches. max_bytes defaults to 65536, capped at 262144; source limit 32 MiB. Reassemble decoded data locally, following next_offset until complete. Send the first response's version as expected_version on every subsequent batch to reject changed files. This does not create a chat attachment automatically. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in FetchInput) (*mcp.CallToolResult, app.FetchResult, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "fetch_file", Description: "Fetch exact original file bytes, including binary PDF/Office/image files, as base64 batches. max_bytes defaults to 65536, capped at 262144; source limit 32 MiB. Reassemble decoded data locally, following next_offset until complete. Send the first response's version as expected_version on every subsequent batch to reject changed files. This does not create a chat attachment automatically; to let the user see or save the file, use download_link instead. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in FetchInput) (*mcp.CallToolResult, app.FetchResult, error) {
 		out, err := a.FetchFile(in.Path, in.Offset, in.MaxBytes, in.ExpectedVersion)
 		return nil, out, err
 	})
+	if a.LinksEnabled() {
+		mcp.AddTool(server, &mcp.Tool{Name: "download_link", Description: "Create a short-lived link that opens an original NAS file (PDF, photo, Office document, any format up to 32 MiB) in the user's own browser. Use this whenever the user wants to see, open, view, or save a file. Reply with the returned url as a clickable markdown link; you cannot open it yourself, and fetch_file is not needed first. PDFs, common images, and plain text open in the browser; other formats download. Anyone holding the link can open that one file until expires_at. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in LinkInput) (*mcp.CallToolResult, app.LinkResult, error) {
+			out, err := a.CreateLink(in.Path)
+			if err != nil {
+				return nil, out, err
+			}
+			label := strings.NewReplacer("[", "\\[", "]", "\\]").Replace(out.Name)
+			text := fmt.Sprintf("[%s](%s)\n\nShow the user this link. It expires at %s; ask for a new link after that.", label, out.URL, out.ExpiresAt)
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, out, nil
+		})
+	}
 	mcp.AddTool(server, &mcp.Tool{Name: "index_status", Description: "Show the active scan file, stage and start times, indexed file/chunk counts, errors, and whether OCR/semantic/photo indexing is enabled."}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
 		out, err := a.Status()
 		return nil, out, err
@@ -227,10 +259,11 @@ func buildMCPServer(a *app.App) *mcp.Server {
 	return server
 }
 
-func buildPrivateHandler(server *mcp.Server, token string) http.Handler {
+func buildPrivateHandler(server *mcp.Server, token string, a *app.App) http.Handler {
 	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true})
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", app.Protect(token, handler))
+	mux.Handle("/download/", hardenDownloads(http.HandlerFunc(a.ServeLink), log.Default()))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200); fmt.Fprint(w, "ok") })
 	return mux
 }

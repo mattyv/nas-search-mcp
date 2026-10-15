@@ -161,6 +161,29 @@ module Core {
     if requested < 1 then 1 else if requested > maximum then maximum else requested
   }
 
+  // Passive formats a browser displays without running page scripts.
+  // Everything else is served as an opaque download.
+  const InlineTypes: set<string> := {"application/pdf", "image/jpeg", "image/png", "image/gif", "image/webp", "text/plain"}
+
+  function ShowInline(mediaType: string): bool
+    ensures ShowInline(mediaType) <==> mediaType in InlineTypes
+  {
+    mediaType in InlineTypes
+  }
+
+  lemma ActiveContentNeverInline()
+    ensures !ShowInline("text/html") && !ShowInline("application/xhtml+xml")
+    ensures !ShowInline("image/svg+xml") && !ShowInline("text/xml") && !ShowInline("application/xml")
+    ensures !ShowInline("text/javascript") && !ShowInline("application/octet-stream") && !ShowInline("")
+  {}
+
+  // A download link is usable strictly before its expiry instant.
+  function LinkActive(now: int, expires: int): bool
+    ensures LinkActive(now, expires) <==> now < expires
+  {
+    now < expires
+  }
+
   function RankScore(lexicalRank: nat, semanticRank: nat): int {
     (if lexicalRank == 0 then 0 else 1000000 / (60 + lexicalRank)) +
     (if semanticRank == 0 then 0 else 1000000 / (60 + semanticRank))

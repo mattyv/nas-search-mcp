@@ -51,7 +51,7 @@ func TestPublicOAuthToolFlow(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer auth.Close()
-	handler = buildPublicHandler(buildMCPServer(a), auth)
+	handler = buildPublicHandler(buildMCPServer(a), auth, a)
 	probe, e := ts.Client().Get(ts.URL + "/mcp")
 	if e != nil {
 		t.Fatal(e)

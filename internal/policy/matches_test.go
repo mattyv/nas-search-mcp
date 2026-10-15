@@ -23,3 +23,14 @@ func TestMatchesTerms(t *testing.T) {
 		}
 	}
 }
+
+func TestLinkPolicy(t *testing.T) {
+	for mediaType, want := range map[string]bool{"application/pdf": true, "image/webp": true, "text/plain": true, "text/html": false, "image/svg+xml": false, "Application/PDF": false, "": false} {
+		if got := ShowInline(mediaType); got != want {
+			t.Errorf("ShowInline(%q)=%v want %v", mediaType, got, want)
+		}
+	}
+	if !LinkActive(1, 2) || LinkActive(2, 2) || LinkActive(3, 2) {
+		t.Fatal("link expiry boundary")
+	}
+}

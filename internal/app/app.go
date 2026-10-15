@@ -48,6 +48,11 @@ type App struct {
 	scanStage                  string
 	fileStartedAt              string
 	scanStartedAt              string
+	now                        func() time.Time
+	linkMu                     sync.Mutex
+	linkBase                   string
+	linkTTL                    time.Duration
+	links                      map[[32]byte]downloadLink
 }
 type DocumentSection struct {
 	Location string `json:"location"`
@@ -208,6 +213,19 @@ type FetchResult struct {
 
 const sourceLimit = 32 * 1024 * 1024
 
+// detectMIME prefers the file extension and falls back to sniffing the first 512 bytes.
+func detectMIME(relative string, f *os.File) (string, error) {
+	if byExtension := mime.TypeByExtension(strings.ToLower(filepath.Ext(relative))); byExtension != "" {
+		return byExtension, nil
+	}
+	sample := make([]byte, 512)
+	n, err := f.ReadAt(sample, 0)
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+	return http.DetectContentType(sample[:n]), nil
+}
+
 func fileVersion(info os.FileInfo) string {
 	return fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())
 }
@@ -245,21 +263,16 @@ func (a *App) FetchFile(relative string, offset int64, maxBytes int, expectedVer
 	if expectedVersion != "" && expectedVersion != out.Version {
 		return out, errors.New("file changed; restart download at offset zero")
 	}
-	sample := make([]byte, 512)
-	n, err := f.ReadAt(sample, 0)
-	if err != nil && err != io.EOF {
+	out.MIME, err = detectMIME(relative, f)
+	if err != nil {
 		return out, err
-	}
-	out.MIME = mime.TypeByExtension(strings.ToLower(filepath.Ext(relative)))
-	if out.MIME == "" {
-		out.MIME = http.DetectContentType(sample[:n])
 	}
 	remaining := info.Size() - offset
 	if int64(maxBytes) > remaining {
 		maxBytes = int(remaining)
 	}
 	content := make([]byte, maxBytes)
-	n, err = f.ReadAt(content, offset)
+	n, err := f.ReadAt(content, offset)
 	if err != nil && err != io.EOF {
 		return out, err
 	}
