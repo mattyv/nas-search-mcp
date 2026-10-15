@@ -230,13 +230,32 @@ func (s *Store) RecordError(path, message string) error {
 	_, e := s.db.Exec("INSERT OR REPLACE INTO errors VALUES(?,?)", path, message)
 	return e
 }
+
+// commonWords match nearly everything, so on their own they would rank unrelated files.
+var commonWords = map[string]bool{"a": true, "an": true, "and": true, "are": true, "as": true, "at": true, "be": true, "by": true, "for": true, "from": true, "in": true, "is": true, "it": true, "of": true, "on": true, "or": true, "that": true, "the": true, "this": true, "to": true, "was": true, "with": true}
+
+// keywordTerms drops common words unless the query has nothing else.
+func keywordTerms(query string) []string {
+	all := strings.FieldsFunc(query, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	var meaningful []string
+	for _, term := range all {
+		if !commonWords[strings.ToLower(term)] {
+			meaningful = append(meaningful, term)
+		}
+	}
+	if len(meaningful) == 0 {
+		return all
+	}
+	return meaningful
+}
+
 func (s *Store) Candidates(query, prefix string, photos bool, vector []float32, limit int) ([]Candidate, error) {
 	if limit <= 0 {
 		return []Candidate{}, nil
 	}
 	out := []Candidate{}
 	byID := map[int64]int{}
-	terms := strings.FieldsFunc(query, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	terms := keywordTerms(query)
 	for i, t := range terms {
 		terms[i] = "\"" + t + "\""
 	}

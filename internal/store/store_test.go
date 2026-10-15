@@ -154,3 +154,25 @@ func TestPhotoQueryDoesNotReturnDocuments(t *testing.T) {
 		t.Fatal(got, e)
 	}
 }
+
+func TestCommonWordsDoNotMatchKeywords(t *testing.T) {
+	s, e := New(filepath.Join(t.TempDir(), "index.db"), "")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	described := File{Path: "Photos/dog.jpg", Fingerprint: "1", Kind: "photo"}
+	if e = s.Replace(described, []Chunk{{Location: "photo", Text: "A dog is lying in the grass"}}, nil); e != nil {
+		t.Fatal(e)
+	}
+	if c, e := s.Candidates("an astronaut on the moon", "", true, nil, 10); e != nil || len(c) != 0 {
+		t.Fatal("common words matched an unrelated photo:", c, e)
+	}
+	if c, e := s.Candidates("The dog", "", true, nil, 10); e != nil || len(c) != 1 {
+		t.Fatal("meaningful words must still match:", c, e)
+	}
+	// A query made only of common words still searches for them.
+	if c, e := s.Candidates("in the", "", true, nil, 10); e != nil || len(c) != 1 {
+		t.Fatal("all-common-word query found nothing:", c, e)
+	}
+}
