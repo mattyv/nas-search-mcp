@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -216,6 +217,8 @@ type FetchResult struct {
 
 const sourceLimit = 32 * 1024 * 1024
 
+var fetchRequestID atomic.Uint64
+
 // detectMIME prefers the file extension and falls back to sniffing the first 512 bytes.
 func detectMIME(relative string, f *os.File) (string, error) {
 	if byExtension := mime.TypeByExtension(strings.ToLower(filepath.Ext(relative))); byExtension != "" {
@@ -234,8 +237,19 @@ func fileVersion(info os.FileInfo) string {
 }
 
 // FetchFile returns exact original bytes in bounded base64 batches, including binary files.
-func (a *App) FetchFile(relative string, offset int64, maxBytes int, expectedVersion string) (FetchResult, error) {
-	out := FetchResult{Path: relative, Offset: offset}
+func (a *App) FetchFile(relative string, offset int64, maxBytes int, expectedVersion string) (out FetchResult, retErr error) {
+	requestID := fetchRequestID.Add(1)
+	started := time.Now()
+	var openMS, statMS, mimeMS, readMS, restatMS int64
+	out = FetchResult{Path: relative, Offset: offset}
+	log.Printf("fetch_file request_id=%d stage=start", requestID)
+	defer func() {
+		outcome := "success"
+		if retErr != nil {
+			outcome = "error"
+		}
+		log.Printf("fetch_file request_id=%d stage=end outcome=%s total_ms=%d open_ms=%d stat_ms=%d mime_ms=%d read_ms=%d restat_ms=%d", requestID, outcome, time.Since(started).Milliseconds(), openMS, statMS, mimeMS, readMS, restatMS)
+	}()
 	if offset < 0 || maxBytes < 0 {
 		return out, errors.New("offset and max_bytes must be nonnegative")
 	}
@@ -246,12 +260,16 @@ func (a *App) FetchFile(relative string, offset int64, maxBytes int, expectedVer
 		maxBytes = 65536
 	}
 	maxBytes = policy.ClampLimit(maxBytes, 262144)
+	stageStarted := time.Now()
 	f, err := a.openFile(relative)
+	openMS = time.Since(stageStarted).Milliseconds()
 	if err != nil {
 		return out, err
 	}
 	defer f.Close()
+	stageStarted = time.Now()
 	info, err := f.Stat()
+	statMS = time.Since(stageStarted).Milliseconds()
 	if err != nil {
 		return out, err
 	}
@@ -266,7 +284,9 @@ func (a *App) FetchFile(relative string, offset int64, maxBytes int, expectedVer
 	if expectedVersion != "" && expectedVersion != out.Version {
 		return out, errors.New("file changed; restart download at offset zero")
 	}
+	stageStarted = time.Now()
 	out.MIME, err = detectMIME(relative, f)
+	mimeMS = time.Since(stageStarted).Milliseconds()
 	if err != nil {
 		return out, err
 	}
@@ -274,12 +294,16 @@ func (a *App) FetchFile(relative string, offset int64, maxBytes int, expectedVer
 	if int64(maxBytes) > remaining {
 		maxBytes = int(remaining)
 	}
+	stageStarted = time.Now()
 	content := make([]byte, maxBytes)
 	n, err := f.ReadAt(content, offset)
+	readMS = time.Since(stageStarted).Milliseconds()
 	if err != nil && err != io.EOF {
 		return out, err
 	}
+	stageStarted = time.Now()
 	after, err := f.Stat()
+	restatMS = time.Since(stageStarted).Milliseconds()
 	if err != nil {
 		return out, err
 	}

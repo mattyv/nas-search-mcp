@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/mattyv/nas-search-mcp/internal/store"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -294,6 +295,39 @@ func TestFetchOriginalBinaryRanges(t *testing.T) {
 	}
 	if _, e := a.FetchFile("original.pdf", 0, 7, version); e == nil {
 		t.Fatal("accepted changed file version")
+	}
+}
+
+func TestFetchFileLogsPrivacySafeStageTimings(t *testing.T) {
+	root := t.TempDir()
+	name := "private-customer-name.bin"
+	secret := "PRIVATE-DOCUMENT-CONTENT"
+	if err := os.WriteFile(filepath.Join(root, name), []byte(secret), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	a := &App{Root: root}
+	if _, err := a.FetchFile(name, 0, 10, ""); err != nil {
+		t.Fatal(err)
+	}
+	output := logs.String()
+	if !strings.Contains(output, "request_id=") || !strings.Contains(output, "stage=start") || !strings.Contains(output, "stage=end") {
+		t.Fatalf("missing fetch start/end correlation: %s", output)
+	}
+	for _, stage := range []string{"total", "open", "stat", "mime", "read", "restat"} {
+		if !strings.Contains(output, stage+"_ms=") {
+			t.Errorf("missing fetch %s timing: %s", stage, output)
+		}
+	}
+	if strings.Count(output, "fetch_file request_id=") != 2 {
+		t.Errorf("fetch call should write only start/end records: %s", output)
+	}
+	if strings.Contains(output, name) || strings.Contains(output, secret) {
+		t.Fatalf("fetch logs exposed private file data: %s", output)
 	}
 }
 func TestFetchBoundsAndEscapes(t *testing.T) {
