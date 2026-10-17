@@ -41,6 +41,8 @@ type App struct {
 	accessConfigured           bool
 	allowed, denied            []string
 	scanMu                     sync.Mutex
+	scanDelayMu                sync.RWMutex
+	scanFileDelay              time.Duration
 	stateMu                    sync.Mutex
 	scanning                   bool
 	lastScan                   string
@@ -754,6 +756,35 @@ func (a *App) setScanProgress(path, stage string) {
 	}
 	a.scanStage = stage
 }
+
+// SetScanFileDelay sets the pause before each allowed, supported file is inspected.
+// A zero or negative duration disables pacing.
+func (a *App) SetScanFileDelay(delay time.Duration) {
+	if delay < 0 {
+		delay = 0
+	}
+	a.scanDelayMu.Lock()
+	a.scanFileDelay = delay
+	a.scanDelayMu.Unlock()
+}
+
+func (a *App) waitForScanFile(ctx context.Context) error {
+	a.scanDelayMu.RLock()
+	delay := a.scanFileDelay
+	a.scanDelayMu.RUnlock()
+	if delay <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return ctx.Err()
+	}
+}
+
 func (a *App) Scan(ctx context.Context) error {
 	if !a.scanMu.TryLock() {
 		return errors.New("scan already running")
@@ -818,6 +849,10 @@ func (a *App) Scan(ctx context.Context) error {
 		if !a.accessAllowed(rel, false) {
 			return nil
 		}
+		a.setScanProgress(rel, "pacing")
+		if e = a.waitForScanFile(ctx); e != nil {
+			return e
+		}
 		a.setScanProgress(rel, "checking")
 		defer a.setScanProgress("", "walking")
 		if _, e = a.safeFile(rel); e != nil {
@@ -847,6 +882,13 @@ func (a *App) Scan(ctx context.Context) error {
 			return nil
 		}
 		if e = a.indexFile(ctx, snapshot, rel, hash); e != nil {
+			if ctx.Err() != nil {
+				// The source changed, so its old chunks no longer describe the file.
+				if removeErr := a.Store.Remove(rel); removeErr != nil {
+					return removeErr
+				}
+				return ctx.Err()
+			}
 			log.Printf("indexing failed")
 			// Old chunks describe a different revision and must not survive a failed update.
 			if removeErr := a.Store.Remove(rel); removeErr != nil {
@@ -857,13 +899,23 @@ func (a *App) Scan(ctx context.Context) error {
 		return nil
 	})
 	if err == nil {
+		err = ctx.Err()
+	}
+	if err == nil {
 		for path := range old {
+			if e := ctx.Err(); e != nil {
+				err = e
+				break
+			}
 			if !seen[path] {
 				if e := a.Store.Remove(path); e != nil {
 					return e
 				}
 			}
 		}
+	}
+	if err == nil {
+		err = ctx.Err()
 	}
 	if err == nil {
 		a.setScanProgress("", "saving_revision")

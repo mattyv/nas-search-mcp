@@ -32,6 +32,7 @@ services:
       NAS_OCR: "${NAS_OCR:-true}"
       OMP_THREAD_LIMIT: "1"
       NAS_SCAN_INTERVAL: "300"
+      NAS_SCAN_FILE_DELAY_SECONDS: "${NAS_SCAN_FILE_DELAY_SECONDS:-2}"
       NAS_VEC_EXTENSION: /opt/vec0.so
       NAS_WORKER: /app/worker/worker.py
       GOMEMLIMIT: 128MiB

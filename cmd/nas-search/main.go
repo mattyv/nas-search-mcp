@@ -117,6 +117,11 @@ func main() {
 	if err = a.ConfigureAccess(folderList(os.Getenv("NAS_ALLOWED_FOLDERS")), folderList(os.Getenv("NAS_DENIED_FOLDERS"))); err != nil {
 		log.Fatal("invalid folder access configuration")
 	}
+	fileDelay, err := parseScanFileDelay(env("NAS_SCAN_FILE_DELAY_SECONDS", "0"))
+	if err != nil {
+		log.Fatal("NAS_SCAN_FILE_DELAY_SECONDS must be a nonnegative integer that fits in a duration")
+	}
+	a.SetScanFileDelay(fileDelay)
 	if !stdio {
 		if err = configureLinks(a); err != nil {
 			log.Fatal("invalid download link configuration: set NAS_DOWNLOAD_URL to an http(s) origin and NAS_DOWNLOAD_LINK_MINUTES to 1-60")
@@ -180,6 +185,14 @@ func main() {
 	if err = httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+}
+
+func parseScanFileDelay(value string) (time.Duration, error) {
+	seconds, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || seconds < 0 || seconds > int64((1<<63-1)/time.Second) {
+		return 0, fmt.Errorf("invalid scan file delay")
+	}
+	return time.Duration(seconds) * time.Second, nil
 }
 
 func buildHTTPHandler(a *app.App, token string) http.Handler {

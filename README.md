@@ -35,7 +35,7 @@ The NAS provides `search`, `find_files`, `browse`, `read_file`, `read_document`,
 
 Use `find_files` when you know a filename or folder name, or when content search misses a document. It searches live mounted paths independently of extraction. Narrow the prefix if results are truncated; hidden files, symlinks, and excluded folders are omitted.
 
-Scans run at startup and periodically. An item enters the index after extraction and embedding finish. During indexing, semantic search and document reading may wait behind the worker queue; status checks and original-file retrieval remain available.
+Scans run at startup and periodically. An item enters the index after extraction and embedding finish. During indexing, semantic search and document reading may wait behind the worker queue; status checks and original-file retrieval remain available. The container pauses for two seconds before checking each eligible file, including unchanged files, to reduce disk contention on small NAS devices. Set `NAS_SCAN_FILE_DELAY_SECONDS=0` in the private deployment settings to disable pacing. At two seconds, 10,000 eligible files add about 5½ hours to a full scan; files already indexed remain searchable while it runs. Measure connector latency and scan progress on your NAS before changing this setting.
 
 ## Coverage and limits
 

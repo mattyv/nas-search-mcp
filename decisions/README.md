@@ -220,6 +220,12 @@ An active full-library scan caused high disk wait, and one public MCP request to
 
 The public connector returned `work_busy` while two long requests occupied both admission slots; this blocked `upgrade_status` and `upgrade_from_main` even though neither needs the model worker. Keep the total active limit at two, with one slot for ordinary work and one for MCP setup, `index_status`, and upgrade calls. Classify only bounded, parsed JSON-RPC requests after OAuth and body-size checks. The control slot guarantees admission under ordinary-work saturation, not completion when the NAS disk or database is slow. A regression test holds normal work open and confirms those calls proceed; the previous implementation failed that test.
 
+## D035 — Pace file checks during full scans
+
+**Status:** Accepted locally; target-device latency unvalidated
+
+Pause before each authorized, supported file is read during a scan, including unchanged files. The Synology container defaults to two seconds per file; a private setting can change it or set zero to disable pacing. This reduces bursts of source reads, snapshots, and hashing that coincide with slow connector responses on a 2 GB NAS. The wait respects cancellation and does not hold the model worker gate. It preserves already indexed files when a scan stops during a wait, and does not promote an incomplete extraction revision. At two seconds, 10,000 eligible files add about 5½ hours to a complete scan. The choice favors connector availability over freshness; only target-device measurement can establish whether it resolves the public HTTPS failures. The timer and filesystem behavior are operating-system adapters outside Dafny verification.
+
 ## Open decisions
 
 - When measured indexing time and latency justify expanding to larger source collections.
