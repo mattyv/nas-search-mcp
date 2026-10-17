@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -120,7 +121,7 @@ func TestPublicShortBurstFitsMobileReconnect(t *testing.T) {
 
 func TestPublicConcurrentRequestsWaitForSlot(t *testing.T) {
 	entered := make(chan struct{}, 2)
-	release := make(chan struct{})
+	release := make(chan struct{}, 2)
 	var count atomic.Int32
 	h := admitPublic(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if count.Add(1) <= 2 {
@@ -130,12 +131,13 @@ func TestPublicConcurrentRequestsWaitForSlot(t *testing.T) {
 		w.WriteHeader(204)
 	}))
 	first := make(chan int, 2)
-	for i := 0; i < 2; i++ {
-		go func() {
+	for _, name := range []string{"search", "index_status"} {
+		go func(name string) {
 			w := httptest.NewRecorder()
-			h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", nil))
+			body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + name + `"}}`
+			h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", strings.NewReader(body)))
 			first <- w.Code
-		}()
+		}(name)
 	}
 	for i := 0; i < 2; i++ {
 		select {
@@ -149,11 +151,12 @@ func TestPublicConcurrentRequestsWaitForSlot(t *testing.T) {
 	go func() {
 		close(started)
 		w := httptest.NewRecorder()
-		h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", nil))
+		h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search"}}`)))
 		third <- w.Code
 	}()
 	<-started
 	time.Sleep(30 * time.Millisecond)
+	release <- struct{}{}
 	release <- struct{}{}
 	var got int
 	select {
@@ -175,6 +178,56 @@ func TestPublicConcurrentRequestsWaitForSlot(t *testing.T) {
 	}
 	if got != 204 {
 		t.Fatalf("briefly overlapping request got %d", got)
+	}
+}
+
+func TestPublicStatusAndUpgradeCallsRemainAvailableDuringSlowSearch(t *testing.T) {
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	defer close(release)
+	h := admitPublic(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		if request.Params.Name == "search" {
+			entered <- struct{}{}
+			<-release
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	go func() {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search"}}`)))
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("slow search did not occupy normal slot")
+	}
+	for _, name := range []string{"index_status", "upgrade_status", "upgrade_from_main"} {
+		result := make(chan int, 1)
+		go func() {
+			w := httptest.NewRecorder()
+			body := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"` + name + `"}}`
+			h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", strings.NewReader(body)))
+			result <- w.Code
+		}()
+		select {
+		case code := <-result:
+			if code != http.StatusNoContent {
+				t.Fatalf("%s returned %d while searches were busy", name, code)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s blocked behind slow searches", name)
+		}
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`)))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("tools/list returned %d while search was busy", w.Code)
 	}
 }
 

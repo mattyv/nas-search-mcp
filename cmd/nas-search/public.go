@@ -85,7 +85,8 @@ func (l *publicCallLimits) allow(key, method string) bool {
 // Admit bounded MCP work, charging only authenticated tools/call requests.
 func admitPublic(next http.Handler) http.Handler {
 	callLimits := newPublicCallLimits()
-	gate := make(chan struct{}, 2)
+	workGate := make(chan struct{}, 1)
+	controlGate := make(chan struct{}, 1)
 	queue := make(chan struct{}, 100)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -96,10 +97,37 @@ func admitPublic(next http.Handler) http.Handler {
 			if len(key) > 12 {
 				key = key[:12]
 			}
-			log.Printf("public rejection reason=queue_full key=%s method=unread active=%d queued=%d", key, len(gate), len(queue)-len(gate))
+			active := len(workGate) + len(controlGate)
+			log.Printf("public rejection reason=queue_full key=%s method=unread active=%d queued=%d", key, active, len(queue)-active)
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "server busy", 429)
 			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			} else if r.Context().Err() == nil {
+				http.Error(w, "invalid request body", http.StatusBadRequest)
+			}
+			return
+		}
+		r.Body.Close()
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		var request struct {
+			Method string `json:"method"`
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		parsed := json.Unmarshal(body, &request) == nil
+		protocol := parsed && (request.Method == "initialize" || request.Method == "ping" || request.Method == "tools/list" || strings.HasPrefix(request.Method, "notifications/"))
+		control := r.URL.Path == "/mcp" && (protocol || parsed && request.Method == "tools/call" && (request.Params.Name == "index_status" || request.Params.Name == "upgrade_status" || request.Params.Name == "upgrade_from_main"))
+		gate := workGate
+		if control {
+			gate = controlGate
 		}
 		wait := time.NewTimer(15 * time.Second)
 		defer wait.Stop()
@@ -109,23 +137,6 @@ func admitPublic(next http.Handler) http.Handler {
 			if r.Context().Err() != nil {
 				return
 			}
-			r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				var tooLarge *http.MaxBytesError
-				if errors.As(err, &tooLarge) {
-					http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
-				} else if r.Context().Err() == nil {
-					http.Error(w, "invalid request body", http.StatusBadRequest)
-				}
-				return
-			}
-			r.Body.Close()
-			r.Body = io.NopCloser(bytes.NewReader(body))
-			var request struct {
-				Method string `json:"method"`
-			}
-			protocol := json.Unmarshal(body, &request) == nil && (request.Method == "initialize" || request.Method == "ping" || request.Method == "tools/list" || strings.HasPrefix(request.Method, "notifications/"))
 			method := "other"
 			if request.Method == "tools/call" {
 				method = "tools/call"
@@ -141,7 +152,7 @@ func admitPublic(next http.Handler) http.Handler {
 			if len(key) > 12 {
 				key = key[:12]
 			}
-			log.Printf("public rejection reason=work_busy key=%s method=unread active=%d", key, len(gate))
+			log.Printf("public rejection reason=work_busy key=%s method=unread active=%d", key, len(workGate)+len(controlGate))
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "server busy", 429)
 		case <-r.Context().Done():

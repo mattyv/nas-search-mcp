@@ -214,6 +214,12 @@ The ChatGPT plugin builder can use the existing pre-registered OAuth client, but
 
 An active full-library scan caused high disk wait, and one public MCP request took about three minutes, but current logs do not identify its tool or slow step. Add timing for file open, stat, MIME detection, range read, and final stat without logging paths, content, versions, or credentials. This distinguishes filesystem delay from transport delay before changing scan pacing. The local regression test checks timing fields and log privacy; actual target-device latency remains unmeasured with this change.
 
+## D034 — Reserve public MCP capacity for control calls
+
+**Status:** Accepted locally; NAS deployment unvalidated
+
+The public connector returned `work_busy` while two long requests occupied both admission slots; this blocked `upgrade_status` and `upgrade_from_main` even though neither needs the model worker. Keep the total active limit at two, with one slot for ordinary work and one for MCP setup, `index_status`, and upgrade calls. Classify only bounded, parsed JSON-RPC requests after OAuth and body-size checks. The control slot guarantees admission under ordinary-work saturation, not completion when the NAS disk or database is slow. A regression test holds normal work open and confirms those calls proceed; the previous implementation failed that test.
+
 ## Open decisions
 
 - When measured indexing time and latency justify expanding to larger source collections.
