@@ -226,6 +226,12 @@ The public connector returned `work_busy` while two long requests occupied both 
 
 Pause before each authorized, supported file is read during a scan, including unchanged files. The Synology container defaults to two seconds per file; a private setting can change it or set zero to disable pacing. This reduces bursts of source reads, snapshots, and hashing that coincide with slow connector responses on a 2 GB NAS. The wait respects cancellation and does not hold the model worker gate. It preserves already indexed files when a scan stops during a wait, and does not promote an incomplete extraction revision. At two seconds, 10,000 eligible files add about 5½ hours to a complete scan. The choice favors connector availability over freshness; only target-device measurement can establish whether it resolves the public HTTPS failures. The timer and filesystem behavior are operating-system adapters outside Dafny verification.
 
+## D036 — Accept a bounded OAuth display-language hint
+
+**Status:** Accepted locally; live ChatGPT sign-in unvalidated
+
+ChatGPT may add the standard `ui_locales` authorization parameter. The strict OAuth parameter list previously rejected the request before login. Accept one value of at most 128 bytes and ignore it because the login page is English-only. Keep exact redirect, resource, client, scope, and PKCE checks, and reject unknown parameters. A ChatGPT-style authorization and token-flow test failed before the change and passed after it; live connector sign-in still needs confirmation. This OAuth adapter is outside Dafny verification.
+
 ## Open decisions
 
 - When measured indexing time and latency justify expanding to larger source collections.

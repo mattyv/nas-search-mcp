@@ -82,7 +82,7 @@ func TestChatGPTRedirectRequiresExactPrivateConfiguration(t *testing.T) {
 		return base64.RawURLEncoding.EncodeToString(sum[:])
 	}
 	request := func(s *Server, redirect string) url.Values {
-		return url.Values{"client_id": {s.cfg.ClientID}, "redirect_uri": {redirect}, "response_type": {"code"}, "code_challenge_method": {"S256"}, "code_challenge": {challenge()}, "resource": {s.resource()}, "state": {"chatgpt-state"}}
+		return url.Values{"client_id": {s.cfg.ClientID}, "redirect_uri": {redirect}, "response_type": {"code"}, "code_challenge_method": {"S256"}, "code_challenge": {challenge()}, "resource": {s.resource()}, "state": {"chatgpt-state"}, "ui_locales": {"en-GB"}}
 	}
 	uri := callback
 	base := configured("")
@@ -123,6 +123,16 @@ func TestChatGPTRedirectRequiresExactPrivateConfiguration(t *testing.T) {
 		}
 		if w.Code != want {
 			t.Fatalf("authorize with redirect %q: got %d want %d", redirect, w.Code, want)
+		}
+	}
+	for _, invalid := range []url.Values{
+		func() url.Values { v := request(s, uri); v.Set("ui_locales", strings.Repeat("x", 129)); return v }(),
+		func() url.Values { v := request(s, uri); v.Set("unexpected", "yes"); return v }(),
+	} {
+		w = httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/authorize?"+invalid.Encode(), nil))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("unsafe extra authorization parameter accepted: %d", w.Code)
 		}
 	}
 
