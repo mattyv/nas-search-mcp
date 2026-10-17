@@ -45,6 +45,10 @@ type FindInput struct {
 	Prefix string `json:"prefix,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
 }
+type FolderInput struct {
+	Path  string `json:"path,omitempty"`
+	Limit int    `json:"limit,omitempty"`
+}
 type BrowseInput struct {
 	Prefix string `json:"prefix,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
@@ -273,11 +277,15 @@ func buildMCPServer(a *app.App, approval *upgradeApproval, uploads ...*uploadPag
 		return nil, out, err
 	})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "find_files", Description: "Find files by live filename and relative folder path, independently of indexing, OCR and semantic models. All whitespace-separated query terms must occur literally in the path, ignoring case; no regex. Includes unsupported file formats and failed document extractions. prefix is a relative, case-sensitive path prefix. limit defaults to 20, capped at 100. Searches at most 100000 entries or 5 seconds; truncated/warning explains incomplete searches. Known excluded directories, hidden entries and symlinks are skipped. Use this when the user names a file or content search misses it. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in FindInput) (*mcp.CallToolResult, app.FindResult, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "find_files", Description: "Find files by live filename and relative folder path, independently of indexing, OCR and semantic models. All whitespace-separated query terms must occur literally in the path, ignoring case; no regex. Includes unsupported file formats and failed document extractions. prefix is a relative, case-sensitive path prefix. limit defaults to 20, capped at 100. Searches at most 100000 entries or 5 seconds; truncated/warning explains incomplete searches. Known excluded directories, hidden entries and symlinks are skipped. Use list_folders to discover folder names without a query. Use this when the user names a file or content search misses it. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in FindInput) (*mcp.CallToolResult, app.FindResult, error) {
 		out, err := a.FindFiles(ctx, in.Query, in.Prefix, in.Limit)
 		return nil, out, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "browse", Description: "List indexed files and metadata. Prefix is a relative source path, such as Documents/Example/. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in BrowseInput) (*mcp.CallToolResult, BrowseOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "list_folders", Description: "List direct child folders from live authorized NAS sources, including empty folders. Start with path omitted to see allowed top-level folders, then pass a returned relative folder path to go one level deeper. Does not list files or expose denied, hidden, excluded, or symlink folders. limit defaults to 20 and is capped at 100; truncated/warning signals incomplete results. Read-only.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, req *mcp.CallToolRequest, in FolderInput) (*mcp.CallToolResult, app.FolderResult, error) {
+		out, err := a.ListFolders(ctx, in.Path, in.Limit)
+		return nil, out, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "browse", Description: "List indexed files and metadata. Prefix is a relative source path, such as Documents/Example/. Use list_folders for live folder navigation, including empty folders. Read-only."}, func(ctx context.Context, req *mcp.CallToolRequest, in BrowseInput) (*mcp.CallToolResult, BrowseOutput, error) {
 		if in.Limit == 0 {
 			in.Limit = 50
 		}

@@ -242,6 +242,14 @@ This gives MCP users a controlled path to add documents without asking an assist
 
 The NAS now advertises the upload tool, but Claude grouped it under read-only tools because its annotation described the link-creation call rather than the write flow it starts. Classify it as a non-destructive write action so clients can require approval, while retaining fresh browser sign-in and an explicit upload click. The annotation regression failed before this change and passed afterward. Keep per-call approval as the default for sensitive documents; batch approval is a separate product decision.
 
+## D038 — List direct child folders from authorized roots
+
+**Status:** Accepted locally; NAS deployment behavior pending
+
+Provide a read-only `list_folders` tool for live folder navigation. Each call lists only direct child folders and returns at most 100 results; bound both elapsed time and entries examined. Show empty directories. Default to deny access unless the requested path is within an owner-authorized root, and omit hidden folders, excluded folders, and symlinks. Keep `find_files` for query-based matching of live file paths and `browse` for indexed files.
+
+Folder navigation helps users discover sources and empty locations without pretending that the content index is a complete directory listing. Live filesystem access avoids waiting for indexing, while direct-child and resource limits keep each request focused on a small amount of work. Root confinement and filtering preserve the existing source-access boundary. Tests first failed because the application method and MCP tool did not exist, then passed with the new behavior. The focused and full Go suites and installer Python tests pass locally. The tool implementation, its limits, and path checks are filesystem adapters outside Dafny verification; target-NAS behavior remains unvalidated.
+
 ## Open decisions
 
 - When measured indexing time and latency justify expanding to larger source collections.

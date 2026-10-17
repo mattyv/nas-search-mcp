@@ -142,9 +142,9 @@ func TestPublicOAuthToolFlow(t *testing.T) {
 	}
 	defer sessionMCP.Close()
 	tools, e := sessionMCP.ListTools(ctx, nil)
-	expectedTools := 7
+	expectedTools := 8
 	if os.Getenv("NAS_UPGRADE_DIR") != "" {
-		expectedTools = 9
+		expectedTools = 10
 	}
 	if e != nil || len(tools.Tools) != expectedTools {
 		t.Fatal("public tool list failed", e)
@@ -155,6 +155,7 @@ func TestPublicOAuthToolFlow(t *testing.T) {
 	}
 	for _, call := range []mcp.CallToolParams{
 		{Name: "index_status", Arguments: map[string]any{}},
+		{Name: "list_folders", Arguments: map[string]any{}},
 		{Name: "browse", Arguments: map[string]any{"prefix": "Documents"}},
 		{Name: "find_files", Arguments: map[string]any{"query": "doc.txt"}},
 		{Name: "read_file", Arguments: map[string]any{"path": "Documents/doc.txt"}},

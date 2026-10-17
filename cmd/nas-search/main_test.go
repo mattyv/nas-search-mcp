@@ -34,6 +34,9 @@ func TestMCPHTTPTools(t *testing.T) {
 	if e := os.WriteFile(filepath.Join(root, "doc.txt"), []byte("kitchen renovation"), 0600); e != nil {
 		t.Fatal(e)
 	}
+	if e := os.Mkdir(filepath.Join(root, "Empty"), 0700); e != nil {
+		t.Fatal(e)
+	}
 	worker, e := filepath.Abs("../../worker/worker.py")
 	if e != nil {
 		t.Fatal(e)
@@ -131,7 +134,7 @@ func TestMCPHTTPTools(t *testing.T) {
 			t.Fatalf("%s output schema must be object: %s (%v)", tool.Name, encoded, err)
 		}
 	}
-	if len(names) != 7 || !names["search"] || !names["browse"] || !names["read_file"] || !names["index_status"] || !names["read_document"] || !names["fetch_file"] || !names["find_files"] {
+	if len(names) != 8 || !names["search"] || !names["browse"] || !names["read_file"] || !names["index_status"] || !names["read_document"] || !names["fetch_file"] || !names["find_files"] || !names["list_folders"] {
 		t.Fatal(names)
 	}
 	call := func(name string, args map[string]any) map[string]any {
@@ -151,6 +154,11 @@ func TestMCPHTTPTools(t *testing.T) {
 		return out
 	}
 	browse := call("browse", map[string]any{})
+	folders := call("list_folders", map[string]any{})
+	listed, ok := folders["folders"].([]any)
+	if !ok || len(listed) != 1 || listed[0] != "Empty" {
+		t.Fatal(folders)
+	}
 	files, ok := browse["files"].([]any)
 	if !ok || len(files) != 1 {
 		t.Fatal(browse)
