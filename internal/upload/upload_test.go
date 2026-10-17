@@ -47,9 +47,33 @@ func TestSaveTextAndNoOverwrite(t *testing.T) {
 	}
 }
 
+func TestSaveArbitraryFileTypes(t *testing.T) {
+	dir := uploadDir(t)
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{"photo.jpg", []byte{0xff, 0xd8, 0xff, 0x00}},
+		{"archive.zip", []byte("PK\x03\x04opaque")},
+		{"no-extension", []byte{0x00, 0xff, 0x01}},
+	} {
+		got, err := Save(dir, tc.name, bytes.NewReader(tc.data), MaxSize)
+		if err != nil || got.Name != tc.name || got.Size != int64(len(tc.data)) {
+			t.Fatalf("save %q: %+v, %v", tc.name, got, err)
+		}
+		stored, err := os.ReadFile(filepath.Join(dir, tc.name))
+		if err != nil || !bytes.Equal(stored, tc.data) {
+			t.Fatalf("stored %q differs: %v", tc.name, err)
+		}
+		if _, err := Save(dir, tc.name, strings.NewReader("replacement"), MaxSize); !errors.Is(err, ErrExists) {
+			t.Fatalf("duplicate %q: %v", tc.name, err)
+		}
+	}
+}
+
 func TestSaveRejectsUnsafeNamesAndTypes(t *testing.T) {
 	dir := uploadDir(t)
-	for _, name := range []string{"../bad.pdf", "a/b.pdf", `a\b.pdf`, ".hidden.md", "a\n.md", "bad.zip", "bad.exe", "bad.pdf ", ""} {
+	for _, name := range []string{"../bad.pdf", "a/b.pdf", `a\b.pdf`, ".hidden.md", "a\n.md", "bad.pdf ", ""} {
 		if _, err := Save(dir, name, strings.NewReader("hello"), 32<<20); err == nil {
 			t.Errorf("accepted name %q", name)
 		}

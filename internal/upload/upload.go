@@ -1,4 +1,4 @@
-// Package upload is an unverified OS boundary for storing user documents.
+// Package upload is an unverified OS boundary for storing user files.
 // Its filename checks and ZIP inspection are tested, not Dafny-proved.
 package upload
 
@@ -31,7 +31,7 @@ type Result struct {
 	Size int64
 }
 
-// Save stores one document in an existing dedicated uploads mount. The caller
+// Save stores one file in an existing dedicated uploads mount. The caller
 // authenticates the request and supplies the configured directory and limit.
 func Save(dir, name string, src io.Reader, limit int64) (Result, error) {
 	if src == nil || limit <= 0 || limit > MaxSize || !validName(name) {
@@ -107,12 +107,7 @@ func validName(name string) bool {
 			return false
 		}
 	}
-	switch strings.ToLower(filepath.Ext(name)) {
-	case ".pdf", ".txt", ".md", ".docx":
-		return true
-	default:
-		return false
-	}
+	return true
 }
 
 func validateContent(root *os.Root, tmp, name string, size int64) error {

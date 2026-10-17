@@ -60,7 +60,7 @@ func (p *uploadPage) prepare(ctx context.Context) (map[string]any, error) {
 	}
 	expiry := now.Add(5 * time.Minute)
 	p.pending[sha256.Sum256([]byte(nonce))] = &pendingUpload{expires: expiry}
-	return map[string]any{"state": "upload_ready", "upload_url": p.issuer + "/upload/" + nonce, "expires_at": expiry.UTC().Format(time.RFC3339), "message": "Open upload_url yourself, sign in through OAuth, and choose one file up to 32 MB. Never send your password or document in chat. Search indexing starts after the file is saved."}, nil
+	return map[string]any{"state": "upload_ready", "upload_url": p.issuer + "/upload/" + nonce, "expires_at": expiry.UTC().Format(time.RFC3339), "message": "Open upload_url yourself, sign in through OAuth, and choose one file of any type up to 32 MB. Never send your password or file in chat. Supported formats are indexed after the file is saved."}, nil
 }
 
 func uploadCookieName(nonce string) string {
@@ -132,7 +132,7 @@ func (p *uploadPage) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.mu.Unlock()
 		http.SetCookie(w, &http.Cookie{Name: uploadCookieName(nonce), Value: csrf, Path: "/upload/" + nonce, MaxAge: 300, HttpOnly: true, Secure: strings.HasPrefix(p.issuer, "https://"), SameSite: http.SameSiteStrictMode})
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, `<!doctype html><html><head><title>Upload to NAS search</title></head><body><h1>Upload one file</h1><p>Choose a supported document up to 32 MB. It will appear in search after indexing.</p><form method="post" enctype="multipart/form-data"><input type="hidden" name="csrf" value="%s"><label>File <input type="file" name="file" required></label><button type="submit">Upload</button></form></body></html>`, csrf)
+		fmt.Fprintf(w, `<!doctype html><html><head><title>Upload to NAS search</title></head><body><h1>Upload one file</h1><p>Choose any file type up to 32 MB. Ask your assistant to find it by filename after upload; supported formats also appear in content search after indexing.</p><form method="post" enctype="multipart/form-data"><input type="hidden" name="csrf" value="%s"><label>File <input type="file" name="file" required></label><button type="submit">Upload</button></form></body></html>`, csrf)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -194,15 +194,18 @@ func (p *uploadPage) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := upload.Save(p.dir, disposition["filename"], &singleUploadFile{file: file, parts: parts}, uploadLimit)
 	if err != nil {
+		if errors.Is(err, upload.ErrExists) {
+			http.Error(w, "file already exists; nothing was replaced", http.StatusConflict)
+			return
+		}
 		http.Error(w, "file could not be saved; check its type, name, and size", http.StatusBadRequest)
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	if p.onSaved != nil && p.onSaved(result.Name) {
-		fmt.Fprint(w, "File saved. Search indexing is queued; it may take a few minutes.")
-		return
+	if p.onSaved != nil {
+		p.onSaved(result.Name)
 	}
-	fmt.Fprint(w, "File saved. Search indexing will run during the next scan.")
+	fmt.Fprint(w, "File saved. Ask your assistant to find it by filename; supported formats appear in content search after indexing.")
 }
 
 // singleUploadFile forces the multipart parser to find any extra part before Save commits.

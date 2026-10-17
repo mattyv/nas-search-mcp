@@ -70,6 +70,8 @@ func TestUploadPageBoundary(t *testing.T) {
 		want     int
 	}{
 		{"valid", issuer, true, false, "notes.md", 200},
+		{"photo", issuer, true, false, "photo.jpg", 200},
+		{"duplicate", issuer, true, false, "notes.md", 409},
 		{"missing origin", "", true, false, "notes.md", 403},
 		{"null origin", "null", true, false, "notes.md", 403},
 		{"wrong origin", "https://evil.test", true, false, "notes.md", 403},
@@ -144,6 +146,9 @@ func TestUploadPageBoundary(t *testing.T) {
 			if form.Code != 200 || !strings.Contains(form.Body.String(), "multipart/form-data") {
 				t.Fatalf("form: %d", form.Code)
 			}
+			if !strings.Contains(form.Body.String(), "any file type") {
+				t.Fatalf("upload page does not explain supported files: %s", form.Body.String())
+			}
 			if policy := form.Header().Get("Referrer-Policy"); policy != "strict-origin" {
 				t.Fatalf("upload form must send only its origin on same-origin POST, got %q", policy)
 			}
@@ -163,16 +168,27 @@ func TestUploadPageBoundary(t *testing.T) {
 			if tc.name == "valid" {
 				contents = strings.Repeat("a", 70<<10)
 			}
+			if tc.name == "duplicate" {
+				if err := os.WriteFile(filepath.Join(dir, tc.filename), []byte("original"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			submit := request(uploadRequest(t, target, tc.origin, csrf, tc.filename, contents, tc.extra))
 			if submit.Code != tc.want {
 				t.Fatalf("submit: got %d, want %d: %s", submit.Code, tc.want, submit.Body.String())
 			}
-			content, err := os.ReadFile(filepath.Join(dir, "notes.md"))
+			content, err := os.ReadFile(filepath.Join(dir, tc.filename))
+			if tc.name == "duplicate" {
+				if string(content) != "original" || !strings.Contains(submit.Body.String(), "already exists") || queued != "" {
+					t.Fatalf("duplicate replaced file or gave unclear result: %q, %q, queued=%q", content, submit.Body.String(), queued)
+				}
+				return
+			}
 			if tc.want == 200 {
 				if err != nil || string(content) != contents {
 					t.Fatalf("upload missing: %q, %v", content, err)
 				}
-				if queued != "notes.md" {
+				if queued != tc.filename {
 					t.Fatalf("targeted indexing not queued: %q", queued)
 				}
 				replay := request(uploadRequest(t, target, issuer, csrf, "again.md", "hello", false))

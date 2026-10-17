@@ -89,6 +89,9 @@ func TestUploadToolOnlyWhenConfigured(t *testing.T) {
 			for _, tool := range tools.Tools {
 				if tool.Name == "upload_document" {
 					found = true
+					if !strings.Contains(tool.Description, "any type") || !strings.Contains(tool.Description, "find_files") {
+						t.Fatal("upload tool must advertise arbitrary files and filename discovery")
+					}
 					if tool.Annotations == nil || tool.Annotations.ReadOnlyHint || tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint {
 						t.Fatal("upload flow must be classified as a non-destructive write action")
 					}

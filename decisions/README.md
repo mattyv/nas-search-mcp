@@ -234,7 +234,7 @@ ChatGPT may add the standard `ui_locales` authorization parameter. The strict OA
 
 ## D037 — Upload documents through a fresh browser session
 
-**Status:** Accepted; live upload and indexing unvalidated
+**Status:** Superseded by D040; original behavior deployed, successful browser upload unvalidated
 
 Offer an optional `upload_document` MCP tool that creates a short-lived, single-use browser upload page. Require a fresh OAuth browser sign-in, then an explicit file selection and upload click. Accept one PDF, TXT, Markdown, or DOCX file up to 32 MiB. Store it only in a dedicated `Documents/Uploads` directory mounted writable; keep all existing source mounts read-only. Queue targeted indexing after publication, and let the periodic full scan recover when targeted indexing cannot run. Keep the feature disabled by default and require private deployment settings to identify the verified folder and enable it.
 
@@ -257,6 +257,14 @@ Folder navigation helps users discover sources and empty locations without prete
 Set the upload form's referrer policy to `strict-origin`. Under the [Fetch standard](https://fetch.spec.whatwg.org/#append-a-request-origin-header), the prior `no-referrer` policy makes ordinary form POSTs send `Origin: null`, while the upload handler correctly requires the issuer origin. `strict-origin` sends only the site origin, not the private upload URL. Keep rejecting missing, null, or foreign origins and keep the browser session, CSRF, size, type, and single-use checks. Give each OAuth login page a cookie name derived from its random session, so another login page cannot overwrite or delete that page's cookie. Keep the same five-minute expiry and exact cookie/session comparison.
 
 This restores ordinary browser uploads without accepting cross-site posts and makes concurrent connector or browser sign-ins independent. The upload header and interleaved-login regressions failed before the changes and passed afterward. HTTP header and cookie handling remain unverified Go adapters; live Safari submission and target-NAS deployment still need confirmation.
+
+## D040 — Accept any regular file in browser uploads
+
+**Status:** Accepted and locally tested; NAS deployment and live browser upload pending
+
+Allow one regular file of any type, including photos and extensionless files, up to 32 MiB in the dedicated `Documents/Uploads` directory. Keep the existing short-lived single-use link, fresh OAuth browser sign-in, explicit upload click, and no-overwrite behavior. Retain content validation for PDF, TXT, Markdown, and DOCX, including rejection of malformed files in those formats. Other types can be stored and found by filename, but content indexing remains limited to supported formats. Photo visual indexing continues to follow the existing photo-search setting. This replaces D037's upload type allowlist while preserving its access and publication safeguards.
+
+This lets users add originals that the content index cannot process and makes them discoverable by filename without implying that every file can be searched by contents. Existing scanner validation protects supported document formats, while the size limit and isolated writable folder bound the upload path. The new file-type test failed before implementation and passed afterward; the browser flow also accepts a photo in local tests. A duplicate-name regression failed before the clearer conflict response and passed afterward. NAS deployment and live browser upload remain unvalidated. Upload storage, type checks, filesystem access, and indexing are Go adapters outside Dafny verification.
 
 ## Open decisions
 
