@@ -34,9 +34,6 @@ type Result struct {
 // Save stores one file in an existing dedicated uploads mount. The caller
 // authenticates the request and supplies the configured directory and limit.
 func Save(dir, name string, src io.Reader, limit int64) (Result, error) {
-	if src == nil || limit <= 0 || limit > MaxSize || !validName(name) {
-		return Result{}, ErrInvalid
-	}
 	if !filepath.IsAbs(dir) || filepath.Base(filepath.Clean(dir)) != "uploads" {
 		return Result{}, ErrInvalid
 	}
@@ -51,6 +48,15 @@ func Save(dir, name string, src io.Reader, limit int64) (Result, error) {
 	defer root.Close()
 	opened, err := root.Stat(".")
 	if err != nil || !os.SameFile(info, opened) {
+		return Result{}, ErrInvalid
+	}
+	return SaveRoot(root, name, src, limit)
+}
+
+// SaveRoot stores one file relative to an already anchored directory. The
+// caller must have verified that the root is the intended upload directory.
+func SaveRoot(root *os.Root, name string, src io.Reader, limit int64) (Result, error) {
+	if root == nil || src == nil || limit <= 0 || limit > MaxSize || !validName(name) {
 		return Result{}, ErrInvalid
 	}
 	var nonce [16]byte

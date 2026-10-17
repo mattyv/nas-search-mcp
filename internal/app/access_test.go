@@ -96,6 +96,37 @@ func TestAccessRejectsSymlinksAndInvalidFolders(t *testing.T) {
 	}
 }
 
+func TestUploadDestinationRequiresAuthorizedExistingDirectory(t *testing.T) {
+	a := accessApp(t)
+	for _, folder := range []string{"Documents/Public/Empty", "Documents/Public/Blocked", "Documents/Private", "Code/Public", "Code/Private"} {
+		if err := os.MkdirAll(filepath.Join(a.Root, folder), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(a.Root, "Code/Public"), filepath.Join(a.Root, "Documents/Public/Link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ConfigureAccess([]string{"Documents/Public", "Code/Public"}, []string{"Documents/Public/Blocked"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"Documents/Public", "Documents/Public/Empty", "Code/Public"} {
+		if err := a.ValidateUploadDestination(path); err != nil {
+			t.Fatalf("valid destination %q: %v", path, err)
+		}
+	}
+	for _, path := range []string{"", ".", "Documents", "Documents/Private", "Code/Private", "Documents/Public/Blocked", "Documents/Public/Link", "Documents/Public/Missing", "Documents/Public/../Private", "/Documents/Public", "Documents/Public/node_modules"} {
+		if err := a.ValidateUploadDestination(path); err == nil {
+			t.Fatalf("invalid destination granted: %q", path)
+		}
+	}
+	if err := a.ConfigureAccess(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ValidateUploadDestination("Documents/Public"); err == nil {
+		t.Fatal("empty allowlist granted uploads")
+	}
+}
+
 func accessApp(t *testing.T) *App {
 	t.Helper()
 	base := t.TempDir()

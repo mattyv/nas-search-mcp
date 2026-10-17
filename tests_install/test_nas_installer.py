@@ -15,6 +15,7 @@ printf '%s\\n' "$*" >> "$DOCKER_LOG"
 case "$1" in
 info) echo 'Server ready';;
 inspect) [ -n "${ACTIVE_INSTALL:-}" ] || exit 1; printf '%s\\n' "$ACTIVE_INSTALL";;
+ps) [ -z "${OLD_WRITER:-}" ] || printf '%s\\n' "$OLD_WRITER";;
 pull) [ "${FAIL_PULL:-0}" = 0 ];;
 run) [ "${FAIL_LIMITS:-0}" = 0 ];;
 compose) if [ "${CHECK_NAS_ENV:-0}" = 1 ] && [ "${2:-}" != version ]; then
@@ -490,3 +491,64 @@ def test_upload_mount_only_for_existing_documents_subfolder(tmp_path):
     log.write_text('')
     assert subprocess.run(args, env=env, capture_output=True).returncode != 0
     assert 'pull ' not in log.read_text()
+
+
+def test_indexed_destination_upload_uses_isolated_writer(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    state = tmp_path / 'install'
+    secret = state / '.env'
+    original = secret.read_text()
+    uploads = tmp_path / 'Documents' / 'Uploads'
+    uploads.mkdir()
+    secret.write_text(original + f'NAS_UPLOAD_ENABLED=true\nNAS_UPLOAD_PATH={uploads}\nNAS_UPLOAD_INDEXED_DESTINATIONS=true\n')
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    compose = (state / 'compose.yaml').read_text()
+    assert ':/uploads:rw' not in compose
+    assert 'nas-upload-writer:' in compose
+    assert ':/write/' in compose
+    assert ':/files/${NAS_DOCUMENTS_LABEL:-Documents}:ro' in compose
+    assert '--profile indexed-upload' in log.read_text()
+    assert 'up -d --no-build --remove-orphans' in log.read_text()
+    assert (tmp_path / 'index' / 'upload-ipc').is_dir()
+    assert secret.read_text() == original + f'NAS_UPLOAD_ENABLED=true\nNAS_UPLOAD_PATH={uploads}\nNAS_UPLOAD_INDEXED_DESTINATIONS=true\n'
+
+
+def test_indexed_upload_rejects_overlapping_source_roots_before_pull(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    state = tmp_path / 'install'
+    secret = state / '.env'
+    original = secret.read_text()
+    nested = tmp_path / 'Documents' / 'Code'
+    nested.mkdir()
+    secret.write_text(original.replace(f"NAS_CODE_PATH='{tmp_path / 'Code'}'", f"NAS_CODE_PATH='{nested}'") + 'NAS_UPLOAD_ENABLED=true\nNAS_UPLOAD_INDEXED_DESTINATIONS=true\n')
+    log.write_text('')
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert 'overlap' in result.stderr.lower()
+    assert 'pull ' not in log.read_text()
+
+
+def test_indexed_upload_rejects_unsafe_existing_ipc_directory(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    state = tmp_path / 'install'
+    secret = state / '.env'
+    secret.write_text(secret.read_text() + 'NAS_UPLOAD_ENABLED=true\nNAS_UPLOAD_INDEXED_DESTINATIONS=true\n')
+    ipc = tmp_path / 'index' / 'upload-ipc'
+    ipc.mkdir(mode=0o777)
+    ipc.chmod(0o777)
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert 'mode 700' in result.stderr
+    assert ipc.stat().st_mode & 0o777 == 0o777
+
+
+def test_fixed_upload_mode_stops_prior_indexed_writer(tmp_path):
+    args, env, log = setup(tmp_path)
+    env['OLD_WRITER'] = 'project-writer-container'
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert 'stop project-writer-container' in log.read_text()

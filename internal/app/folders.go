@@ -73,7 +73,7 @@ func (a *App) ListFolders(ctx context.Context, path string, limit int) (FolderRe
 				out.Truncated, out.Warning = true, "Entry limit reached; try a narrower folder"
 				break
 			}
-			if strings.HasPrefix(entry.Name(), ".") || excluded[entry.Name()] || entry.Type()&os.ModeSymlink != 0 {
+			if policy.SourceComponentExcluded(entry.Name()) || entry.Type()&os.ModeSymlink != 0 {
 				continue
 			}
 			if !entry.IsDir() {

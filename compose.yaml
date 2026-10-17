@@ -24,6 +24,8 @@ services:
       NAS_ALLOWED_FOLDERS: "${NAS_ALLOWED_FOLDERS:-}"
       NAS_DENIED_FOLDERS: "${NAS_DENIED_FOLDERS:-}"
       NAS_UPLOAD_ENABLED: "${NAS_UPLOAD_ENABLED:-false}"
+      NAS_UPLOAD_INDEXED_DESTINATIONS: "${NAS_UPLOAD_INDEXED_DESTINATIONS:-false}"
+      NAS_UPLOAD_WRITER_SOCKET: /data/upload-ipc/upload.sock
       NAS_UPGRADE_DIR: "${NAS_UPGRADE_DIR:-}"
       NAS_ROOT: /files
       NAS_DATA: /data
@@ -57,6 +59,38 @@ services:
       - /tmp:size=64m,mode=1777
     healthcheck:
       test: [CMD, /app/nas-search, health]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  nas-upload-writer:
+    profiles: [indexed-upload]
+    image: nas-search-mcp:local
+    command: [upload-writer]
+    restart: unless-stopped
+    init: true
+    network_mode: none
+    user: "${NAS_UID:-1000}:${NAS_GID:-1000}"
+    environment:
+      NAS_ROOT: /write
+      NAS_UPLOAD_WRITER_SOCKET: /ipc/upload.sock
+      NAS_ALLOWED_FOLDERS: "${NAS_ALLOWED_FOLDERS:-}"
+      NAS_DENIED_FOLDERS: "${NAS_DENIED_FOLDERS:-}"
+    volumes:
+      - "${NAS_DOCUMENTS_PATH:-/volume1/shared-documents}:/write/${NAS_DOCUMENTS_LABEL:-Documents}:rw"
+      - "${NAS_CODE_PATH:-/volume1/shared-code}:/write/Code:rw"
+      - "${NAS_PHOTOS_PATH:-/volume1/shared-photos}:/write/Photos:rw"
+      - "${NAS_INDEX_PATH:-/volume1/app-data/nas-search/index}/upload-ipc:/ipc:rw"
+    mem_limit: 96m
+    memswap_limit: 96m
+    cpuset: "${NAS_CPUSET:-0}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    healthcheck:
+      test: [CMD, /app/nas-search, upload-writer-health]
       interval: 30s
       timeout: 5s
       retries: 3

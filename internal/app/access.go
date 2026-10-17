@@ -38,7 +38,7 @@ func (a *App) ConfigureAccess(allow, deny []string) error {
 func within(path, folder string) bool { return path == folder || strings.HasPrefix(path, folder+"/") }
 func hiddenOrExcluded(path string) bool {
 	for _, part := range strings.Split(path, "/") {
-		if strings.HasPrefix(part, ".") || excluded[part] {
+		if policy.SourceComponentExcluded(part) {
 			return true
 		}
 	}
@@ -64,6 +64,40 @@ func (a *App) accessAllowed(path string, directory bool) bool {
 		}
 	}
 	return false
+}
+
+// ValidateUploadDestination accepts only an existing folder inside an explicit
+// readable source allowlist. Browse-only ancestors of an allowed folder do not
+// grant write placement. The caller must recheck when the file is submitted.
+func (a *App) ValidateUploadDestination(path string) error {
+	if len(path) > 4096 || !policy.ValidRelative(path) || filepath.ToSlash(filepath.Clean(path)) != path || hiddenOrExcluded(path) {
+		return errors.New("invalid upload destination")
+	}
+	a.accessMu.RLock()
+	allowed := false
+	if a.accessConfigured {
+		for _, deny := range a.denied {
+			if within(path, deny) {
+				a.accessMu.RUnlock()
+				return errors.New("upload destination is not authorized")
+			}
+		}
+		for _, allow := range a.allowed {
+			if within(path, allow) {
+				allowed = true
+				break
+			}
+		}
+	}
+	a.accessMu.RUnlock()
+	if !allowed {
+		return errors.New("upload destination is not authorized")
+	}
+	f, err := a.openNoSymlinks(path, true)
+	if err != nil {
+		return errors.New("upload destination is unavailable")
+	}
+	return f.Close()
 }
 
 // Each component is opened relative to its pinned parent descriptor, never following symlinks.

@@ -36,7 +36,9 @@ jobs:
       - name: Validate Compose configuration
         env:
           NAS_TOKEN: ci-only-placeholder-token-not-a-credential
-        run: docker compose -f compose.yaml config --quiet
+        run: |
+          docker compose -f compose.yaml config --quiet
+          docker compose --profile indexed-upload -f compose.yaml config --quiet
       - name: Build container
         run: docker build -t nas-search-mcp:test .
   publish:

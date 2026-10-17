@@ -3,7 +3,7 @@
 set -eu
 umask 077
 fail() { printf '%s\n' "$*" >&2; exit 1; }
-image= install_dir= documents= photos= code= data= bind=127.0.0.1 documents_label=Documents dry=false upload_enabled=false upload_path=
+image= install_dir= documents= photos= code= data= bind=127.0.0.1 documents_label=Documents dry=false upload_enabled=false upload_indexed=false upload_path=
 uid=${SUDO_UID:-$(id -u)}
 gid=${SUDO_GID:-$(id -g)}
 while [ "$#" -gt 0 ]; do
@@ -97,6 +97,7 @@ if [ -f "$install_dir/.env" ]; then
     else bind=$(field NAS_LAN_IP); bind=${bind:-127.0.0.1}; fi
     queue=$(field NAS_UPGRADE_PATH)
     upload_enabled=$(field NAS_UPLOAD_ENABLED)
+    upload_indexed=$(field NAS_UPLOAD_INDEXED_DESTINATIONS)
     upload_path=$(field NAS_UPLOAD_PATH)
     uid=$(field NAS_UID)
     gid=$(field NAS_GID)
@@ -108,7 +109,10 @@ case "$documents_label" in ''|*[!a-zA-Z0-9_-]*) fail 'Document label must use le
 # Validate effective loaded paths as well as command-line paths.
 queue=${queue:-$install_dir/upgrades}
 upload_enabled=${upload_enabled:-false}
+upload_indexed=${upload_indexed:-false}
 case "$upload_enabled" in true|false) :;; *) fail 'NAS_UPLOAD_ENABLED must be true or false';; esac
+case "$upload_indexed" in true|false) :;; *) fail 'NAS_UPLOAD_INDEXED_DESTINATIONS must be true or false';; esac
+[ "$upload_indexed" != true ] || [ "$upload_enabled" = true ] || fail 'Indexed upload destinations require uploads to be enabled'
 for path in "$documents" "$photos" "$code" "$data" "$queue" "$upload_path"; do
     [ -n "$path" ] || continue
     case "$path" in /*) :;; *) fail 'Effective mount paths must be absolute';; esac
@@ -117,7 +121,7 @@ done
 printf '%s\n' "$bind" | awk -F. 'NF != 4 {exit 1} {for(i=1;i<=4;i++) if ($i !~ /^[0-9]+$/ || length($i)>3 || $i+0>255 || (length($i)>1 && substr($i,1,1)=="0")) exit 1}' || fail 'Bind address must be a valid explicit IPv4 address'
 queue=$(canonical "$queue") || fail 'Cannot resolve upgrade queue'
 documents=$(canonical "$documents") || fail 'Cannot resolve selected source'
-if [ "$upload_enabled" = true ]; then
+if [ "$upload_enabled" = true ] && [ "$upload_indexed" != true ]; then
     [ -n "$upload_path" ] && [ -d "$upload_path" ] && [ ! -L "$upload_path" ] || fail 'Upload folder must already exist as a real directory'
     upload_path=$(canonical "$upload_path") || fail 'Cannot resolve upload folder'
     [ "$upload_path" = "$documents/Uploads" ] || fail 'Upload folder must be the Documents/Uploads subfolder'
@@ -127,6 +131,11 @@ code=$(canonical "$code") || fail 'Cannot resolve Code source'
 data=$(canonical "$data") || fail 'Cannot resolve index path'
 install_dir=$(canonical "$install_dir") || fail 'Cannot resolve install path'
 overlap() { [ "$1" = / ] || [ "$2" = / ] && return 0; case "$1/" in "$2/"*) return 0;; esac; case "$2/" in "$1/"*) return 0;; esac; return 1; }
+if [ "$upload_indexed" = true ]; then
+    overlap "$documents" "$photos" && fail 'Indexed upload source roots must not overlap'
+    overlap "$documents" "$code" && fail 'Indexed upload source roots must not overlap'
+    overlap "$photos" "$code" && fail 'Indexed upload source roots must not overlap'
+fi
 for source in "$documents" "$photos" "$code"; do
     overlap "$data" "$source" && fail 'Index data must not overlap source directories'
     overlap "$queue" "$source" && fail 'Upgrade queue must not overlap source directories'
@@ -181,11 +190,24 @@ docker run --rm --user "$uid:$gid" --memory 1g --memory-swap 1g --cpuset-cpus 0 
     -v "$documents:/check-documents:ro" -v "$photos:/check-photos:ro" -v "$code:/check-code:ro" -v "$data:/check-data" \
     --entrypoint python3 "$image" -c 'import os,tempfile; assert os.access("/check-documents",os.R_OK|os.X_OK); assert os.access("/check-photos",os.R_OK|os.X_OK); assert os.access("/check-code",os.R_OK|os.X_OK); f=tempfile.NamedTemporaryFile(dir="/check-data"); f.write(b"probe"); f.flush(); f.close()' \
     || fail 'Container user cannot read selected sources or write index data; fix DSM permissions before deployment'
-if [ "$upload_enabled" = true ]; then
+if [ "$upload_enabled" = true ] && [ "$upload_indexed" != true ]; then
     docker run --rm --user "$uid:$gid" --memory 1g --memory-swap 1g --cpuset-cpus 0 \
         -v "$upload_path:/check-upload" --entrypoint python3 "$image" \
         -c 'import tempfile; f=tempfile.NamedTemporaryFile(dir="/check-upload"); f.write(b"probe"); f.flush(); f.close()' \
         || fail 'Container user cannot write the dedicated upload folder; fix DSM permissions before deployment'
+fi
+if [ "$upload_indexed" = true ]; then
+    [ ! -L "$data/upload-ipc" ] || fail 'Upload IPC directory must not be a symlink'
+    if [ ! -e "$data/upload-ipc" ]; then
+        mkdir -m 700 "$data/upload-ipc" || fail 'Cannot create upload IPC directory'
+        chown "$uid:$gid" "$data/upload-ipc" || fail 'Cannot assign upload IPC directory'
+    fi
+    [ -d "$data/upload-ipc" ] || fail 'Upload IPC path must be a directory'
+    python3 -c 'import os,stat,sys; sys.exit(0 if stat.S_IMODE(os.stat(sys.argv[1],follow_symlinks=False).st_mode)==0o700 else 1)' "$data/upload-ipc" || fail 'Upload IPC directory must have mode 700'
+    docker run --rm --user "$uid:$gid" --memory 96m --memory-swap 96m --cpuset-cpus 0 \
+        -v "$data/upload-ipc:/check-ipc" --entrypoint python3 "$image" \
+        -c 'import tempfile; f=tempfile.NamedTemporaryFile(dir="/check-ipc"); f.write(b"probe"); f.flush(); f.close()' \
+        || fail 'Container user cannot write the upload IPC directory'
 fi
 # The deployment copy is pull-only; upstream resource and security defaults remain.
 previous_compose=
@@ -193,7 +215,7 @@ if [ -f "$install_dir/compose.yaml" ]; then
     previous_compose=$install_dir/compose.yaml.previous
     cp "$install_dir/compose.yaml" "$previous_compose"
 fi
-awk -v image="$image" -v bind="$bind" -v uploads="$upload_enabled" '/NAS_BIND_IP.*8080:8080/ {print "      - \"" bind ":8080:8080\""; if (bind != "127.0.0.1" && bind != "0.0.0.0") print "      - \"127.0.0.1:8080:8080\""; next} /^[ ]*build:/ {next} /^[ ]*image:/ {print "    image: " image; next} /^[ ]*cpus:/ {next} /^[ ]*pids_limit:/ {next} {print; if (uploads == "true" && /:\/data"$/) print "      - \"${NAS_UPLOAD_PATH}:/uploads:rw\""}' "$project_dir/compose.yaml" > "$install_dir/compose.yaml.tmp"
+awk -v image="$image" -v bind="$bind" -v uploads="$upload_enabled" -v indexed="$upload_indexed" '/NAS_BIND_IP.*8080:8080/ {print "      - \"" bind ":8080:8080\""; if (bind != "127.0.0.1" && bind != "0.0.0.0") print "      - \"127.0.0.1:8080:8080\""; next} /^[ ]*build:/ {next} /^[ ]*image:/ {print "    image: " image; next} /^[ ]*cpus:/ {next} /^[ ]*pids_limit:/ {next} {print; if (uploads == "true" && indexed != "true" && /:\/data"$/) print "      - \"${NAS_UPLOAD_PATH}:/uploads:rw\""}' "$project_dir/compose.yaml" > "$install_dir/compose.yaml.tmp"
 mv "$install_dir/compose.yaml.tmp" "$install_dir/compose.yaml"
 previous=
 [ ! -f "$install_dir/current-image" ] || previous=$(cat "$install_dir/current-image")
@@ -203,7 +225,11 @@ compose() (
     for name in $(env | sed -n 's/^\(NAS_[A-Za-z0-9_]*\)=.*/\1/p'); do
         unset "$name"
     done
-    docker compose --env-file "$install_dir/.env" --project-name nas-search --project-directory "$install_dir" -f "$install_dir/compose.yaml" "$@"
+    if [ "$upload_indexed" = true ]; then
+        docker compose --profile indexed-upload --env-file "$install_dir/.env" --project-name nas-search --project-directory "$install_dir" -f "$install_dir/compose.yaml" "$@"
+    else
+        docker compose --env-file "$install_dir/.env" --project-name nas-search --project-directory "$install_dir" -f "$install_dir/compose.yaml" "$@"
+    fi
 )
 rollback() {
     if [ -n "$previous" ]; then
@@ -214,14 +240,28 @@ rollback() {
             sed "s|^    image:.*|    image: $previous|" "$install_dir/compose.yaml" > "$install_dir/compose.yaml.tmp"
             mv "$install_dir/compose.yaml.tmp" "$install_dir/compose.yaml"
         fi
-        compose up -d --no-build || printf 'Rollback failed; inspect Container Manager.\n' >&2
+        compose up -d --no-build --remove-orphans || printf 'Rollback failed; inspect Container Manager.\n' >&2
     else
         printf 'Deployment checks failed; stopping the new service. Index and .env are preserved.\n' >&2
         compose stop || true
     fi
     exit 1
 }
-compose up -d --no-build || rollback
+compose up -d --no-build --remove-orphans || rollback
+if [ "$upload_indexed" = true ]; then
+    writer_ready=false
+    writer_attempt=0
+    while [ "$writer_attempt" -lt 20 ]; do
+        if compose exec -T nas-upload-writer /app/nas-search upload-writer-health >/dev/null 2>&1; then writer_ready=true; break; fi
+        writer_attempt=$((writer_attempt + 1))
+        sleep 1
+    done
+    [ "$writer_ready" = true ] || rollback
+else
+    # A previously enabled writer must not retain writable source mounts.
+    old_writer=$(docker ps -q --filter 'name=^/nas-search-nas-upload-writer-1$') || rollback
+    [ -z "$old_writer" ] || docker stop "$old_writer" >/dev/null || rollback
+fi
 # Check authenticated MCP status inside the container, without exposing tokens in args.
 check='import json,os,urllib.request,urllib.error
 url="http://127.0.0.1:8080"

@@ -603,7 +603,7 @@ func (a *App) findFiles(ctx context.Context, query, prefix string, limit, budget
 				}
 				out.Visited++
 				if entry.IsDir() {
-					if excluded[entry.Name()] {
+					if policy.SourceComponentExcluded(entry.Name()) {
 						continue
 					}
 					folder := relative + "/"
@@ -718,8 +718,6 @@ func (a *App) Status() (map[string]any, error) {
 	return map[string]any{"index": index, "scanning": a.scanning, "last_scan": a.lastScan, "scan_error": scanError, "semantic": a.Semantic, "photos": a.Photos, "ocr": ocrEnabled(), "current_file": currentFile, "scan_stage": a.scanStage, "file_started_at": a.fileStartedAt, "scan_started_at": a.scanStartedAt}, nil
 }
 
-var excluded = map[string]bool{"node_modules": true, "vendor": true, "build": true, "dist": true, "__pycache__": true, "WDTimeMachine": true, "Time Machine": true, "@eaDir": true, "@Recycle": true}
-
 func supported(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	return imageFile(name) || strings.Contains("|txt|md|rst|csv|tsv|json|jsonl|xml|yaml|yml|toml|ini|cfg|log|py|go|rs|java|js|jsx|ts|tsx|c|h|cpp|hpp|cs|sh|bash|sql|dfy|css|scss|vue|svelte|rb|php|swift|kt|kts|r|tex|html|htm|pdf|docx|xlsx|xlsm|pptx|", "|"+strings.TrimPrefix(ext, ".")+"|")
@@ -833,7 +831,7 @@ func (a *App) Scan(ctx context.Context) error {
 			if !a.accessAllowed(filepath.ToSlash(rel), true) {
 				return filepath.SkipDir
 			}
-			if full != a.Root && (strings.HasPrefix(d.Name(), ".") || excluded[d.Name()]) {
+			if full != a.Root && policy.SourceComponentExcluded(d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil

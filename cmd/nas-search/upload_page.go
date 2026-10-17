@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -17,31 +18,52 @@ import (
 
 	"github.com/mattyv/nas-search-mcp/internal/oauth"
 	"github.com/mattyv/nas-search-mcp/internal/upload"
+	"github.com/mattyv/nas-search-mcp/internal/uploadwriter"
 )
 
 const uploadLimit = int64(32 << 20)
 
 type uploadPage struct {
-	issuer  string
-	dir     string
-	onSaved func(string) bool
-	mu      sync.Mutex
-	pending map[[32]byte]*pendingUpload
+	issuer              string
+	dir                 string
+	writer              *uploadwriter.Client
+	validateDestination func(string) error
+	onSaved             func(string) bool
+	mu                  sync.Mutex
+	pending             map[[32]byte]*pendingUpload
 }
 
 type pendingUpload struct {
-	csrf    [32]byte
-	expires time.Time
-	browser string
+	csrf        [32]byte
+	expires     time.Time
+	browser     string
+	destination string
 }
 
 func newUploadPage(issuer, dir string) *uploadPage {
 	return &uploadPage{issuer: strings.TrimRight(issuer, "/"), dir: dir, pending: make(map[[32]byte]*pendingUpload)}
 }
 
-func (p *uploadPage) prepare(ctx context.Context) (map[string]any, error) {
+func newIndexedUploadPage(issuer string, writer *uploadwriter.Client, validate func(string) error) *uploadPage {
+	return &uploadPage{issuer: strings.TrimRight(issuer, "/"), writer: writer, validateDestination: validate, pending: make(map[[32]byte]*pendingUpload)}
+}
+
+func (p *uploadPage) prepare(ctx context.Context, requestedDestination ...string) (map[string]any, error) {
 	if oauth.AuthenticatedKey(ctx) == "" {
 		return nil, errors.New("OAuth authentication required for uploads")
+	}
+	destination := "Documents/Uploads"
+	if p.writer != nil {
+		if len(requestedDestination) != 1 || strings.TrimSpace(requestedDestination[0]) == "" {
+			return nil, errors.New("destination is required")
+		}
+		destination = requestedDestination[0]
+		if p.validateDestination == nil {
+			return nil, errors.New("upload destination validation unavailable")
+		}
+		if err := p.validateDestination(destination); err != nil {
+			return nil, fmt.Errorf("invalid upload destination: %w", err)
+		}
 	}
 	nonce, err := randomUpgradeToken()
 	if err != nil {
@@ -59,7 +81,7 @@ func (p *uploadPage) prepare(ctx context.Context) (map[string]any, error) {
 		return nil, errors.New("too many pending uploads; try again in five minutes")
 	}
 	expiry := now.Add(5 * time.Minute)
-	p.pending[sha256.Sum256([]byte(nonce))] = &pendingUpload{expires: expiry}
+	p.pending[sha256.Sum256([]byte(nonce))] = &pendingUpload{expires: expiry, destination: destination}
 	return map[string]any{"state": "upload_ready", "upload_url": p.issuer + "/upload/" + nonce, "expires_at": expiry.UTC().Format(time.RFC3339), "message": "Open upload_url yourself, sign in through OAuth, and choose one file of any type up to 32 MB. Never send your password or file in chat. Supported formats are indexed after the file is saved."}, nil
 }
 
@@ -132,7 +154,7 @@ func (p *uploadPage) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.mu.Unlock()
 		http.SetCookie(w, &http.Cookie{Name: uploadCookieName(nonce), Value: csrf, Path: "/upload/" + nonce, MaxAge: 300, HttpOnly: true, Secure: strings.HasPrefix(p.issuer, "https://"), SameSite: http.SameSiteStrictMode})
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, `<!doctype html><html><head><title>Upload to NAS search</title></head><body><h1>Upload one file</h1><p>Choose any file type up to 32 MB. Ask your assistant to find it by filename after upload; supported formats also appear in content search after indexing.</p><form method="post" enctype="multipart/form-data"><input type="hidden" name="csrf" value="%s"><label>File <input type="file" name="file" required></label><button type="submit">Upload</button></form></body></html>`, csrf)
+		fmt.Fprintf(w, `<!doctype html><html><head><title>Upload to NAS search</title></head><body><h1>Upload one file</h1><p>Destination: %s</p><p>Choose any file type up to 32 MB. Ask your assistant to find it by filename after upload; supported formats also appear in content search after indexing.</p><form method="post" enctype="multipart/form-data"><input type="hidden" name="csrf" value="%s"><label>File <input type="file" name="file" required></label><button type="submit">Upload</button></form></body></html>`, html.EscapeString(item.destination), csrf)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -192,7 +214,18 @@ func (p *uploadPage) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid upload form", http.StatusBadRequest)
 		return
 	}
-	result, err := upload.Save(p.dir, disposition["filename"], &singleUploadFile{file: file, parts: parts}, uploadLimit)
+	if p.writer != nil {
+		if err := p.validateDestination(item.destination); err != nil {
+			http.Error(w, "upload destination is no longer authorized", http.StatusForbidden)
+			return
+		}
+	}
+	var result upload.Result
+	if p.writer != nil {
+		result, err = p.writer.Save(r.Context(), item.destination, disposition["filename"], &singleUploadFile{file: file, parts: parts})
+	} else {
+		result, err = upload.Save(p.dir, disposition["filename"], &singleUploadFile{file: file, parts: parts}, uploadLimit)
+	}
 	if err != nil {
 		if errors.Is(err, upload.ErrExists) {
 			http.Error(w, "file already exists; nothing was replaced", http.StatusConflict)
@@ -203,7 +236,11 @@ func (p *uploadPage) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	if p.onSaved != nil {
-		p.onSaved(result.Name)
+		name := result.Name
+		if p.writer != nil {
+			name = item.destination + "/" + name
+		}
+		p.onSaved(name)
 	}
 	fmt.Fprint(w, "File saved. Ask your assistant to find it by filename; supported formats appear in content search after indexing.")
 }

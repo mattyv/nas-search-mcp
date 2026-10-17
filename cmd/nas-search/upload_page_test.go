@@ -97,7 +97,8 @@ func TestUploadPageBoundary(t *testing.T) {
 			var queued string
 			page.onSaved = func(name string) bool { queued = name; return true }
 			nonce := strings.Repeat("n", 43)
-			page.pending[sha256.Sum256([]byte(nonce))] = &pendingUpload{expires: time.Now().Add(time.Minute)}
+			destination := `Documents/<script>alert(1)</script>`
+			page.pending[sha256.Sum256([]byte(nonce))] = &pendingUpload{expires: time.Now().Add(time.Minute), destination: destination}
 			target := issuer + "/upload/" + nonce
 			mux := http.NewServeMux()
 			mux.Handle("/upload/", hardenUploads(auth.BrowserActionHandler(page, page.known), log.New(io.Discard, "", 0)))
@@ -148,6 +149,9 @@ func TestUploadPageBoundary(t *testing.T) {
 			}
 			if !strings.Contains(form.Body.String(), "any file type") {
 				t.Fatalf("upload page does not explain supported files: %s", form.Body.String())
+			}
+			if !strings.Contains(form.Body.String(), "Destination: Documents/&lt;script&gt;alert(1)&lt;/script&gt;") || strings.Contains(form.Body.String(), destination) {
+				t.Fatalf("upload destination was not safely displayed: %s", form.Body.String())
 			}
 			if policy := form.Header().Get("Referrer-Policy"); policy != "strict-origin" {
 				t.Fatalf("upload form must send only its origin on same-origin POST, got %q", policy)

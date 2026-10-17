@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -60,9 +61,9 @@ func TestUploadToolOnlyWhenConfigured(t *testing.T) {
 	}
 	defer a.Close()
 	for _, test := range []struct {
-		name    string
-		page    *uploadPage
-		want    bool
+		name string
+		page *uploadPage
+		want bool
 	}{
 		{name: "disabled"},
 		{name: "enabled", page: newUploadPage("https://nas.example", filepath.Join(t.TempDir(), "uploads")), want: true},
@@ -94,6 +95,10 @@ func TestUploadToolOnlyWhenConfigured(t *testing.T) {
 					}
 					if tool.Annotations == nil || tool.Annotations.ReadOnlyHint || tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint {
 						t.Fatal("upload flow must be classified as a non-destructive write action")
+					}
+					schema, err := json.Marshal(tool.InputSchema)
+					if err != nil || !strings.Contains(string(schema), `"destination"`) {
+						t.Fatalf("upload tool must expose destination input: %s, %v", schema, err)
 					}
 				}
 			}

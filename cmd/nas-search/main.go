@@ -17,6 +17,7 @@ import (
 	"github.com/mattyv/nas-search-mcp/internal/oauth"
 	"github.com/mattyv/nas-search-mcp/internal/store"
 	"github.com/mattyv/nas-search-mcp/internal/upgrade"
+	"github.com/mattyv/nas-search-mcp/internal/uploadwriter"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -96,6 +97,18 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "upload-writer" {
+		if err := uploadwriter.Run(env("NAS_UPLOAD_WRITER_SOCKET", "/ipc/upload.sock"), env("NAS_ROOT", "/write"), folderList(os.Getenv("NAS_ALLOWED_FOLDERS")), folderList(os.Getenv("NAS_DENIED_FOLDERS"))); err != nil {
+			log.Fatal("upload writer unavailable")
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "upload-writer-health" {
+		if err := (uploadwriter.Client{Socket: env("NAS_UPLOAD_WRITER_SOCKET", "/ipc/upload.sock")}).Ping(context.Background()); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "health" {
 		c := http.Client{Timeout: 3 * time.Second}
 		r, err := c.Get("http://127.0.0.1:8080/healthz")
@@ -151,11 +164,16 @@ func main() {
 		var uploads *uploadPage
 		readTimeout := 15 * time.Second
 		if enabled("NAS_UPLOAD_ENABLED", false) {
-			info, statErr := os.Lstat("/uploads")
-			if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-				log.Fatal("upload directory must be an existing dedicated mount")
+			indexedDestinations := enabled("NAS_UPLOAD_INDEXED_DESTINATIONS", false)
+			if indexedDestinations {
+				uploads = newIndexedUploadPage(issuer, &uploadwriter.Client{Socket: env("NAS_UPLOAD_WRITER_SOCKET", "/data/upload-ipc/upload.sock")}, a.ValidateUploadDestination)
+			} else {
+				info, statErr := os.Lstat("/uploads")
+				if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+					log.Fatal("upload directory must be an existing dedicated mount")
+				}
+				uploads = newUploadPage(issuer, "/uploads")
 			}
-			uploads = newUploadPage(issuer, "/uploads")
 			queued := make(chan string, 4)
 			uploads.onSaved = func(name string) bool {
 				select {
@@ -170,7 +188,11 @@ func main() {
 					select {
 					case name := <-queued:
 						indexCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-						err := a.IndexUploaded(indexCtx, env("NAS_DOCUMENTS_LABEL", "Documents")+"/Uploads/"+name)
+						indexPath := name
+						if !indexedDestinations {
+							indexPath = env("NAS_DOCUMENTS_LABEL", "Documents") + "/Uploads/" + name
+						}
+						err := a.IndexUploaded(indexCtx, indexPath)
 						cancel()
 						if err != nil && ctx.Err() == nil {
 							log.Printf("uploaded file not indexed immediately")
@@ -344,8 +366,10 @@ func buildMCPServer(a *app.App, approval *upgradeApproval, uploads ...*uploadPag
 	}
 	if len(uploads) > 0 && uploads[0] != nil {
 		page := uploads[0]
-		mcp.AddTool(server, &mcp.Tool{Name: "upload_document", Description: "Get a short-lived page for uploading one file of any type up to 32 MB into the authorized Documents/Uploads folder. Show the returned upload_url to the user. The file is saved only after the user opens the page, signs in again, chooses a file, and clicks Upload. Use find_files to locate any saved file by filename; content indexing is limited to supported formats. This tool itself does not write files.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(false), OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
-			out, err := page.prepare(ctx)
+		mcp.AddTool(server, &mcp.Tool{Name: "upload_document", Description: "Get a short-lived page for uploading one file of any type up to 32 MB. In configured destination mode, choose an authorized folder path from browse_folders and supply it as destination; the page locks that destination and shows it before the user selects a file. Legacy mode saves to Documents/Uploads. Show the returned upload_url to the user. The file is saved only after the user opens the page, signs in again, chooses a file, and clicks Upload. Use find_files to locate any saved file by filename; content indexing is limited to supported formats. This tool itself does not write files.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(false), OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in struct {
+			Destination string `json:"destination,omitempty"`
+		}) (*mcp.CallToolResult, map[string]any, error) {
+			out, err := page.prepare(ctx, in.Destination)
 			return nil, out, err
 		})
 	}
