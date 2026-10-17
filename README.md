@@ -57,3 +57,15 @@ Text search uses BGE-small English embeddings and SQLite FTS5 with sqlite-vec. O
 The application core is written in [Dafny](core/Core.dfy) and compiled to Go. Its proofs cover specified core properties; they do not prove filesystem confinement, SQLite transactions, MCP transport/authentication, document parsers, embeddings, or deployment. Go and Python adapters are tested separately. See [AGENTS.md](AGENTS.md) for development checks.
 
 The container is configured with bounded memory and CPU use. Actual NAS compatibility, indexing speed, search latency, and memory use must be measured on the target device before making performance claims. Development smoke measurements are not throughput estimates.
+
+## Claude connector cannot find the server on a Mac
+
+If Claude's sign-in opens Safari and Safari says it cannot find the server, check DNS before changing the connector. A Mac connected to a different Tailscale tailnet may send the connector's public `*.ts.net` name to that tailnet's MagicDNS resolver, which cannot resolve names in your NAS tailnet. Compare `dscacheutil -q host -a name NAS.YOUR_TAILNET.ts.net` with `dig @1.1.1.1 NAS.YOUR_TAILNET.ts.net`. If only the public lookup succeeds, add a macOS resolver for your NAS tailnet domain:
+
+```sh
+sudo mkdir -p /etc/resolver
+printf 'nameserver 1.1.1.1\nnameserver 1.0.0.1\n' | sudo tee /etc/resolver/YOUR_TAILNET.ts.net >/dev/null
+dscacheutil -q host -a name NAS.YOUR_TAILNET.ts.net
+```
+
+Replace the placeholders with your own public Funnel hostname and its tailnet domain. This changes DNS only for that tailnet domain; it does not switch Tailscale accounts or change DNS for the work tailnet. Retry Claude's **Reconnect** button after the hostname resolves. Remove the rule with `sudo rm /etc/resolver/YOUR_TAILNET.ts.net` if you no longer need it. Names that exist only inside the NAS tailnet will not resolve through this public resolver.
