@@ -99,7 +99,8 @@ func (p *uploadPage) known(r *http.Request) bool {
 func (p *uploadPage) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
-	w.Header().Set("Referrer-Policy", "no-referrer")
+	// Send only the site origin on the form POST; never expose the upload link.
+	w.Header().Set("Referrer-Policy", "strict-origin")
 	browser := oauth.BrowserActionKey(r.Context())
 	if browser == "" {
 		http.Error(w, "OAuth sign-in required", http.StatusUnauthorized)

@@ -70,6 +70,8 @@ func TestUploadPageBoundary(t *testing.T) {
 		want     int
 	}{
 		{"valid", issuer, true, false, "notes.md", 200},
+		{"missing origin", "", true, false, "notes.md", 403},
+		{"null origin", "null", true, false, "notes.md", 403},
 		{"wrong origin", "https://evil.test", true, false, "notes.md", 403},
 		{"missing csrf", issuer, false, false, "notes.md", 403},
 		{"extra part", issuer, true, true, "notes.md", 400},
@@ -122,7 +124,7 @@ func TestUploadPageBoundary(t *testing.T) {
 			}
 			var session string
 			for _, c := range login.Result().Cookies() {
-				if c.Name == "nas_oauth" {
+				if strings.HasPrefix(c.Name, "nas_oauth_") {
 					session = c.Value
 				}
 			}
@@ -141,6 +143,9 @@ func TestUploadPageBoundary(t *testing.T) {
 			form := request(httptest.NewRequest("GET", target, nil))
 			if form.Code != 200 || !strings.Contains(form.Body.String(), "multipart/form-data") {
 				t.Fatalf("form: %d", form.Code)
+			}
+			if policy := form.Header().Get("Referrer-Policy"); policy != "strict-origin" {
+				t.Fatalf("upload form must send only its origin on same-origin POST, got %q", policy)
 			}
 			var csrf string
 			for _, c := range form.Result().Cookies() {

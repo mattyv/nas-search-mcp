@@ -32,7 +32,7 @@ func browserOAuthClient(t *testing.T, base *http.Client, issuer, target, passwor
 	}
 	var session string
 	for _, c := range page.Cookies() {
-		if c.Name == "nas_oauth" {
+		if strings.HasPrefix(c.Name, "nas_oauth_") {
 			session = c.Value
 		}
 	}

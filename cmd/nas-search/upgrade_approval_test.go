@@ -65,7 +65,7 @@ func TestUpgradeApprovalBoundary(t *testing.T) {
 			}
 			var session string
 			for _, c := range login.Result().Cookies() {
-				if c.Name == "nas_oauth" {
+				if strings.HasPrefix(c.Name, "nas_oauth_") {
 					session = c.Value
 				}
 			}

@@ -132,7 +132,7 @@ func (b *browserFixture) authorize(t *testing.T, target string) string {
 	}
 	var session string
 	for _, c := range page.Result().Cookies() {
-		if c.Name == "nas_oauth" {
+		if strings.HasPrefix(c.Name, "nas_oauth_") {
 			session = c.Value
 		}
 	}

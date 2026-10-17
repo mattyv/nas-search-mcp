@@ -146,8 +146,9 @@ func randomToken() (string, error) {
 	_, e := rand.Read(b)
 	return base64.RawURLEncoding.EncodeToString(b), e
 }
-func hash(v string) string         { b := sha256.Sum256([]byte(v)); return hex.EncodeToString(b[:]) }
-func (s *Server) resource() string { return s.cfg.Issuer + "/mcp" }
+func hash(v string) string                  { b := sha256.Sum256([]byte(v)); return hex.EncodeToString(b[:]) }
+func loginCookieName(session string) string { return "nas_oauth_" + hash(session)[:16] }
+func (s *Server) resource() string          { return s.cfg.Issuer + "/mcp" }
 func jsonReply(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -243,7 +244,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		grantError(w, e)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "nas_oauth", Value: session, Path: "/authorize", HttpOnly: true, Secure: strings.HasPrefix(s.cfg.Issuer, "https:"), SameSite: http.SameSiteStrictMode, MaxAge: 300})
+	http.SetCookie(w, &http.Cookie{Name: loginCookieName(session), Value: session, Path: "/authorize", HttpOnly: true, Secure: strings.HasPrefix(s.cfg.Issuer, "https:"), SameSite: http.SameSiteStrictMode, MaxAge: 300})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Referrer-Policy", "strict-origin")
 	destination, _ := url.Parse(r.URL.Query().Get("redirect_uri"))
@@ -261,8 +262,8 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 400, "invalid_request")
 		return
 	}
-	cookie, e := r.Cookie("nas_oauth")
 	session := r.PostForm.Get("session")
+	cookie, e := r.Cookie(loginCookieName(session))
 	if e != nil || len(session) != 43 || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(session)) != 1 || r.PostForm.Get("consent") != "allow" || (r.Header.Get("Origin") != "" && r.Header.Get("Origin") != s.cfg.Issuer) {
 		oauthError(w, 400, "invalid_request")
 		return
@@ -325,7 +326,7 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 		q.Set("state", v.Get("state"))
 	}
 	target.RawQuery = q.Encode()
-	http.SetCookie(w, &http.Cookie{Name: "nas_oauth", Value: "", Path: "/authorize", MaxAge: -1, HttpOnly: true, Secure: strings.HasPrefix(s.cfg.Issuer, "https:"), SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: loginCookieName(session), Value: "", Path: "/authorize", MaxAge: -1, HttpOnly: true, Secure: strings.HasPrefix(s.cfg.Issuer, "https:"), SameSite: http.SameSiteStrictMode})
 	http.Redirect(w, r, target.String(), 303)
 }
 func (s *Server) token(w http.ResponseWriter, r *http.Request) {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"golang.org/x/crypto/bcrypt"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -348,7 +349,7 @@ func TestLoginLockout(t *testing.T) {
 		post := url.Values{"session": {session}, "password": {"wrong"}, "consent": {"allow"}}
 		r := httptest.NewRequest("POST", "/authorize", strings.NewReader(post.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		r.AddCookie(&http.Cookie{Name: "nas_oauth", Value: session})
+		r.AddCookie(&http.Cookie{Name: loginCookieName(session), Value: session})
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, r)
 		want := 403
@@ -426,6 +427,47 @@ func TestConsentShowsDestination(t *testing.T) {
 		t.Fatal("consent omits redirect hostname")
 	}
 }
+func TestConcurrentLoginPagesKeepSeparateSessions(t *testing.T) {
+	s := testServer(t)
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := s.Handler()
+	request := func(method, path string, form url.Values) *httptest.ResponseRecorder {
+		t.Helper()
+		body := ""
+		if form != nil {
+			body = form.Encode()
+		}
+		r := httptest.NewRequest(method, s.cfg.Issuer+path, strings.NewReader(body))
+		if form != nil {
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			r.Header.Set("Origin", s.cfg.Issuer)
+		}
+		for _, cookie := range jar.Cookies(r.URL) {
+			r.AddCookie(cookie)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		jar.SetCookies(r.URL, w.Result().Cookies())
+		return w
+	}
+	login := func() string {
+		w := request("GET", "/authorize?"+authorizeValues(s).Encode(), nil)
+		if w.Code != 200 {
+			t.Fatalf("login page: %d", w.Code)
+		}
+		return w.Result().Cookies()[0].Value
+	}
+	first, second := login(), login()
+	for _, session := range []string{first, second} {
+		w := request("POST", "/authorize", url.Values{"session": {session}, "password": {"correct horse battery staple"}, "consent": {"allow"}})
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("independent login failed: %d", w.Code)
+		}
+	}
+}
 func TestLoginSessionsAreBounded(t *testing.T) {
 	s := testServer(t)
 	_, e := s.db.Exec(`WITH RECURSIVE n(x) AS(VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<256) INSERT INTO oauth_grants(hash,kind,client,redirect,challenge,resource,family,expires) SELECT printf('%064d',x), 'login', 'claude', '', '', '', '', ? FROM n`, time.Now().Add(time.Minute).Unix())
@@ -445,7 +487,7 @@ func TestInvalidSessionCannotConsumePasswordAttempts(t *testing.T) {
 	post := url.Values{"session": {session}, "password": {"wrong"}, "consent": {"allow"}}
 	r := httptest.NewRequest("POST", "/authorize", strings.NewReader(post.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.AddCookie(&http.Cookie{Name: "nas_oauth", Value: session})
+	r.AddCookie(&http.Cookie{Name: loginCookieName(session), Value: session})
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != 400 {

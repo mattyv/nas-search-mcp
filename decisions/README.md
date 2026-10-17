@@ -250,6 +250,14 @@ Provide a read-only `list_folders` tool for live folder navigation. Each call li
 
 Folder navigation helps users discover sources and empty locations without pretending that the content index is a complete directory listing. Live filesystem access avoids waiting for indexing, while direct-child and resource limits keep each request focused on a small amount of work. Root confinement and filtering preserve the existing source-access boundary. Tests first failed because the application method and MCP tool did not exist, then passed with the new behavior. The focused and full Go suites and installer Python tests pass locally. The tool implementation, its limits, and path checks are filesystem adapters outside Dafny verification; target-NAS behavior remains unvalidated.
 
+## D039 — Preserve browser origin and independent sign-in sessions
+
+**Status:** Accepted locally; live Safari upload unvalidated
+
+Set the upload form's referrer policy to `strict-origin`. Under the [Fetch standard](https://fetch.spec.whatwg.org/#append-a-request-origin-header), the prior `no-referrer` policy makes ordinary form POSTs send `Origin: null`, while the upload handler correctly requires the issuer origin. `strict-origin` sends only the site origin, not the private upload URL. Keep rejecting missing, null, or foreign origins and keep the browser session, CSRF, size, type, and single-use checks. Give each OAuth login page a cookie name derived from its random session, so another login page cannot overwrite or delete that page's cookie. Keep the same five-minute expiry and exact cookie/session comparison.
+
+This restores ordinary browser uploads without accepting cross-site posts and makes concurrent connector or browser sign-ins independent. The upload header and interleaved-login regressions failed before the changes and passed afterward. HTTP header and cookie handling remain unverified Go adapters; live Safari submission and target-NAS deployment still need confirmation.
+
 ## Open decisions
 
 - When measured indexing time and latency justify expanding to larger source collections.
