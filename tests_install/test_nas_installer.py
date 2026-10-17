@@ -466,3 +466,27 @@ def test_dotenv_path_unbalanced_or_internal_quotes_fail_closed(tmp_path):
         log.write_text('')
         assert subprocess.run(args, env=env, capture_output=True).returncode != 0
         assert 'pull ' not in log.read_text()
+
+
+def test_upload_mount_only_for_existing_documents_subfolder(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    state = tmp_path / 'install'
+    assert ':/uploads:rw' not in (state / 'compose.yaml').read_text()
+    secret = state / '.env'
+    original = secret.read_text()
+    uploads = tmp_path / 'Documents' / 'Uploads'
+    uploads.mkdir()
+    secret.write_text(original + f'NAS_UPLOAD_ENABLED=true\nNAS_UPLOAD_PATH={uploads}\n')
+    args[args.index('--image') + 1] = 'ghcr.io/mattyv/nas-search-mcp:def456'
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert '${NAS_UPLOAD_PATH}:/uploads:rw' in (state / 'compose.yaml').read_text()
+    assert secret.read_text() == original + f'NAS_UPLOAD_ENABLED=true\nNAS_UPLOAD_PATH={uploads}\n'
+    assert f'NAS_UPLOAD_PATH={uploads}' not in result.stdout
+    outside = tmp_path / 'outside' / 'Uploads'
+    outside.mkdir(parents=True)
+    secret.write_text(original + f'NAS_UPLOAD_ENABLED=true\nNAS_UPLOAD_PATH={outside}\n')
+    log.write_text('')
+    assert subprocess.run(args, env=env, capture_output=True).returncode != 0
+    assert 'pull ' not in log.read_text()

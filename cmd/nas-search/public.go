@@ -204,7 +204,7 @@ func publicResponseBoundary(next http.Handler, logger *log.Logger) http.Handler 
 	})
 }
 
-func buildPublicHandler(server *mcp.Server, auth *oauth.Server, a *app.App, approval *upgradeApproval) http.Handler {
+func buildPublicHandler(server *mcp.Server, auth *oauth.Server, a *app.App, approval *upgradeApproval, uploads ...*uploadPage) http.Handler {
 	mux := http.NewServeMux()
 	h := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	mux.Handle("/mcp", publicResponseBoundary(auth.Protect(admitPublic(h)), log.Default()))
@@ -214,8 +214,47 @@ func buildPublicHandler(server *mcp.Server, auth *oauth.Server, a *app.App, appr
 	if approval != nil {
 		routes.Handle("/upgrade/approve", hardenPublic(auth.BrowserActionHandler(approval, approval.known), log.Default()))
 	}
+	if len(uploads) > 0 && uploads[0] != nil {
+		page := uploads[0]
+		routes.Handle("/upload/", hardenUploads(auth.BrowserActionHandler(page, page.known), log.Default()))
+	}
 	routes.Handle("/", mux)
 	return routes
+}
+
+// Uploads stream through the browser action gate, outside the 64 KiB MCP body cap.
+func hardenUploads(next http.Handler, logger *log.Logger) http.Handler {
+	limiter := rate.NewLimiter(5, 60)
+	active := make(chan struct{}, 1)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		out := &statusRecorder{ResponseWriter: w}
+		defer func() {
+			if out.code == 0 {
+				out.code = http.StatusOK
+			}
+			logger.Printf("public upload status=%d duration_ms=%d bytes=%d", out.code, time.Since(start).Milliseconds(), out.bytes)
+		}()
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if !limiter.Allow() {
+			w.Header().Set("Retry-After", "1")
+			http.Error(out, "request limit reached", http.StatusTooManyRequests)
+			return
+		}
+		if r.Method == http.MethodPost {
+			select {
+			case active <- struct{}{}:
+				defer func() { <-active }()
+			default:
+				w.Header().Set("Retry-After", "1")
+				http.Error(out, "another upload is in progress", http.StatusTooManyRequests)
+				return
+			}
+		}
+		next.ServeHTTP(out, r)
+	})
 }
 
 type statusRecorder struct {

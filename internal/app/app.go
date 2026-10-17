@@ -881,7 +881,7 @@ func (a *App) Scan(ctx context.Context) error {
 		if !forceRefresh && !policy.ShouldReplace(old[rel], a.indexedFingerprint(rel, hash)) {
 			return nil
 		}
-		if e = a.indexFile(ctx, snapshot, rel, hash); e != nil {
+		if e = a.indexFile(ctx, snapshot, rel, hash, true); e != nil {
 			if ctx.Err() != nil {
 				// The source changed, so its old chunks no longer describe the file.
 				if removeErr := a.Store.Remove(rel); removeErr != nil {
@@ -890,6 +890,13 @@ func (a *App) Scan(ctx context.Context) error {
 				return ctx.Err()
 			}
 			log.Printf("indexing failed")
+			current, lookupErr := a.Store.List(rel, 1)
+			if lookupErr != nil {
+				return lookupErr
+			}
+			if len(current) == 1 && current[0].Path == rel && current[0].Fingerprint == a.indexedFingerprint(rel, hash) {
+				return nil
+			}
 			// Old chunks describe a different revision and must not survive a failed update.
 			if removeErr := a.Store.Remove(rel); removeErr != nil {
 				return removeErr
@@ -928,19 +935,46 @@ func (a *App) Scan(ctx context.Context) error {
 	}
 	return err
 }
-func (a *App) indexFile(ctx context.Context, full, relative, hash string) error {
+
+// IndexUploaded indexes one already-published file without walking or pacing
+// the whole collection. The periodic scan remains the fallback after errors.
+func (a *App) IndexUploaded(ctx context.Context, relative string) error {
+	if !supported(relative) || hiddenOrExcluded(relative) {
+		return errors.New("unsupported upload path")
+	}
+	if _, err := a.safeFile(relative); err != nil {
+		return err
+	}
+	snapshot, _, cleanup, err := a.snapshot(relative)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	hash, err := fingerprint(snapshot)
+	if err != nil {
+		return err
+	}
+	return a.indexFile(ctx, snapshot, relative, hash, false)
+}
+
+func (a *App) indexFile(ctx context.Context, full, relative, hash string, scanProgress bool) error {
+	progress := func(stage string) {
+		if scanProgress {
+			a.setScanProgress(relative, stage)
+		}
+	}
 	var extract WorkerResult
 	var err error
 	embedPhoto := a.Photos && a.Semantic && imageFile(relative)
 	if embedPhoto {
 		// One call reads metadata and embeds; a separate extract would unload the warm model.
-		a.setScanProgress(relative, "embedding_photo")
+		progress("embedding_photo")
 		extract, err = a.worker(ctx, map[string]any{"operation": "image_embed", "path": full, "max_bytes": 32 * 1024 * 1024})
 		if err == nil && (extract.Kind != "photo" || len(extract.Vectors) != 1) {
 			err = errors.New("photo embedding returned no photo vector")
 		}
 	} else {
-		a.setScanProgress(relative, "extracting")
+		progress("extracting")
 		extract, err = a.worker(ctx, map[string]any{"operation": "extract", "path": full, "max_bytes": 32 * 1024 * 1024, "max_chars": 200000})
 	}
 	if err != nil {
@@ -965,7 +999,7 @@ func (a *App) indexFile(ctx context.Context, full, relative, hash string) error 
 			vectors = extract.Vectors
 		}
 	} else if a.Semantic && len(chunks) > 0 {
-		a.setScanProgress(relative, "embedding")
+		progress("embedding")
 		for start := 0; start < len(chunks); start += 16 {
 			end := start + 16
 			if end > len(chunks) {
@@ -999,7 +1033,7 @@ func (a *App) indexFile(ctx context.Context, full, relative, hash string) error 
 	if err != nil {
 		return err
 	}
-	a.setScanProgress(relative, "storing")
+	progress("storing")
 	return a.Store.Replace(store.File{Path: relative, Fingerprint: a.indexedFingerprint(relative, hash), Kind: extract.Kind, Metadata: string(encoded)}, chunks, vectors)
 }
 

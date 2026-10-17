@@ -50,8 +50,55 @@ func newBrowserFixture(t *testing.T) *browserFixture {
 	jar, _ := cookiejar.New(nil)
 	mux := http.NewServeMux()
 	mux.Handle("/download/", s.DownloadHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("private fixture")) }), func(*http.Request) bool { return true }))
+	mux.Handle("/upload/", s.BrowserActionHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("upload fixture")) }), func(*http.Request) bool { return true }))
 	mux.Handle("/", s.Handler())
 	return &browserFixture{s: s, handler: mux, jar: jar}
+}
+
+func TestBrowserUploadRequiresFreshSessionAndAcceptsPOST(t *testing.T) {
+	b := newBrowserFixture(t)
+	target := "/upload/" + strings.Repeat("a", 43)
+	start := b.request(t, "GET", target, nil)
+	if start.Code != http.StatusSeeOther || !strings.HasPrefix(start.Header().Get("Location"), b.s.cfg.Issuer+"/authorize?") {
+		t.Fatalf("upload GET must start browser OAuth: %d", start.Code)
+	}
+	if post := b.request(t, "POST", target, url.Values{"payload": {"private"}}); post.Code != http.StatusUnauthorized {
+		t.Fatalf("upload POST without a browser session: %d", post.Code)
+	}
+	callback := b.authorize(t, target)
+	if completed := b.request(t, "GET", callback, nil); completed.Code != http.StatusSeeOther || completed.Header().Get("Location") != target {
+		t.Fatalf("upload OAuth callback: %d", completed.Code)
+	}
+	post := b.request(t, "POST", target, url.Values{"payload": {"private"}})
+	if post.Code != http.StatusOK || post.Body.String() != "upload fixture" {
+		t.Fatalf("upload POST after OAuth: status=%d body=%q", post.Code, post.Body.String())
+	}
+}
+
+func TestBrowserLoginCopyIncludesUploadAction(t *testing.T) {
+	b := newBrowserFixture(t)
+	start := b.request(t, "GET", "/upload/"+strings.Repeat("a", 43), nil)
+	if start.Code != http.StatusSeeOther {
+		t.Fatalf("upload GET must start browser OAuth: %d", start.Code)
+	}
+	page := b.request(t, "GET", start.Header().Get("Location"), nil)
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "submit an upload") {
+		t.Fatalf("browser login page does not explain upload action: status=%d", page.Code)
+	}
+}
+
+func TestBrowserUploadTargetRequiresExactURLSafeTokenAndNoQuery(t *testing.T) {
+	b := newBrowserFixture(t)
+	for _, target := range []string{
+		"/upload/short", "/upload/" + strings.Repeat("a", 42), "/upload/" + strings.Repeat("a", 44),
+		"/upload/" + strings.Repeat("a", 42) + "/", "/upload/" + strings.Repeat("a", 42) + "?x=1",
+		"/upload/" + strings.Repeat("a", 43) + "?",
+		"/upload/" + strings.Repeat("a", 42) + "%2F",
+	} {
+		if response := b.request(t, "GET", target, nil); response.Code != http.StatusNotFound {
+			t.Errorf("accepted invalid upload target %q: %d", target, response.Code)
+		}
+	}
 }
 
 func (b *browserFixture) request(t *testing.T, method, target string, form url.Values) *httptest.ResponseRecorder {

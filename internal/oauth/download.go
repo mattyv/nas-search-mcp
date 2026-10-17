@@ -36,6 +36,15 @@ func browserTarget(r *http.Request) (string, bool) {
 	if strings.HasPrefix(r.URL.Path, "/download/") && r.URL.RawQuery == "" {
 		return r.URL.EscapedPath(), true
 	}
+	if strings.HasPrefix(r.URL.Path, "/upload/") && r.URL.RawQuery == "" && !r.URL.ForceQuery {
+		path := r.URL.EscapedPath()
+		token := strings.TrimPrefix(path, "/upload/")
+		if len(token) == 43 && strings.IndexFunc(token, func(c rune) bool {
+			return !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_')
+		}) == -1 {
+			return path, true
+		}
+	}
 	if r.URL.Path == "/upgrade/approve" {
 		q, err := url.ParseQuery(r.URL.RawQuery)
 		if err == nil && len(q) == 1 && len(q["request"]) == 1 && len(q.Get("request")) == 43 {

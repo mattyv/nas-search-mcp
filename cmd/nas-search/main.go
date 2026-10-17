@@ -105,6 +105,9 @@ func main() {
 		return
 	}
 	stdio := len(os.Args) > 1 && os.Args[1] == "--stdio"
+	if enabled("NAS_UPLOAD_ENABLED", false) && (stdio || os.Getenv("NAS_OAUTH_ISSUER") == "") {
+		log.Fatal("document uploads require the OAuth listener")
+	}
 	token := os.Getenv("NAS_TOKEN")
 	if !stdio && len(token) < 24 {
 		log.Fatal("NAS_TOKEN must contain at least 24 characters")
@@ -141,7 +144,41 @@ func main() {
 		if directory := os.Getenv("NAS_UPGRADE_DIR"); directory != "" {
 			approval = newUpgradeApproval(issuer, directory)
 		}
-		publicServer = &http.Server{Addr: env("NAS_OAUTH_LISTEN", "127.0.0.1:8082"), Handler: buildPublicHandler(buildMCPServer(a, approval), auth, a, approval), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+		var uploads *uploadPage
+		readTimeout := 15 * time.Second
+		if enabled("NAS_UPLOAD_ENABLED", false) {
+			info, statErr := os.Lstat("/uploads")
+			if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				log.Fatal("upload directory must be an existing dedicated mount")
+			}
+			uploads = newUploadPage(issuer, "/uploads")
+			queued := make(chan string, 4)
+			uploads.onSaved = func(name string) bool {
+				select {
+				case queued <- name:
+					return true
+				default:
+					return false
+				}
+			}
+			go func() {
+				for {
+					select {
+					case name := <-queued:
+						indexCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+						err := a.IndexUploaded(indexCtx, env("NAS_DOCUMENTS_LABEL", "Documents")+"/Uploads/"+name)
+						cancel()
+						if err != nil && ctx.Err() == nil {
+							log.Printf("uploaded document indexing deferred to full scan")
+						}
+					case <-ctx.Done():
+						return
+					}
+				}
+			}()
+			readTimeout = 120 * time.Second
+		}
+		publicServer = &http.Server{Addr: env("NAS_OAUTH_LISTEN", "127.0.0.1:8082"), Handler: buildPublicHandler(buildMCPServer(a, approval, uploads), auth, a, approval, uploads), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: readTimeout, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 		go func() {
 			if e := publicServer.ListenAndServe(); e != nil && !errors.Is(e, http.ErrServerClosed) {
 				log.Fatal("OAuth listener failed")
@@ -222,7 +259,7 @@ func folderList(value string) []string {
 	return out
 }
 
-func buildMCPServer(a *app.App, approval *upgradeApproval) *mcp.Server {
+func buildMCPServer(a *app.App, approval *upgradeApproval, uploads ...*uploadPage) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "nas-search", Version: "0.1.0"}, nil)
 	searchDescription := "Search indexed NAS files using keywords and meaning. Set photos=true for visual photo search, describing what the photo shows. Results include source paths and page/section locations. If the user names a file or this search misses it, use find_files to match live filename and folder terms. Read-only."
 	if a.LinksEnabled() {
@@ -294,6 +331,13 @@ func buildMCPServer(a *app.App, approval *upgradeApproval) *mcp.Server {
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "upgrade_status", Description: "Read upgrade state, target commit, installed commit after a successful upgrade, and completion time when available. A requested target is not evidence that it is installed; start time is unavailable.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
 			out, err := q.Status()
+			return nil, out, err
+		})
+	}
+	if len(uploads) > 0 && uploads[0] != nil {
+		page := uploads[0]
+		mcp.AddTool(server, &mcp.Tool{Name: "upload_document", Description: "Get a short-lived page for uploading one PDF, text, Markdown, or DOCX document up to 32 MB into the authorized Documents/Uploads folder. Show the returned upload_url to the user. The file is saved only after the user opens the page, signs in again, chooses a file, and clicks Upload. Search indexing follows later; this tool itself does not write files.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
+			out, err := page.prepare(ctx)
 			return nil, out, err
 		})
 	}

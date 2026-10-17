@@ -232,6 +232,14 @@ Pause before each authorized, supported file is read during a scan, including un
 
 ChatGPT may add the standard `ui_locales` authorization parameter. The strict OAuth parameter list previously rejected the request before login. Accept one value of at most 128 bytes and ignore it because the login page is English-only. Keep exact redirect, resource, client, scope, and PKCE checks, and reject unknown parameters. A ChatGPT-style authorization and token-flow test failed before the change and passed after it; live connector sign-in still needs confirmation. This OAuth adapter is outside Dafny verification.
 
+## D037 — Upload documents through a fresh browser session
+
+**Status:** Accepted locally; live NAS upload and indexing unvalidated
+
+Offer an optional `upload_document` MCP tool that creates a short-lived, single-use browser upload page. Require a fresh OAuth browser sign-in, then an explicit file selection and upload click. Accept one PDF, TXT, Markdown, or DOCX file up to 32 MiB. Store it only in a dedicated `Documents/Uploads` directory mounted writable; keep all existing source mounts read-only. Queue targeted indexing after publication, and let the periodic full scan recover when targeted indexing cannot run. Keep the feature disabled by default and require private deployment settings to identify the verified folder and enable it.
+
+This gives MCP users a controlled path to add documents without asking an assistant to handle the file or a password. It adds a writable location inside the authorized Documents tree and requires browser reachability of the OAuth issuer. ChatGPT's documented file handoff provides a temporary `download_url` without a guaranteed host, so server-side fetching would introduce an unbounded SSRF target; the owner chose the browser page for both ChatGPT and Claude pending a separate design. A bounded queue indexes new files without waiting for a full paced walk. A queue overflow, extraction error, or canceled scan can leave indexing until a later full pass. Implementation evidence is in `internal/upload` tests, `cmd/nas-search/upload_page_test.go`, `cmd/nas-search/upload_integration_test.go`, `internal/app/upload_index_test.go`, and `tests_install/test_nas_installer.py`; live NAS permissions, browser sign-in, and indexing freshness still require deployment validation. Upload storage, HTTP handling, filesystem checks, and index adapters are Go code outside Dafny verification; only the separately specified core properties are proved.
+
 ## Open decisions
 
 - When measured indexing time and latency justify expanding to larger source collections.

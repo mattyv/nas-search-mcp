@@ -3,7 +3,7 @@
 set -eu
 umask 077
 fail() { printf '%s\n' "$*" >&2; exit 1; }
-image= install_dir= documents= photos= code= data= bind=127.0.0.1 documents_label=Documents dry=false
+image= install_dir= documents= photos= code= data= bind=127.0.0.1 documents_label=Documents dry=false upload_enabled=false upload_path=
 uid=${SUDO_UID:-$(id -u)}
 gid=${SUDO_GID:-$(id -g)}
 while [ "$#" -gt 0 ]; do
@@ -96,6 +96,8 @@ if [ -f "$install_dir/.env" ]; then
     if grep -q '^NAS_BIND_IP=' "$install_dir/.env"; then bind=$(field NAS_BIND_IP)
     else bind=$(field NAS_LAN_IP); bind=${bind:-127.0.0.1}; fi
     queue=$(field NAS_UPGRADE_PATH)
+    upload_enabled=$(field NAS_UPLOAD_ENABLED)
+    upload_path=$(field NAS_UPLOAD_PATH)
     uid=$(field NAS_UID)
     gid=$(field NAS_GID)
     [ -d "$documents" ] && [ -d "$photos" ] && [ -d "$code" ] && [ -d "$data" ] || fail 'Existing .env source and index directories must exist; refusing automatic recreation'
@@ -105,13 +107,21 @@ fi
 case "$documents_label" in ''|*[!a-zA-Z0-9_-]*) fail 'Document label must use letters, digits, underscores, or hyphens';; esac
 # Validate effective loaded paths as well as command-line paths.
 queue=${queue:-$install_dir/upgrades}
-for path in "$documents" "$photos" "$code" "$data" "$queue"; do
+upload_enabled=${upload_enabled:-false}
+case "$upload_enabled" in true|false) :;; *) fail 'NAS_UPLOAD_ENABLED must be true or false';; esac
+for path in "$documents" "$photos" "$code" "$data" "$queue" "$upload_path"; do
+    [ -n "$path" ] || continue
     case "$path" in /*) :;; *) fail 'Effective mount paths must be absolute';; esac
     case "$path" in */../*|*/..|*/./*|*/.|*[!a-zA-Z0-9_./@\ -]*) fail 'Invalid effective mount path';; esac
 done
 printf '%s\n' "$bind" | awk -F. 'NF != 4 {exit 1} {for(i=1;i<=4;i++) if ($i !~ /^[0-9]+$/ || length($i)>3 || $i+0>255 || (length($i)>1 && substr($i,1,1)=="0")) exit 1}' || fail 'Bind address must be a valid explicit IPv4 address'
 queue=$(canonical "$queue") || fail 'Cannot resolve upgrade queue'
 documents=$(canonical "$documents") || fail 'Cannot resolve selected source'
+if [ "$upload_enabled" = true ]; then
+    [ -n "$upload_path" ] && [ -d "$upload_path" ] && [ ! -L "$upload_path" ] || fail 'Upload folder must already exist as a real directory'
+    upload_path=$(canonical "$upload_path") || fail 'Cannot resolve upload folder'
+    [ "$upload_path" = "$documents/Uploads" ] || fail 'Upload folder must be the Documents/Uploads subfolder'
+fi
 photos=$(canonical "$photos") || fail 'Cannot resolve Photos source'
 code=$(canonical "$code") || fail 'Cannot resolve Code source'
 data=$(canonical "$data") || fail 'Cannot resolve index path'
@@ -171,13 +181,19 @@ docker run --rm --user "$uid:$gid" --memory 1g --memory-swap 1g --cpuset-cpus 0 
     -v "$documents:/check-documents:ro" -v "$photos:/check-photos:ro" -v "$code:/check-code:ro" -v "$data:/check-data" \
     --entrypoint python3 "$image" -c 'import os,tempfile; assert os.access("/check-documents",os.R_OK|os.X_OK); assert os.access("/check-photos",os.R_OK|os.X_OK); assert os.access("/check-code",os.R_OK|os.X_OK); f=tempfile.NamedTemporaryFile(dir="/check-data"); f.write(b"probe"); f.flush(); f.close()' \
     || fail 'Container user cannot read selected sources or write index data; fix DSM permissions before deployment'
+if [ "$upload_enabled" = true ]; then
+    docker run --rm --user "$uid:$gid" --memory 1g --memory-swap 1g --cpuset-cpus 0 \
+        -v "$upload_path:/check-upload" --entrypoint python3 "$image" \
+        -c 'import tempfile; f=tempfile.NamedTemporaryFile(dir="/check-upload"); f.write(b"probe"); f.flush(); f.close()' \
+        || fail 'Container user cannot write the dedicated upload folder; fix DSM permissions before deployment'
+fi
 # The deployment copy is pull-only; upstream resource and security defaults remain.
 previous_compose=
 if [ -f "$install_dir/compose.yaml" ]; then
     previous_compose=$install_dir/compose.yaml.previous
     cp "$install_dir/compose.yaml" "$previous_compose"
 fi
-awk -v image="$image" -v bind="$bind" '/NAS_BIND_IP.*8080:8080/ {print "      - \"" bind ":8080:8080\""; if (bind != "127.0.0.1" && bind != "0.0.0.0") print "      - \"127.0.0.1:8080:8080\""; next} /^[ ]*build:/ {next} /^[ ]*image:/ {print "    image: " image; next} /^[ ]*cpus:/ {next} /^[ ]*pids_limit:/ {next} {print}' "$project_dir/compose.yaml" > "$install_dir/compose.yaml.tmp"
+awk -v image="$image" -v bind="$bind" -v uploads="$upload_enabled" '/NAS_BIND_IP.*8080:8080/ {print "      - \"" bind ":8080:8080\""; if (bind != "127.0.0.1" && bind != "0.0.0.0") print "      - \"127.0.0.1:8080:8080\""; next} /^[ ]*build:/ {next} /^[ ]*image:/ {print "    image: " image; next} /^[ ]*cpus:/ {next} /^[ ]*pids_limit:/ {next} {print; if (uploads == "true" && /:\/data"$/) print "      - \"${NAS_UPLOAD_PATH}:/uploads:rw\""}' "$project_dir/compose.yaml" > "$install_dir/compose.yaml.tmp"
 mv "$install_dir/compose.yaml.tmp" "$install_dir/compose.yaml"
 previous=
 [ ! -f "$install_dir/current-image" ] || previous=$(cat "$install_dir/current-image")
