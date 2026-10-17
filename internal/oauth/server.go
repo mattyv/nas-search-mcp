@@ -43,6 +43,7 @@ type Config struct {
 	ServiceUpgrades                                                bool
 	Issuer, DatabasePath, PasswordHash, ClientID, ClientSecretHash string
 	RedirectURIs                                                   []string
+	ChatGPTRedirectURI                                             string
 }
 type Server struct {
 	cfg               Config
@@ -71,9 +72,15 @@ func New(c Config) (*Server, error) {
 		}
 	}
 	c.RedirectURIs = append([]string{"https://claude.ai/api/mcp/auth_callback"}, c.RedirectURIs...)
+	if c.ChatGPTRedirectURI != "" {
+		if !validChatGPTRedirect(c.ChatGPTRedirectURI) {
+			return nil, errors.New("invalid ChatGPT OAuth redirect URI")
+		}
+		c.RedirectURIs = append(c.RedirectURIs, c.ChatGPTRedirectURI)
+	}
 	for _, redirect := range c.RedirectURIs {
 		v, e := url.Parse(redirect)
-		if e != nil || v.User != nil || v.Fragment != "" || (redirect != "https://claude.ai/api/mcp/auth_callback" && !(v.Scheme == "http" && loopback(v.Hostname()))) {
+		if e != nil || v.User != nil || v.Fragment != "" || (redirect != "https://claude.ai/api/mcp/auth_callback" && redirect != c.ChatGPTRedirectURI && !(v.Scheme == "http" && loopback(v.Hostname()))) {
 			return nil, errors.New("only exact Claude or explicit HTTP loopback redirects allowed")
 		}
 	}
@@ -95,6 +102,27 @@ func New(c Config) (*Server, error) {
 		return nil, e
 	}
 	return &Server{cfg: c, db: db, limiter: rate.NewLimiter(rate.Every(time.Second), 10), validationGate: make(chan struct{}, 2), validationWaiters: make(chan struct{}, 60)}, nil
+}
+
+func validChatGPTRedirect(redirect string) bool {
+	u, err := url.Parse(redirect)
+	if err != nil || u.Scheme != "https" || u.Host != "chatgpt.com" || u.User != nil || u.Opaque != "" || u.ForceQuery || u.RawQuery != "" || u.Fragment != "" || strings.Contains(redirect, "#") || u.EscapedPath() != u.Path {
+		return false
+	}
+	const prefix = "/connector/oauth/"
+	if !strings.HasPrefix(u.Path, prefix) {
+		return false
+	}
+	id := strings.TrimPrefix(u.Path, prefix)
+	if id == "" || strings.Contains(id, "/") {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return u.String() == redirect
 }
 func loopback(h string) bool {
 	return h == "localhost" || (net.ParseIP(h) != nil && net.ParseIP(h).IsLoopback())

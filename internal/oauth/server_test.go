@@ -60,6 +60,100 @@ func TestAuthorizeRejectsInvalidParameters(t *testing.T) {
 	}
 }
 
+func TestChatGPTRedirectRequiresExactPrivateConfiguration(t *testing.T) {
+	const callback = "https://chatgpt.com/connector/oauth/test_Callback-123"
+	configured := func(redirect string) Config {
+		h, err := bcrypt.GenerateFromPassword([]byte("correct horse battery staple"), 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return Config{Issuer: "http://127.0.0.1:8080", DatabasePath: filepath.Join(t.TempDir(), "oauth.db"), PasswordHash: string(h), ClientID: "chatgpt-plugin", ChatGPTRedirectURI: redirect}
+	}
+	newServer := func(config Config) *Server {
+		s, err := New(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { s.Close() })
+		return s
+	}
+	challenge := func() string {
+		sum := sha256.Sum256([]byte(strings.Repeat("a", 43)))
+		return base64.RawURLEncoding.EncodeToString(sum[:])
+	}
+	request := func(s *Server, redirect string) url.Values {
+		return url.Values{"client_id": {s.cfg.ClientID}, "redirect_uri": {redirect}, "response_type": {"code"}, "code_challenge_method": {"S256"}, "code_challenge": {challenge()}, "resource": {s.resource()}, "state": {"chatgpt-state"}}
+	}
+	uri := callback
+	base := configured("")
+	base.DatabasePath = filepath.Join(t.TempDir(), "unconfigured.db")
+	s := newServer(base)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/authorize?"+request(s, uri).Encode(), nil))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unconfigured ChatGPT callback accepted: %d", w.Code)
+	}
+
+	for _, bad := range []string{
+		"https://chatgpt.com.evil.example/connector/oauth/test_Callback-123",
+		"https://user@chatgpt.com/connector/oauth/test_Callback-123",
+		"https://chatgpt.com:443/connector/oauth/test_Callback-123",
+		"https://chatgpt.com/connector/oauth/test_Callback-123?x=1",
+		"https://chatgpt.com/connector/oauth/test_Callback-123#fragment",
+		"https://chatgpt.com/connector/oauth/has%2Fslash",
+		"http://chatgpt.com/connector/oauth/test_Callback-123",
+	} {
+		config := configured(bad)
+		config.DatabasePath = filepath.Join(t.TempDir(), "bad.db")
+		if server, err := New(config); err == nil {
+			server.Close()
+			t.Errorf("accepted malformed ChatGPT callback configuration %q", bad)
+		}
+	}
+
+	config := configured(uri)
+	config.DatabasePath = filepath.Join(t.TempDir(), "configured.db")
+	s = newServer(config)
+	for _, redirect := range []string{uri, "https://chatgpt.com/connector/oauth/other-callback"} {
+		w = httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/authorize?"+request(s, redirect).Encode(), nil))
+		want := http.StatusBadRequest
+		if redirect == uri {
+			want = http.StatusOK
+		}
+		if w.Code != want {
+			t.Fatalf("authorize with redirect %q: got %d want %d", redirect, w.Code, want)
+		}
+	}
+
+	values := request(s, uri)
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/authorize?"+values.Encode(), nil))
+	cookie := w.Result().Cookies()[0]
+	form := url.Values{"session": {cookie.Value}, "password": {"correct horse battery staple"}, "consent": {"allow"}}
+	post := httptest.NewRequest("POST", "/authorize", strings.NewReader(form.Encode()))
+	post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	post.Header.Set("Origin", s.cfg.Issuer)
+	post.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, post)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("consent: %d", w.Code)
+	}
+	callbackURL, err := url.Parse(w.Header().Get("Location"))
+	if err != nil || callbackURL.Scheme+"://"+callbackURL.Host+callbackURL.EscapedPath() != uri || callbackURL.Query().Get("state") != "chatgpt-state" {
+		t.Fatalf("wrong callback destination: %q", w.Header().Get("Location"))
+	}
+	grant := url.Values{"client_id": {s.cfg.ClientID}, "grant_type": {"authorization_code"}, "code": {callbackURL.Query().Get("code")}, "code_verifier": {strings.Repeat("a", 43)}, "redirect_uri": {uri}, "resource": {s.resource()}}
+	token := httptest.NewRequest("POST", "/token", strings.NewReader(grant.Encode()))
+	token.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PKCE code exchange: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestFlowRotationAndRevocation(t *testing.T) {
 	s := testServer(t)
 	verifier := strings.Repeat("a", 43)

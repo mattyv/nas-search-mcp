@@ -127,7 +127,7 @@ func main() {
 	server := buildMCPServer(a, nil)
 	var publicServer *http.Server
 	if issuer := os.Getenv("NAS_OAUTH_ISSUER"); issuer != "" && !stdio {
-		auth, authErr := oauth.New(oauth.Config{ServiceUpgrades: os.Getenv("NAS_UPGRADE_DIR") != "", Issuer: issuer, DatabasePath: env("NAS_OAUTH_DB", a.Data+"/oauth.sqlite3"), PasswordHash: os.Getenv("NAS_OAUTH_PASSWORD_HASH"), ClientID: os.Getenv("NAS_OAUTH_CLIENT_ID"), ClientSecretHash: os.Getenv("NAS_OAUTH_CLIENT_SECRET_HASH"), RedirectURIs: folderList(os.Getenv("NAS_OAUTH_LOCAL_REDIRECTS"))})
+		auth, authErr := oauth.New(oauth.Config{ServiceUpgrades: os.Getenv("NAS_UPGRADE_DIR") != "", Issuer: issuer, DatabasePath: env("NAS_OAUTH_DB", a.Data+"/oauth.sqlite3"), PasswordHash: os.Getenv("NAS_OAUTH_PASSWORD_HASH"), ClientID: os.Getenv("NAS_OAUTH_CLIENT_ID"), ClientSecretHash: os.Getenv("NAS_OAUTH_CLIENT_SECRET_HASH"), RedirectURIs: folderList(os.Getenv("NAS_OAUTH_LOCAL_REDIRECTS")), ChatGPTRedirectURI: os.Getenv("NAS_OAUTH_CHATGPT_REDIRECT")})
 		if authErr != nil {
 			log.Fatal("OAuth configuration invalid; refusing to start")
 		}

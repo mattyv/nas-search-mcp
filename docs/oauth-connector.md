@@ -17,6 +17,7 @@ Set the OAuth values in the private `.env`:
 | `NAS_OAUTH_CLIENT_ID` | The registered public client ID. |
 | `NAS_OAUTH_PASSWORD_HASH` | Bcrypt hash of the owner sign-in password; never the plaintext password. |
 | `NAS_OAUTH_CLIENT_SECRET_HASH` | Optional bcrypt hash for a confidential client; leave empty for a public PKCE client. |
+| `NAS_OAUTH_CHATGPT_REDIRECT` | Optional exact ChatGPT callback URL shown in its plugin builder. Keep it in the private NAS `.env`; leave empty unless connecting ChatGPT. |
 | `NAS_DOWNLOAD_URL` | Optional private origin for file links. Empty uses the OAuth issuer when configured. |
 
 Verify the physical source directories before deployment. Mount them read-only and expose only the intended client-visible names. The OAuth listener should bind to host loopback and be published only through the HTTPS route. Keep private bearer access on its intended private listener.
@@ -30,6 +31,12 @@ If using Tailscale Funnel, check your tailnet's HTTPS and Funnel policies first.
 Configure Funnel to forward HTTPS traffic to the OAuth listener's loopback port. Keep the private bearer listener unpublished. Verify the public `/mcp` endpoint presents the expected OAuth challenge and that metadata uses the same public origin. Do not publish a real endpoint or tailnet address in repository documentation.
 
 In Claude web, add a custom connector using the public MCP URL `https://NAS_PUBLIC_HOST/mcp`. Select the registered OAuth client, leave the secret blank for a public PKCE client, and complete sign-in and consent. Use the exact callback URI shown by Claude's current connector UI. Confirm access with a harmless search. Configure mobile separately and verify its tool calls before relying on it.
+
+## ChatGPT plugin setup
+
+ChatGPT's cloud plugin builder can use the same public OAuth listener. Select **OAuth** and **User-Defined OAuth Client**. Use `https://NAS_PUBLIC_HOST/mcp` as the server URL and the public `NAS_OAUTH_CLIENT_ID` value as the OAuth client ID. Leave the client secret blank when the NAS uses a public PKCE client. The server does not offer dynamic client registration, so the builder's DCR warning is expected. If endpoint discovery needs manual values, use `https://NAS_PUBLIC_HOST/authorize` and `https://NAS_PUBLIC_HOST/token`; the scope is `files:read`.
+
+Copy the exact callback URL displayed by ChatGPT into `NAS_OAUTH_CHATGPT_REDIRECT` in the root-only NAS `.env`, then deploy the updated service before creating the plugin. Do not post the callback or private settings to the repository. The server accepts only that configured ChatGPT callback; the Claude callback remains available. OpenAI's [OAuth guidance](https://developers.openai.com/plugins/build/auth) describes the pre-registered-client and PKCE flow. This ChatGPT path is not yet verified in the live product; test sign-in, tool listing, and a harmless search before relying on it.
 
 ## Open files from Claude
 

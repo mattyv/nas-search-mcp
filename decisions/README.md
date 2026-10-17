@@ -202,6 +202,18 @@ Use generic paths, folder labels, and network examples in tracked configuration,
 
 **2026-10-16 history rewrite:** With the owner's approval, every branch was rewritten to replace the Tailscale hostname, tailnet and public addresses, Tailscale user ID, physical source paths, personal folder label, DSM user ID, VPN handoff reference, a personal document anecdote and a course name with generic values, then force-pushed with leases on the previous commits. A scan of all rewritten commits and messages found none of those values; no credentials had been committed. The rewritten main differs from the previous main only in a renamed test folder; Dafny verification, the Go race suite and 207 Python tests pass on it. Limits: GitHub keeps the closed pull requests' original commits, which only GitHub Support can remove; the `v0.1.0` tag still points to an original commit because the session could not update tags; existing clones must be reset to the new history.
 
+## D032 — Register only an explicit ChatGPT callback
+
+**Status:** Provisional; live ChatGPT connection unvalidated
+
+The ChatGPT plugin builder can use the existing pre-registered OAuth client, but its callback differs from Claude's. Accept one exact ChatGPT callback only when its URL is set in private deployment settings. Keep authorization-code PKCE and the existing protected-resource challenge; do not add open dynamic registration merely to satisfy the builder's DCR option. This adds a second trusted redirect to the same public client ID, so the owner must review that exact callback before deployment. Configuration and OAuth tests establish local behavior; live sign-in and tool calls remain to be checked.
+
+## D033 — Measure file-fetch latency without logging file identity
+
+**Status:** Provisional; diagnostic release not deployed
+
+An active full-library scan caused high disk wait, and one public MCP request took about three minutes, but current logs do not identify its tool or slow step. Add timing for file open, stat, MIME detection, range read, and final stat without logging paths, content, versions, or credentials. This distinguishes filesystem delay from transport delay before changing scan pacing. The local regression test checks timing fields and log privacy; actual target-device latency remains unmeasured with this change.
+
 ## Open decisions
 
 - When measured indexing time and latency justify expanding to larger source collections.
