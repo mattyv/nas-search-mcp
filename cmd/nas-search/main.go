@@ -336,7 +336,7 @@ func buildMCPServer(a *app.App, approval *upgradeApproval, uploads ...*uploadPag
 	}
 	if len(uploads) > 0 && uploads[0] != nil {
 		page := uploads[0]
-		mcp.AddTool(server, &mcp.Tool{Name: "upload_document", Description: "Get a short-lived page for uploading one PDF, text, Markdown, or DOCX document up to 32 MB into the authorized Documents/Uploads folder. Show the returned upload_url to the user. The file is saved only after the user opens the page, signs in again, chooses a file, and clicks Upload. Search indexing follows later; this tool itself does not write files.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
+		mcp.AddTool(server, &mcp.Tool{Name: "upload_document", Description: "Get a short-lived page for uploading one PDF, text, Markdown, or DOCX document up to 32 MB into the authorized Documents/Uploads folder. Show the returned upload_url to the user. The file is saved only after the user opens the page, signs in again, chooses a file, and clicks Upload. Search indexing follows later; this tool itself does not write files.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(false), OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, map[string]any, error) {
 			out, err := page.prepare(ctx)
 			return nil, out, err
 		})

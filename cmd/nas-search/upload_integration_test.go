@@ -87,7 +87,12 @@ func TestUploadToolOnlyWhenConfigured(t *testing.T) {
 			}
 			found := false
 			for _, tool := range tools.Tools {
-				found = found || tool.Name == "upload_document"
+				if tool.Name == "upload_document" {
+					found = true
+					if tool.Annotations == nil || tool.Annotations.ReadOnlyHint || tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint {
+						t.Fatal("upload flow must be classified as a non-destructive write action")
+					}
+				}
 			}
 			if found != test.want {
 				t.Fatalf("upload tool available=%t, want %t", found, test.want)
