@@ -348,3 +348,13 @@ passes executable tests, and regenerates unchanged compiled output. Recovery and
 worker scripts parse with Python 3.8 syntax. Independent review cleared staging
 after rerunning 52 directly related tests. These results do not replace live
 reboot, outage, client egress or privileged installation validation.
+
+Live follow-up on 2026-10-24: the user reports completing installation and DSM
+setup. The protected recovery directory exists as root mode 700. Private search
+health and local OAuth metadata return 200; authenticated MCP discovery and
+read-only upgrade status pass. Exactly one root upgrade worker runs with the
+expected command. Native NAS Tailscale reports Nord Australia online, existing
+Funnel configuration is intact, and public OAuth metadata returns 200 when
+requested from the NAS. The checking laptop's public-name lookup failed, so this
+does not independently establish external phone access. Protected DSM schedules
+were not inspected, and a planned reboot/network-loss test remains pending.
