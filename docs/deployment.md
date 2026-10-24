@@ -1,5 +1,9 @@
 # Deploy with Synology Container Manager
 
+For the existing NAS deployment, configure [boot and network-outage recovery](nas-recovery.md)
+alongside installation. Container restart policies alone do not handle a late TUN
+device or a VPN that becomes healthy after the first startup wait.
+
 Start with a small document/code folder, not your whole 2.3 TB library. A small document pilot has passed on the DS220+; photo models and larger collections still need validation.
 
 ## Scripted installation and upgrades

@@ -295,3 +295,56 @@ Integrated local verification: 181 Python tests plus two subtests pass; the full
 Release review found a dotenv ambiguity: the installer previously read the first key while Compose accepted a later duplicate. New failing regression coverage preceded a guard that rejects duplicate or noncanonical NAS assignments before reading settings or mutating files. Quoted values, comments and non-NAS settings remain supported. CI now also validates the base Compose configuration before building the container.
 
 A second release-review regression reproduced unquoted trailing whitespace being interpreted differently by validation and dotenv. Three failing tests preceded the corrected field parser: trim surrounding whitespace, remove only complete matching quotes, preserve quoted inner spaces, and reject unsupported quoting. Astra then cleared the scoped fixes subject to CI. Final local Python verification passes 186 tests plus two subtests; six real-Compose contract cases are skipped locally because Docker is unavailable and must execute on CI. Full Go race tests and the rebuilt Dafny core pass.
+
+## D029 — Recover existing NAS services after reboot and network loss
+
+**Date:** 2026-10-24 · **Status:** Accepted local implementation; administrator installation and reboot/outage validation pending
+
+The user requires the full setup to survive reboot and network loss. Live diagnosis
+found Nord stopped because Docker tried to use `/dev/net/tun` before the device
+existed. The device and driver later appeared without retrying the failed stack.
+Manual startup then returned an unhealthy dependency before Nord finished trying
+another Australian VPN server. Nord connected later, but Tailscale remained
+created until a second `up`. Native NAS Tailscale confirmed Nord Australia online
+after that manual recovery. Search and mobile loopback listeners were also
+unavailable; the exact search container failure remains awaiting root inspection.
+
+Add root boot and five-minute recovery checks for the exact existing Nord/search
+containers and protected upgrade worker. Restore only the standard tunnel device,
+let Gluetun retry its own VPN connection, and start Tailscale after VPN health.
+Require existing Compose identity labels and the exact VPN network reference.
+Restart Tailscale after a VPN restart so it joins the current namespace. Verify
+Tailscale's running/online state separately from container health. Limit each
+container subsystem to three interventions per hour; isolate failures between
+subsystems. Keep existing images, accounts, configuration, original files and
+unrelated workloads unchanged. Do not execute privileged Compose from the
+writable shared Docker directory. Reject unsafe protected paths, and document
+the additional DSM ACL boundary.
+
+Coordinate search recovery and upgrades with a root deployment lock, inherited by
+the installer child. A running worker advertises its protocol with root PID/start
+identity; legacy workers cannot authorize automatic search starts. Do not use a
+persistent running-status record as a lock because it survives interrupted work.
+The setup helper pauses only exact root workers, refuses pending/running upgrades,
+preserves the first worker backup, atomically replaces the idle worker and verifies
+its replacement. Failure cleanup resumes paused workers. This also activates the
+previously published malformed-request worker fix when installed.
+
+These are standalone Python OS/process/Docker adapters so DSM's existing Python
+can run boot recovery without a new compiled runtime or external machine. No
+application search policy changes or Dafny source changes are needed. These
+adapters are tested, not formally proved. Initial tests failed because the recovery
+modules did not exist; this is test-first evidence, not a claim that each test
+reproduced a live behavioral bug. Additional regressions failed on the malformed
+Docker template, stale VPN reference and missing deployment exclusion before
+correction. Adapter review added signal-order, resume-on-refusal and worker
+replacement coverage. Live automatic boot recovery, network-loss recovery and
+phone egress remain unvalidated until the root tasks are installed and exercised.
+
+Final local verification: 218 Python tests and two subtests pass; six real-Compose
+tests are skipped because local Docker is unavailable. The full Go race suite
+with sqlite_fts5 passes. `scripts/build-core.sh` verifies 39 combined obligations,
+passes executable tests, and regenerates unchanged compiled output. Recovery and
+worker scripts parse with Python 3.8 syntax. Independent review cleared staging
+after rerunning 52 directly related tests. These results do not replace live
+reboot, outage, client egress or privileged installation validation.

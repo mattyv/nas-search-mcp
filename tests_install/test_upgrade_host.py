@@ -14,6 +14,29 @@ def module():
     return mod
 
 
+def test_recovery_maintenance_lock_defers_upgrade_without_consuming_request(tmp_path, monkeypatch):
+    import fcntl
+    m = module()
+    calls = []
+    monkeypatch.setattr(m, 'process_request', lambda path: calls.append(path))
+    with (tmp_path / '.deployment.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert m.process_once(tmp_path) is False
+    assert calls == []
+    m.process_once(tmp_path)
+    assert calls == [tmp_path]
+
+
+def test_installer_inherits_deployment_lock(tmp_path, monkeypatch):
+    m = module()
+    captured = []
+    monkeypatch.setattr(m.subprocess, 'run', lambda args, **kwargs: captured.append(kwargs))
+    with (tmp_path / '.deployment.lock').open('a') as lock:
+        m.DEPLOYMENT_LOCK_FD = lock.fileno()
+        m.run_installer(['/bin/sh', 'installer'], None)
+        assert captured[0]['pass_fds'] == (lock.fileno(),)
+
+
 def test_env_is_data_and_preserves_spaces(tmp_path):
     env = tmp_path / '.env'
     env.write_text("NAS_INDEX_PATH='/volume1/My Index'\nNAS_TOKEN=$(touch /tmp/never)\nNAS_UID=1000\n")

@@ -17,6 +17,7 @@ import urllib.request
 API = 'https://api.github.com/repos/mattyv/nas-search-mcp'
 MAX_ARCHIVE = 64 * 1024 * 1024
 MAX_EXPANDED = 256 * 1024 * 1024
+DEPLOYMENT_LOCK_FD = None  # Single-threaded host adapter; inherited by installer.
 
 
 def read_env(path):
@@ -103,6 +104,11 @@ def extract_archive(archive, destination):
     return roots[0]
 
 
+def run_installer(args, log):
+    inherited = () if DEPLOYMENT_LOCK_FD is None else (DEPLOYMENT_LOCK_FD,)
+    subprocess.run(args, stdout=log, stderr=log, check=True, pass_fds=inherited)
+
+
 def install_commit(install_dir, env, sha):
     with tempfile.TemporaryDirectory(prefix='nas-search-upgrade-') as temp:
         temp = Path(temp)
@@ -115,7 +121,7 @@ def install_commit(install_dir, env, sha):
             args.extend(['--' + option, env[key]])
         # Installer output can contain deployment details; expose only a fixed status.
         with tempfile.TemporaryFile() as log:
-            subprocess.run(args, stdout=log, stderr=log, check=True)
+            run_installer(args, log)
 
 
 def write_status(queue, state, commit='', failure_stage=''):
@@ -153,9 +159,20 @@ def retire_request(install_dir, request, original):
 
 
 def process_once(install_dir):
+    global DEPLOYMENT_LOCK_FD
     # Environmental and status-write errors must not terminate the polling worker.
     try:
-        return process_request(install_dir)
+        fd = os.open(str(install_dir / '.deployment.lock'), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return False
+            DEPLOYMENT_LOCK_FD = fd
+            return process_request(install_dir)
+        finally:
+            DEPLOYMENT_LOCK_FD = None
+            os.close(fd)
     except Exception:
         return False
 
@@ -224,6 +241,13 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return
+        # Advertise only from a running worker that participates in deployment
+        # exclusion. A legacy process must never authorize automatic recovery.
+        identity = Path('/proc/self/stat').read_text().rsplit(')', 1)[1].split()[19]
+        protocol = args.install_dir / '.recovery-protocol.json'
+        fd = os.open(str(protocol), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'w') as stream:
+            json.dump({'version': 1, 'pid': os.getpid(), 'start': identity}, stream)
         while True:
             process_once(args.install_dir)
             if args.once:
