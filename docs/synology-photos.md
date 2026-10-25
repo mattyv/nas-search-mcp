@@ -57,7 +57,10 @@ The current access policy must explicitly allow the whole `Photos` root. Empty
 access, subfolder-only access, or any denied Photos subfolder blocks this backend;
 we cannot yet map native People groups onto file-subfolder restrictions. Both
 the compiled application policy and the broker's per-request private settings
-check enforce this. Setup does not widen an existing allowlist.
+check enforce this. Setup preserves the allowlist by default. If Photos is missing,
+the owner can explicitly add read-only access to the whole Personal Photos library
+with `--grant-photos-access`. This flag preserves other grants and never removes
+a Photos denial; any denied Photos subfolder still blocks setup.
 
 From a complete reviewed checkout, after the selected commit's image publication
 and required CI pass:
@@ -67,9 +70,11 @@ sudo /usr/bin/python3 scripts/enable-synology-photos.py \
   --image ghcr.io/mattyv/nas-search-mcp:COMMIT_SHA
 ```
 
-Use `--dry-run` first to validate setup without changing it. The helper protects
+Use `--dry-run` first to validate setup without changing it. Add
+`--grant-photos-access` to both commands only when you intend to permit the whole
+Personal Photos library through authenticated MCP. The helper protects
 the code snapshots, preserves existing settings and index, and enables only the
-Photos socket settings. It pauses an idle upgrade worker and uses the shared
+Photos socket settings, plus the Photos grant when explicitly requested. It pauses an idle upgrade worker and uses the shared
 deployment lock during service replacement. An active/pending upgrade blocks
 setup. Review root commands before execution, and never paste passwords into
 chat. A failed first setup leaves its protected directory for inspection; do

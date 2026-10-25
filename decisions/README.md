@@ -361,3 +361,27 @@ remain deployment checks.
 - Which additional formats, OCR languages, archives, and backups fit the resource budget.
 - Which remote-access and ChatGPT cloud-connectivity routes to validate.
 - Whether collection scale justifies a different vector index.
+
+
+## D044 — Require owner opt-in when Photos setup widens access
+
+Status: accepted.
+
+The first NAS setup stopped before deployment because the existing allowlist did
+not satisfy the full Photos policy. The native People API cannot enforce our
+photo subfolder exclusions. Setup therefore keeps its default refusal and adds
+`--grant-photos-access` as an explicit owner request to allow the whole Personal
+Photos library. The flag preserves every existing denial and all other grants;
+a Photos root or subtree denial still blocks setup. This extends D043 without
+weakening its request-time policy.
+
+The candidate grant becomes visible before the host readiness probe, whose
+request-time policy reads the private settings. A failure before container
+installation restores the original settings without restarting the healthy
+service. Later failures use the existing image and settings rollback.
+
+Evidence: three meaningful opt-in success tests first failed with the original
+full-scope refusal, then passed after implementation. The helper tests also
+cover denied subfolders, default refusal, dry runs, raw settings preservation,
+readiness policy, and early and late rollback. The OS/settings adapter is tested,
+not formally proved; the existing compiled Dafny grant/deny policy is unchanged.

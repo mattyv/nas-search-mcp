@@ -446,3 +446,105 @@ def test_original_state_is_private_and_durable_before_worker_pause(tmp_path, mon
     assert (install / '.env').read_bytes() == previous['.env']
     for name, contents in previous.items():
         assert (setup.ROOT / 'previous-state' / name).read_bytes() == contents
+
+
+@pytest.mark.parametrize('line', [
+    'NAS_ALLOWED_FOLDERS=Documents,Code',
+    "NAS_ALLOWED_FOLDERS='Documents, Code'",
+    'NAS_ALLOWED_FOLDERS=',
+])
+def test_explicit_photos_grant_changes_only_allowline_and_readiness_sees_candidate(tmp_path, monkeypatch, line):
+    setup, install, original, calls = fixture(tmp_path, monkeypatch)
+    original = original.replace('NAS_ALLOWED_FOLDERS=Documents,Code,Photos', line)
+    original += 'NAS_DENIED_FOLDERS=Code/Private\nPRIVATE_SETTING=keep-exactly\n'
+    (install / '.env').write_text(original)
+    seen = []
+    def ready():
+        candidate = setup.read_env((install / '.env').read_text())
+        seen.append(candidate)
+        assert 'Photos' in [item.strip() for item in candidate['NAS_ALLOWED_FOLDERS'].split(',')]
+        assert candidate['NAS_DENIED_FOLDERS'] == 'Code/Private'
+    monkeypatch.setattr(setup, 'wait_broker', ready)
+    setup.enable(Path(__file__).resolve().parents[1], install, 'ghcr.io/mattyv/nas-search-mcp:' + 'a' * 40,
+                 grant_photos_access=True)
+    contents = (install / '.env').read_text()
+    before_other = [item for item in original.splitlines(True) if not item.startswith('NAS_ALLOWED_FOLDERS=')]
+    after_other = [item for item in contents.splitlines(True)
+                   if not item.startswith(('NAS_ALLOWED_FOLDERS=', 'NAS_SYNOLOGY_PHOTOS_'))]
+    assert before_other == after_other
+    assert (install / '.env.before-synology-photos').read_text() == original
+    assert 'NAS_PHOTOS=false\n' in contents
+    assert len(seen) == 1
+
+
+@pytest.mark.parametrize('denied', ['Photos', 'Photos/Private', 'Code, Photos/Private'])
+def test_explicit_grant_never_removes_existing_photo_denial(tmp_path, monkeypatch, denied):
+    setup, install, original, calls = fixture(tmp_path, monkeypatch)
+    original = original.replace('NAS_ALLOWED_FOLDERS=Documents,Code,Photos', 'NAS_ALLOWED_FOLDERS=Documents,Code')
+    original += 'NAS_DENIED_FOLDERS=' + denied + '\n'
+    (install / '.env').write_text(original)
+    with pytest.raises(ValueError):
+        setup.enable(Path(__file__).resolve().parents[1], install, 'ghcr.io/mattyv/nas-search-mcp:' + 'a' * 40,
+                     grant_photos_access=True)
+    assert not setup.ROOT.exists()
+    assert (install / '.env').read_text() == original
+    assert calls == []
+
+
+def test_opt_in_dry_run_does_not_write_and_existing_full_grant_is_unchanged(tmp_path, monkeypatch):
+    setup, install, original, calls = fixture(tmp_path, monkeypatch)
+    missing = original.replace('NAS_ALLOWED_FOLDERS=Documents,Code,Photos', 'NAS_ALLOWED_FOLDERS=')
+    (install / '.env').write_text(missing)
+    setup.enable(Path(__file__).resolve().parents[1], install, 'ghcr.io/mattyv/nas-search-mcp:' + 'a' * 40,
+                 dry_run=True, grant_photos_access=True)
+    assert not setup.ROOT.exists()
+    assert (install / '.env').read_text() == missing
+    (install / '.env').write_text(original)
+    setup.enable(Path(__file__).resolve().parents[1], install, 'ghcr.io/mattyv/nas-search-mcp:' + 'a' * 40,
+                 grant_photos_access=True)
+    assert (install / '.env').read_text().startswith(original)
+
+
+def test_opt_in_broker_failure_restores_policy_without_restarting_healthy_service(tmp_path, monkeypatch):
+    setup, install, original, calls = fixture(tmp_path, monkeypatch)
+    original = original.replace('NAS_ALLOWED_FOLDERS=Documents,Code,Photos', 'NAS_ALLOWED_FOLDERS=Documents,Code')
+    (install / '.env').write_text(original)
+    monkeypatch.setattr(setup, 'wait_broker', lambda: (_ for _ in ()).throw(ValueError('not ready')))
+    with pytest.raises(ValueError):
+        setup.enable(Path(__file__).resolve().parents[1], install, 'ghcr.io/mattyv/nas-search-mcp:' + 'a' * 40,
+                     grant_photos_access=True)
+    assert (install / '.env').read_text() == original
+    assert calls == ['start', 'stop']
+
+
+def test_opt_in_later_probe_failure_restores_policy_and_previous_image(tmp_path, monkeypatch):
+    setup, install, original, calls = fixture(tmp_path, monkeypatch)
+    original = original.replace('NAS_ALLOWED_FOLDERS=Documents,Code,Photos', 'NAS_ALLOWED_FOLDERS=Documents,Code')
+    (install / '.env').write_text(original)
+    monkeypatch.setattr(setup, 'verify_mcp', lambda env: (_ for _ in ()).throw(ValueError('tool unavailable')))
+    with pytest.raises(ValueError):
+        setup.enable(Path(__file__).resolve().parents[1], install, 'ghcr.io/mattyv/nas-search-mcp:' + 'a' * 40,
+                     grant_photos_access=True)
+    assert (install / '.env').read_text() == original
+    assert ('install', 'ghcr.io/mattyv/nas-search-mcp:' + 'b' * 40) in calls
+
+
+@pytest.mark.parametrize('original,expected', [
+    (b'PRIVATE=keep\r\nNAS_ALLOWED_FOLDERS="Documents, Code"\r\nTAIL=exact\r\n',
+     b'PRIVATE=keep\r\nNAS_ALLOWED_FOLDERS="Documents, Code,Photos"\r\nTAIL=exact\r\n'),
+    (b'PRIVATE=keep\nNAS_ALLOWED_FOLDERS=Documents',
+     b'PRIVATE=keep\nNAS_ALLOWED_FOLDERS=Documents,Photos'),
+    (b'PRIVATE=keep', b'PRIVATE=keep\nNAS_ALLOWED_FOLDERS=Photos\n'),
+    (b'NAS_ALLOWED_FOLDERS=  "Documents"  \n', b'NAS_ALLOWED_FOLDERS=  "Documents,Photos"  \n'),
+])
+def test_opt_in_policy_edit_preserves_other_raw_bytes_and_quoting(original, expected):
+    setup = module()
+    values = setup.read_env(original.decode())
+    assert setup.authorize_photos(original, values, True) == expected
+    assert 'Photos' in [item.strip() for item in values['NAS_ALLOWED_FOLDERS'].split(',')]
+
+
+def test_opt_in_flag_is_not_accepted_from_truthy_text():
+    setup = module()
+    with pytest.raises(ValueError):
+        setup.authorize_photos(b'NAS_ALLOWED_FOLDERS=\n', {'NAS_ALLOWED_FOLDERS': ''}, 'false')
