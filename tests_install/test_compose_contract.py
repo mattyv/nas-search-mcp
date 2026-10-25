@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from test_nas_installer import setup
+from test_nas_installer import setup, photos_config
 
 DOCKER = shutil.which('docker')
 pytestmark = pytest.mark.skipif(DOCKER is None, reason='Docker Compose is checked on CI')
@@ -49,3 +49,20 @@ def test_rendered_compose_matches_validated_paths_scope_and_binding(tmp_path, bi
     assert service['environment']['NAS_ALLOWED_FOLDERS'] == ''
     private_ports = {port.get('host_ip') for port in service['ports'] if port['target'] == 8080}
     assert private_ports == expected
+
+
+def test_optional_photos_broker_mount_is_read_only_in_real_compose(tmp_path):
+    args, adapter_env, _, private_env = photos_config(tmp_path)
+    installed = subprocess.run(args, env=adapter_env, capture_output=True, text=True)
+    assert installed.returncode == 0, installed.stderr
+    clean_env = {key: value for key, value in os.environ.items() if not key.startswith('NAS_')}
+    rendered = subprocess.run([DOCKER, 'compose', '--env-file', str(private_env),
+                               '-f', str(tmp_path / 'install' / 'compose.yaml'), 'config', '--format', 'json'],
+                              env=clean_env, capture_output=True, text=True, check=True)
+    service = json.loads(rendered.stdout)['services']['nas-search']
+    mounts = {volume['target']: volume for volume in service['volumes']}
+    assert mounts['/synology-photos']['source'] == str(tmp_path / 'protected-photos' / 'run')
+    assert mounts['/synology-photos']['read_only'] is True
+    assert service['environment']['NAS_SYNOLOGY_PHOTOS_SOCKET'] == '/synology-photos/photos.sock'
+    for target in ('/files/Matthew', '/files/Code', '/files/Photos'):
+        assert mounts[target]['read_only'] is True

@@ -361,7 +361,7 @@ were not inspected, and a planned reboot/network-loss test remains pending.
 
 ## D030 — Reuse Synology Photos for people search
 
-**Date:** 2026-10-25 · **Status:** Accepted product direction; authenticated feasibility test and implementation pending
+**Date:** 2026-10-25 · **Status:** Accepted; native people/photo queries validated, implementation tracked in D031
 
 The user prefers reusing Synology Photos over the earlier semantic image-search
 pilot. Start with existing named People albums and photo metadata, then expose
@@ -393,3 +393,75 @@ and fail clearly after incompatible updates. People lookup does not establish
 support for descriptive requests such as a beach at sunset. Tags, dates and
 places may be added after their own validation. Preserve D019 as experimental
 history rather than treating its unmeasured CLIP pilot as a completed feature.
+
+## D031 — Expose Synology Photos through a fixed read-only host broker
+
+**Date:** 2026-10-25 · **Status:** Implemented and reviewed locally; CI, administrator installation and deployed MCP validation pending
+
+The user authorized the people/photo MCP implementation after a live native
+People query succeeded under `runner=matt`. A second live probe established
+`SYNO.Foto.Browse.Item.list` version 2 with `person_id` and `additional=["person"]`:
+all three returned records explicitly contained the requested person. Keep the
+native Personal Space identity fixed to Matt and never accept caller-selected
+accounts, APIs, methods, commands or filesystem paths. Do not read the Photos
+database or browser credentials. Do not enable the experimental CLIP index or
+broaden the current source mounts.
+
+Add optional `photos_people`, `photos_for_person` and `photos_preview` tools.
+Go communicates with a host-only Unix HTTP broker through a read-only directory
+bind. A fresh socket survives daemon replacement because the directory, not its
+inode, is mounted. Root owns protected code and ancestors; the socket is mode
+600, owned by the configured Matt/app UID. The broker checks peer credentials,
+serializes operations, bounds requests and output, caps native command runtime
+and temporary output, and emits only sanitized metadata or a bounded JPEG.
+There is no new network listener, Docker socket, DSM credential or public link.
+
+Authorize only explicitly configured whole-root Photos access. An empty or
+subset-only allowlist and any Photos root/subfolder denial block the backend.
+The compiled Dafny policy proves these grant requirements, denial precedence,
+monotonicity under added denials, and the integer paging/identifier limits.
+The broker independently rereads root-private allow/deny settings for each data
+request so a compromised app cannot bypass later folder revocation via the socket.
+No fine-grained folder filtering of native People groups is promised.
+
+Match a requested person against returned membership rather than trusting a
+possibly ignored API filter. Preview requests repeat that check using Item.get,
+require the exact typed photo/unit IDs and ready thumbnail metadata, then call
+the fixed medium Thumbnail.get operation. People cover IDs are face IDs, not
+photo IDs. Only JPEG previews up to 512 KiB enter MCP image content; originals,
+download links, hidden/unnamed People groups, paths, GPS and other people's labels
+are not returned. HEIC metadata can be listed without decoding the original.
+
+The live Photos version emits successful CGI JSON followed by wrapper error117.
+Accept only that observed combination. Native thumbnail binary delivery remains
+awaiting a bounded live probe. The implementation supports a private outfile or
+explicit bounded image/jpeg CGI framing, validates JPEG markers/size, and rejects
+unknown/HTML responses. This is not a proved JPEG decoder or a guarantee that all
+formats have ready thumbnails.
+
+Setup snapshots the reviewed scripts, pauses exact idle upgrade workers, uses
+inherited deployment exclusion, preserves settings/index and performs broker and
+authenticated MCP checks. Failure restores the previous environment and image
+and resumes the worker. Protected first-setup diagnostics are retained rather
+than deleted or blindly resumed. The existing NAS recovery tasks gain a Photos
+broker check only after successful setup. Daemon liveness is distinct from Photos
+API readiness; authorized slow local requests can still deny service, and live
+reboot/network-loss recovery remains unvalidated.
+
+Tests preceded the new adapters and meaningful failures reproduced missing MCP
+tools, invalid request acceptance, redirects/oversized replies, discarded preview
+bounds, unsafe Photos access, stale CLI-wrapper handling and Python bool/float ID
+aliases. Tests cover actual local Unix HTTP, preview membership, malformed images,
+rollback, worker resume and compiled policy. Independent review cleared local
+implementation after rerunning 84 host/setup/recovery tests. Dafny verifies 48
+combined obligations with zero errors and passes executable tests. OS, mutex,
+Unicode, JSON/HTTP, Synology account behavior, the Python root boundary and native
+image delivery remain tested adapters outside the proof; the whole system is not
+formally verified. Final full-suite and live rollout evidence follows separately.
+
+Integrated local checks: 294 Python tests and two subtests pass; seven real-Compose
+contract cases await CI because local Docker is unavailable. The full Go race
+suite with sqlite_fts5 passes, including authenticated MCP image output and denied
+Photos scopes. All host scripts parse with Python 3.8 syntax; shell syntax and
+diff whitespace checks pass. No original image data or DSM credentials were
+added to the checkout.

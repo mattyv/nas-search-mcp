@@ -63,8 +63,10 @@ Use `find_files` when you know a filename or folder name, or content search miss
 If indexed counts stop changing, check `index_status.current_file`, `scan_stage`, `file_started_at`, and `scan_started_at`. A file appears in the index only after its extraction and embedding finish, so counts can remain unchanged during a large file. Stages can include waiting for the shared worker; they are not a completion percentage or proof of a stall. This OCR update refreshes existing entries, so the first scan can take longer.
 
 For finding photos of people, the chosen next step is a read-only Synology Photos
-integration that reuses its named People albums. This integration is not implemented
-yet. Keep photo embeddings disabled; the [earlier visual-search pilot](docs/deployment.md#start-a-small-visual-image-search-pilot)
+integration that reuses its named People albums. The optional `photos_people`,
+`photos_for_person` and `photos_preview` tools provide named-person lookup, matching
+item metadata and small JPEG previews after [host setup](docs/synology-photos.md).
+Keep photo embeddings disabled; the [earlier visual-search pilot](docs/deployment.md#start-a-small-visual-image-search-pilot)
 remains experimental and is no longer the preferred approach for people search.
 
 ## Coverage and limits

@@ -23,6 +23,8 @@ services:
       NAS_ALLOWED_FOLDERS: "${NAS_ALLOWED_FOLDERS:-}"
       NAS_DENIED_FOLDERS: "${NAS_DENIED_FOLDERS:-}"
       NAS_UPGRADE_DIR: "${NAS_UPGRADE_DIR:-}"
+      # The installer adds a read-only socket-directory bind only when configured.
+      NAS_SYNOLOGY_PHOTOS_SOCKET: "${NAS_SYNOLOGY_PHOTOS_SOCKET:-}"
       NAS_ROOT: /files
       NAS_DATA: /data
       NAS_SEMANTIC: "true"

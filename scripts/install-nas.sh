@@ -4,6 +4,7 @@ set -eu
 umask 077
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 image= install_dir= matthew= photos= code=/volume1/Matthew/Code data= bind=127.0.0.1 dry=false
+synology_path= synology_socket=
 uid=${SUDO_UID:-$(id -u)}
 gid=${SUDO_GID:-$(id -g)}
 while [ "$#" -gt 0 ]; do
@@ -92,6 +93,8 @@ if [ -f "$install_dir/.env" ]; then
     if grep -q '^NAS_BIND_IP=' "$install_dir/.env"; then bind=$(field NAS_BIND_IP)
     else bind=$(field NAS_LAN_IP); bind=${bind:-127.0.0.1}; fi
     queue=$(field NAS_UPGRADE_PATH)
+    synology_path=$(field NAS_SYNOLOGY_PHOTOS_HOST_PATH)
+    synology_socket=$(field NAS_SYNOLOGY_PHOTOS_SOCKET)
     uid=$(field NAS_UID)
     gid=$(field NAS_GID)
     [ -d "$matthew" ] && [ -d "$photos" ] && [ -d "$code" ] && [ -d "$data" ] || fail 'Existing .env source and index directories must exist; refusing automatic recreation'
@@ -119,6 +122,18 @@ done
 overlap "$data" "$queue" && fail 'Index data and upgrade queue must not overlap'
 case "$install_dir/" in "$data/"*) fail 'Index data must not contain installer state';; esac
 case "$install_dir/" in "$queue/"*) fail 'Upgrade queue must not contain installer state';; esac
+if [ -n "$synology_path" ] || [ -n "$synology_socket" ]; then
+    [ -n "$synology_path" ] && [ "$synology_socket" = /synology-photos/photos.sock ] || fail 'Photos broker host path and exact socket setting must be configured together'
+    case "$synology_path" in /*) :;; *) fail 'Photos broker path must be absolute';; esac
+    case "$synology_path" in */../*|*/..|*/./*|*/.|*[!a-zA-Z0-9_./@\ -]*) fail 'Invalid Photos broker mount path';; esac
+    [ -d "$synology_path" ] && [ ! -L "$synology_path" ] || fail 'Photos broker directory must already exist without symlinks'
+    physical=$(canonical "$synology_path") || fail 'Cannot resolve Photos broker path'
+    [ "$physical" = "$synology_path" ] || fail 'Photos broker path must be normalized and physical'
+    for other in "$matthew" "$photos" "$code" "$data" "$queue"; do
+        overlap "$synology_path" "$other" && fail 'Photos broker socket directory must not overlap sources, data or upgrade queue'
+    done
+    case "$install_dir/" in "$synology_path/"*) fail 'Photos broker directory must not contain installer state';; esac
+fi
 [ "$(id -u)" = 0 ] || fail 'Run on the NAS with sudo/root Docker access'
 PATH=/usr/local/bin:$PATH
 export PATH
@@ -171,7 +186,7 @@ if [ -f "$install_dir/compose.yaml" ]; then
     previous_compose=$install_dir/compose.yaml.previous
     cp "$install_dir/compose.yaml" "$previous_compose"
 fi
-awk -v image="$image" -v bind="$bind" '/NAS_BIND_IP.*8080:8080/ {print "      - \"" bind ":8080:8080\""; if (bind != "127.0.0.1" && bind != "0.0.0.0") print "      - \"127.0.0.1:8080:8080\""; next} /^[ ]*build:/ {next} /^[ ]*image:/ {print "    image: " image; next} /^[ ]*cpus:/ {next} /^[ ]*pids_limit:/ {next} {print}' "$project_dir/compose.yaml" > "$install_dir/compose.yaml.tmp"
+awk -v image="$image" -v bind="$bind" -v photos_socket_dir="$synology_path" '/NAS_BIND_IP.*8080:8080/ {print "      - \"" bind ":8080:8080\""; if (bind != "127.0.0.1" && bind != "0.0.0.0") print "      - \"127.0.0.1:8080:8080\""; next} /^[ ]*build:/ {next} /^[ ]*image:/ {print "    image: " image; next} /^[ ]*cpus:/ {next} /^[ ]*pids_limit:/ {next} /^    volumes:/ {print; if (photos_socket_dir != "") print "      - \"" photos_socket_dir ":/synology-photos:ro\""; next} {print}' "$project_dir/compose.yaml" > "$install_dir/compose.yaml.tmp"
 mv "$install_dir/compose.yaml.tmp" "$install_dir/compose.yaml"
 previous=
 [ ! -f "$install_dir/current-image" ] || previous=$(cat "$install_dir/current-image")

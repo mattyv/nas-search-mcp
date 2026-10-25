@@ -2,10 +2,12 @@
 """Install or run bounded recovery for this NAS's search and Nord services."""
 import fcntl
 import importlib.util
+import http.client
 import json
 import os
 from pathlib import Path
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -14,6 +16,7 @@ import urllib.request
 
 HOME = Path('/volume1/@nas-recovery')
 UPGRADER = Path('/volume1/@nas-search-upgrader')
+PHOTOS = Path('/volume1/@nas-photos-broker')
 DOCKER = '/usr/local/bin/docker'
 ENV = {'PATH': '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin', 'HOME': '/root'}
 
@@ -156,6 +159,40 @@ def check_nord():
     nord = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(nord)
     return nord.run_once()
+
+
+def check_photos():
+    if not PHOTOS.exists() and not PHOTOS.is_symlink():
+        return 'disabled'
+    trusted(PHOTOS, True)
+    script = PHOTOS / 'synology-photos-host.py'
+    trusted(script)
+    trusted(PHOTOS / 'run', True)
+    fd = os.open(str(PHOTOS / '.host.lock'), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            connection = http.client.HTTPConnection('synology-photos', timeout=3)
+            connection.sock = socket.socket(socket.AF_UNIX)
+            connection.sock.settimeout(3)
+            try:
+                connection.sock.connect(str(PHOTOS / 'run' / 'photos.sock'))
+                connection.request('POST', '/health', body='{}', headers={'Content-Type': 'application/json'})
+                response = connection.getresponse()
+                if response.status == 200 and json.loads(response.read(1025)) == {'status': 'ok'}:
+                    return 'running'
+                return 'needs-attention'
+            finally:
+                connection.close()
+        # Release the probe lock before the child tries to take its lifetime lock.
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        subprocess.Popen(['/usr/bin/python3', str(script), 'serve'], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=str(PHOTOS),
+                         env=ENV, close_fds=True, start_new_session=True)
+        return 'start-requested'
+    finally:
+        os.close(fd)
 
 
 def check_all(checks):
@@ -306,10 +343,10 @@ def main():
             except BlockingIOError:
                 print('NAS recovery: already-running')
                 return 0
-            results = check_all({'worker': check_worker, 'search': check_search, 'nord': check_nord})
+            results = check_all({'worker': check_worker, 'search': check_search, 'nord': check_nord, 'photos': check_photos})
             for name, result in results.items():
                 print('NAS recovery ' + name + ': ' + result)
-            return 0 if all(item in ('ready', 'running') for item in results.values()) else 1
+            return 0 if all(item in ('ready', 'running', 'disabled') for item in results.values()) else 1
         finally:
             os.close(fd)
     except Exception:

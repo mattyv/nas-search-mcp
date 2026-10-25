@@ -194,3 +194,20 @@ def test_worker_update_signal_order_and_verified_restart(tmp_path):
     start.assert_called_once()
     protocol.assert_called_once()
     assert (tmp_path / 'upgrade-host.before-recovery.py').read_bytes() == b'old-worker'
+
+
+def test_photos_recovery_does_not_enable_absent_feature(tmp_path):
+    recovery = module()
+    with patch.object(recovery, 'PHOTOS', tmp_path / 'missing'):
+        assert recovery.check_photos() == 'disabled'
+
+
+def test_photos_recovery_starts_only_protected_fixed_broker(tmp_path):
+    recovery = module()
+    (tmp_path / 'run').mkdir()
+    with patch.object(recovery, 'PHOTOS', tmp_path), patch.object(recovery, 'trusted'), \
+            patch.object(recovery.subprocess, 'Popen') as launch:
+        assert recovery.check_photos() == 'start-requested'
+    args, options = launch.call_args
+    assert args[0] == ['/usr/bin/python3', str(tmp_path / 'synology-photos-host.py'), 'serve']
+    assert options['start_new_session'] and options['close_fds']
