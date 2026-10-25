@@ -2,6 +2,11 @@
 
 Use a small authorized document/code folder first. Confirm the source folders' physical paths and permissions in DSM before mounting them. A pilot does not establish full-library performance or photo-model compatibility.
 
+For the existing NAS deployment, configure [boot and network-outage recovery](nas-recovery.md)
+alongside installation. Container restart policies alone do not handle a late TUN
+device or a VPN that becomes healthy after the first startup wait.
+
+
 ## Scripted installation and upgrades
 
 From a complete project checkout on the NAS, after CI publishes the selected image:
@@ -65,6 +70,11 @@ NAS_PHOTOS_PATH=/path/to/authorized-photos
 Do not add duplicate setting lines. Apply the settings through the normal deployment upgrade. Check `index_status`; photos become searchable as indexing completes. Enabling photos keeps the document index. To turn photo embeddings off, set `NAS_PHOTOS=false` and redeploy.
 
 Photo indexing uses local CLIP models, downloaded on first use, and can keep one CPU busy. Measure memory, indexing time, and search quality on the target NAS before expanding the collection. Development measurements are not NAS performance guarantees.
+
+For named-person lookup, prefer the optional [Synology Photos connector](synology-photos.md),
+which reuses existing People albums and thumbnails. This experimental visual
+index is a separate feature and does not enable that connector. Do not change
+the existing photo-index setting solely to enable people lookup.
 
 For an isolated pilot, start with a small read-only folder and keep the document service running:
 

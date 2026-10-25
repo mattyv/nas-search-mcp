@@ -15,6 +15,7 @@ import (
 
 	"github.com/mattyv/nas-search-mcp/internal/app"
 	"github.com/mattyv/nas-search-mcp/internal/oauth"
+	"github.com/mattyv/nas-search-mcp/internal/photos"
 	"github.com/mattyv/nas-search-mcp/internal/store"
 	"github.com/mattyv/nas-search-mcp/internal/upgrade"
 	"github.com/mattyv/nas-search-mcp/internal/uploadwriter"
@@ -73,6 +74,16 @@ type FetchInput struct {
 type LinkInput struct {
 	Path string `json:"path"`
 }
+type PhotosPeopleInput struct {
+	Query  string `json:"query,omitempty"`
+	Offset int    `json:"offset,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+type PhotosPersonInput struct {
+	PersonID int64 `json:"person_id"`
+	Offset   int   `json:"offset,omitempty"`
+	Limit    int   `json:"limit,omitempty"`
+}
 type BrowseOutput struct {
 	Files []store.File `json:"files"`
 }
@@ -128,6 +139,9 @@ func main() {
 	token := os.Getenv("NAS_TOKEN")
 	if !stdio && len(token) < 24 {
 		log.Fatal("NAS_TOKEN must contain at least 24 characters")
+	}
+	if _, err := configuredPhotos(); err != nil {
+		log.Fatal("Synology Photos configuration invalid; set NAS_SYNOLOGY_PHOTOS_SOCKET to an absolute Unix socket path")
 	}
 	a, err := app.New(env("NAS_ROOT", "/files"), env("NAS_DATA", "/data"), env("NAS_PYTHON", "python3"), env("NAS_WORKER", "/app/worker/worker.py"), os.Getenv("NAS_VEC_EXTENSION"), enabled("NAS_SEMANTIC", true), enabled("NAS_PHOTOS", false))
 	if err != nil {
@@ -285,11 +299,56 @@ func folderList(value string) []string {
 	return out
 }
 
+func configuredPhotos() (*photos.Client, error) {
+	if socket := os.Getenv("NAS_SYNOLOGY_PHOTOS_SOCKET"); socket != "" {
+		return photos.New(socket)
+	}
+	return nil, nil
+}
+
 func buildMCPServer(a *app.App, approval *upgradeApproval, uploads ...*uploadPage) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "nas-search", Version: "0.1.0"}, nil)
+	if client, configErr := configuredPhotos(); client != nil || configErr != nil {
+		mcp.AddTool(server, &mcp.Tool{Name: "photos_people", Description: "Find named People albums in Synology Photos. query filters the existing labels; omit it to browse. This uses Synology's saved face groups and names, not new face recognition. Results contain person IDs for photos_for_person. offset defaults to 0 (maximum 100000); limit defaults to 20 (maximum 100). Follow next_offset for another page; truncated means more results may exist. Names and recognition can be incomplete or incorrect. Read-only metadata lookup; it does not rename, merge, share, or delete anything.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false), IdempotentHint: true}}, func(ctx context.Context, req *mcp.CallToolRequest, in PhotosPeopleInput) (*mcp.CallToolResult, photos.PeopleResult, error) {
+			if !a.SynologyPhotosAllowed() {
+				return nil, photos.PeopleResult{}, errors.New("current folder restrictions block Synology Photos: require the complete Photos root with no denied Photos subfolders")
+			}
+			if configErr != nil {
+				return nil, photos.PeopleResult{}, errors.New("Synology Photos configuration invalid; check the host broker installation")
+			}
+			out, err := client.People(ctx, photos.PeopleInput{Query: in.Query, Offset: in.Offset, Limit: in.Limit})
+			return nil, out, err
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "photos_for_person", Description: "List photo/video metadata in an existing Synology Photos People album. First use photos_people to resolve the name, then pass its person_id. offset defaults to 0 (maximum 100000); limit defaults to 20 (maximum 100). Follow next_offset for another page; truncated means more results may exist. Results are Synology's assigned matches, not independently verified identities. This lookup returns IDs, filenames and capture times. Use photos_preview with the person_id and a returned photo ID to show a small image preview. Original download links and filesystem paths are not returned. Read-only; it does not change photos or albums.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false), IdempotentHint: true}}, func(ctx context.Context, req *mcp.CallToolRequest, in PhotosPersonInput) (*mcp.CallToolResult, photos.PhotosResult, error) {
+			if !a.SynologyPhotosAllowed() {
+				return nil, photos.PhotosResult{}, errors.New("current folder restrictions block Synology Photos: require the complete Photos root with no denied Photos subfolders")
+			}
+			if configErr != nil {
+				return nil, photos.PhotosResult{}, errors.New("Synology Photos configuration invalid; check the host broker installation")
+			}
+			out, err := client.ForPerson(ctx, photos.PhotosInput{PersonID: in.PersonID, Offset: in.Offset, Limit: in.Limit})
+			return nil, out, err
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "photos_preview", Description: "Return a small JPEG preview for one photo/video item in a Synology Photos People album. First use photos_people and photos_for_person to obtain person_id and a matching photo_id; a People album cover ID is not a photo ID. The host checks that the item belongs to that person's album. Returns MCP image content that the client may display in chat. This uses Synology's stored album assignment; do not infer or confirm identity from the image. Read-only; no original download, public link, file path, or photo modification.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false), IdempotentHint: true}}, func(ctx context.Context, req *mcp.CallToolRequest, in photos.PreviewInput) (*mcp.CallToolResult, any, error) {
+			if !a.SynologyPhotosAllowed() {
+				return nil, nil, errors.New("current folder restrictions block Synology Photos: require the complete Photos root with no denied Photos subfolders")
+			}
+			if configErr != nil {
+				return nil, nil, errors.New("Synology Photos configuration invalid; check the host broker installation")
+			}
+			out, err := client.Preview(ctx, in)
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.ImageContent{Data: out.Data, MIMEType: out.MIMEType}}}, nil, nil
+		})
+	}
 	searchDescription := "Search indexed NAS files using keywords and meaning. Set photos=true for visual photo search, describing what the photo shows. Results include source paths and page/section locations. If the user names a file or this search misses it, use find_files to match live filename and folder terms. Read-only."
 	if a.LinksEnabled() {
 		searchDescription = strings.Replace(searchDescription, " Read-only.", " To show the user a result, such as a photo, call download_link with its path. Read-only.", 1)
+	}
+	if os.Getenv("NAS_SYNOLOGY_PHOTOS_SOCKET") != "" {
+		searchDescription += " For photos of a named person, use photos_people and photos_for_person; photos=true is the separate experimental visual-search index."
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "search", Description: searchDescription}, func(ctx context.Context, req *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, app.SearchResult, error) {
 		if in.Limit == 0 {

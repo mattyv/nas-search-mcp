@@ -186,6 +186,22 @@ func (_static *CompanionStruct_Default___) LinkActive(now _dafny.Int, expires _d
 func (_static *CompanionStruct_Default___) LoginAttemptAllowed(failures _dafny.Int) bool {
 	return ((failures).Sign() != -1) && ((failures).Cmp(_dafny.IntOfInt64(5)) < 0)
 }
+func (_static *CompanionStruct_Default___) ValidPhotoPage(offset _dafny.Int, limit _dafny.Int) bool {
+	return (((offset).Sign() != -1) && ((offset).Cmp(_dafny.IntOfInt64(100000)) <= 0)) && (((_dafny.One).Cmp(limit) <= 0) && ((limit).Cmp(_dafny.IntOfInt64(100)) <= 0))
+}
+func (_static *CompanionStruct_Default___) ValidPhotoPerson(id _dafny.Int) bool {
+	return ((_dafny.One).Cmp(id) <= 0) && ((id).Cmp(_dafny.IntOfInt64(2147483647)) <= 0)
+}
+func (_static *CompanionStruct_Default___) PhotoDenyPath(path _dafny.Sequence) bool {
+	return (_dafny.Companion_Sequence_.Equal(path, _dafny.UnicodeSeqOfUtf8Bytes("Photos"))) || (((_dafny.IntOfUint32((path).Cardinality())).Cmp(_dafny.IntOfUint32((_dafny.UnicodeSeqOfUtf8Bytes("Photos/")).Cardinality())) >= 0) && (_dafny.Companion_Sequence_.Equal((path).Take((_dafny.IntOfUint32((_dafny.UnicodeSeqOfUtf8Bytes("Photos/")).Cardinality())).Uint32()), _dafny.UnicodeSeqOfUtf8Bytes("Photos/"))))
+}
+func (_static *CompanionStruct_Default___) SynologyPhotosAllowed(configured bool, allow _dafny.Sequence, deny _dafny.Sequence) bool {
+	return ((configured) && (_dafny.Companion_Sequence_.Contains(allow, _dafny.UnicodeSeqOfUtf8Bytes("Photos")))) && (_dafny.Quantifier((deny).UniqueElements(), true, func(_forall_var_0 _dafny.Sequence) bool {
+		var _0_path _dafny.Sequence
+		_0_path = interface{}(_forall_var_0).(_dafny.Sequence)
+		return !(_dafny.Companion_Sequence_.Contains(deny, _0_path)) || (!(Companion_Default___.PhotoDenyPath(_0_path)))
+	}))
+}
 func (_static *CompanionStruct_Default___) FailedLoginCount(failures _dafny.Int) _dafny.Int {
 	return (failures).Plus(_dafny.One)
 }
