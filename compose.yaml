@@ -27,6 +27,8 @@ services:
       NAS_UPLOAD_INDEXED_DESTINATIONS: "${NAS_UPLOAD_INDEXED_DESTINATIONS:-false}"
       NAS_UPLOAD_WRITER_SOCKET: /data/upload-ipc/upload.sock
       NAS_UPGRADE_DIR: "${NAS_UPGRADE_DIR:-}"
+      # The installer adds a read-only socket-directory bind only when configured.
+      NAS_SYNOLOGY_PHOTOS_SOCKET: "${NAS_SYNOLOGY_PHOTOS_SOCKET:-}"
       NAS_ROOT: /files
       NAS_DATA: /data
       NAS_SEMANTIC: "true"

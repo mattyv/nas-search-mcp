@@ -276,6 +276,84 @@ Keep the search/extraction container's source mounts read-only. An optional smal
 
 The destination-authorization test first failed because the method was absent, then passed. Writer policy, one-active-upload, and health tests also failed before their behavior was implemented, then passed. Installer tests first exposed the missing isolated-writer mount and overlapping-source preflight checks, then passed. The changed-package Go race suite, full installer suite, and Dafny build passed locally. CI and NAS behavior remain unvalidated.
 
+## D042 — Recover host dependencies after reboot and network loss
+
+**Status:** Accepted; adapter tests and required deployment checks apply
+
+Container restart policies do not cover a late tunnel device or a VPN that becomes
+healthy after the initial dependency wait. Provide a root boot and scheduled
+recovery check for the explicitly identified VPN/Tailscale stack, search service,
+upgrade worker and optional Photos broker. Restore only the standard tunnel
+device, let the VPN perform its own connection retries and start its dependent
+Tailscale service after health succeeds. Preserve account state, unrelated services,
+images, credentials and original data. Limit automatic container interventions to
+three per subsystem per rolling hour. A healthy service is not restarted.
+
+Use protected root installations, exact project/service identities and independent
+subsystem checks. Search recovery and upgrades share a deployment lock inherited
+by the installer child; a crashed parent does not release exclusion while its
+installer remains alive. Identify workers by root credentials, exact arguments
+and process start identity before maintenance. Do not use persistent status as a
+lock. Keep partial setup diagnostics for inspection. Daemon liveness is distinct
+from backend readiness; scheduled checks do not establish client egress or prove
+reboot/outage recovery without an authorized target-device test. OS/process/Docker
+adapters remain tested, not formally proved. See [recovery](../docs/nas-recovery.md).
+
+## D043 — Reuse Synology Photos People albums through a restricted host broker
+
+**Status:** Accepted and locally implemented; combined CI and deployment validation pending
+
+Prefer existing Synology Photos names, person assignments and thumbnails for
+named-person lookup, avoiding a second recognition model on the 2 GB NAS. Retain
+descriptive CLIP search as a separate optional feature and preserve its current
+setting. Add optional MCP people lookup, person-assigned photo/video metadata and
+small JPEG previews. Do not expose album mutations, database access, original
+paths or public sharing links.
+
+Go communicates over a private Unix HTTP socket; the container mounts only its
+run directory read-only. The isolated upload writer does not receive this socket.
+The root broker accepts only fixed read operations, typed bounded IDs and paging,
+and a local account frozen from private app settings. Requests cannot choose an
+account, API, method, command, path or credential. Account identity and physical
+paths stay in private deployment settings. A new account is not assumed to inherit
+another user's personal People library. Shared Space is outside this first scope.
+
+Require an explicit whole Photos grant and reject any denied Photos subtree.
+Compiled Dafny policy proves grant/deny requirements, denial monotonicity and
+integer bounds. The host independently rereads root-private scope settings before
+data requests, including after revocation. Native results must explicitly contain
+the requested person. Preview reads repeat that membership check, require typed
+matching photo/unit IDs and ready metadata, and return only bounded JPEG data.
+Bound image dimensions before decoding and re-encode previews without embedded
+metadata before returning them to MCP clients.
+Face-group cover identifiers are not photo identifiers. Saved face assignments
+may be incomplete or wrong; assistants must not infer identity from the preview.
+
+Native probes establish personal People listing, explicit photo membership and
+JPEG thumbnail delivery on Photos 1.9.1. The root CLI can emit successful CGI
+content followed by wrapper error117; accept only the observed framed combination
+and reject ambiguous/HTML responses. Temporary preview bytes stay private and are
+removed after the response. Setup coordinates with upgrades, preserves environment
+and source/index state, checks authenticated MCP access, and attempts prior-state
+rollback. Reboot, resource use and final client display remain deployment checks.
+
+Tests first reproduced missing tools, unsafe bounds, redirects/oversized replies,
+denied-scope broker access, incorrect person membership, malformed previews,
+wrapper handling, and bool/float identity aliases. Tests also cover actual Unix
+HTTP, setup rollback and worker resume. Independent review found no critical
+issue in those boundaries. The proof does not cover mutexes, Unicode matching,
+JSON/HTTP, peer credentials, native permissions, processes, Synology responses or
+JPEG decoding; those remain tested adapters. Original image data and credentials
+are not test fixtures. Combined-main verification follows separately. See
+[Photos setup](../docs/synology-photos.md).
+
+Combined-current-main local verification passes 332 Python tests plus two
+subtests. Eight real-Compose contracts await CI. Dafny rebuild verifies 48 combined
+obligations with zero errors and executable tests; the Go race suite covers the
+existing upload/approval/OAuth behavior alongside Photos. A native preview probe
+confirmed bounded JPEG delivery. Final installed MCP access and client display
+remain deployment checks.
+
 ## Open decisions
 
 - When measured indexing time and latency justify expanding to larger source collections.

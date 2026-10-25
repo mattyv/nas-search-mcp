@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from test_nas_installer import setup
+from test_nas_installer import setup, photos_config
 
 DOCKER = shutil.which('docker')
 pytestmark = pytest.mark.skipif(DOCKER is None, reason='Docker Compose is checked on CI')
@@ -49,3 +49,34 @@ def test_rendered_compose_matches_validated_paths_scope_and_binding(tmp_path, bi
     assert service['environment']['NAS_ALLOWED_FOLDERS'] == ''
     private_ports = {port.get('host_ip') for port in service['ports'] if port['target'] == 8080}
     assert private_ports == expected
+
+
+@pytest.mark.parametrize('indexed_upload', [False, True])
+def test_optional_photos_broker_mount_is_read_only_in_real_compose(tmp_path, indexed_upload):
+    args, adapter_env, _, private_env = photos_config(tmp_path)
+    if indexed_upload:
+        with private_env.open('a') as stream:
+            stream.write('NAS_UPLOAD_ENABLED=true\nNAS_UPLOAD_INDEXED_DESTINATIONS=true\n')
+    installed = subprocess.run(args, env=adapter_env, capture_output=True, text=True)
+    assert installed.returncode == 0, installed.stderr
+    clean_env = {key: value for key, value in os.environ.items() if not key.startswith('NAS_')}
+    profile_args = ['--profile', 'indexed-upload'] if indexed_upload else []
+    rendered = subprocess.run([DOCKER, 'compose', *profile_args, '--env-file', str(private_env),
+                               '-f', str(tmp_path / 'install' / 'compose.yaml'), 'config', '--format', 'json'],
+                              env=clean_env, capture_output=True, text=True, check=True)
+    services = json.loads(rendered.stdout)['services']
+    service = services['nas-search']
+    mounts = {volume['target']: volume for volume in service['volumes']}
+    assert mounts['/synology-photos']['source'] == str(tmp_path / 'protected-photos' / 'run')
+    assert mounts['/synology-photos']['read_only'] is True
+    assert service['environment']['NAS_SYNOLOGY_PHOTOS_SOCKET'] == '/synology-photos/photos.sock'
+    for target in ('/files/Documents', '/files/Code', '/files/Photos'):
+        assert mounts[target]['read_only'] is True
+    writer = services.get('nas-upload-writer')
+    if writer is not None:
+        writer_mounts = {volume['target']: volume for volume in writer['volumes']}
+        assert '/synology-photos' not in writer_mounts
+        assert writer['network_mode'] == 'none'
+        assert writer['read_only'] is True
+        for target in ('/write/Documents', '/write/Code', '/write/Photos', '/ipc'):
+            assert writer_mounts[target].get('read_only', False) is False

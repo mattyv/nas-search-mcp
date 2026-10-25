@@ -45,6 +45,13 @@ Use `find_files` when you know a filename or folder name, or when content search
 
 Scans run at startup and periodically. An item enters the index after extraction and embedding finish. During indexing, semantic search and document reading may wait behind the worker queue; status checks and original-file retrieval remain available. The container pauses for two seconds before checking each eligible file, including unchanged files, to reduce disk contention on small NAS devices. Set `NAS_SCAN_FILE_DELAY_SECONDS=0` in the private deployment settings to disable pacing. At two seconds, 10,000 eligible files add about 5½ hours to a full scan; files already indexed remain searchable while it runs. Measure connector latency and scan progress on your NAS before changing this setting.
 
+For finding photos of people, the chosen next step is a read-only Synology Photos
+integration that reuses its named People albums. The optional `photos_people`,
+`photos_for_person` and `photos_preview` tools provide named-person lookup, matching
+item metadata and small JPEG previews after [host setup](docs/synology-photos.md).
+These tools do not require photo embeddings. The [visual-search pilot](docs/deployment.md#start-a-small-visual-image-search-pilot)
+remains a separate experimental option for descriptive image search.
+
 ## Coverage and limits
 
 | Content | Support |
@@ -56,7 +63,7 @@ Scans run at startup and periodically. An item enters the index after extraction
 | JPEG, PNG, WebP, GIF, BMP, TIFF, HEIC/HEIF | Metadata; optional visual search using CLIP |
 | Archives, backups, legacy Office, audio/video, camera RAW | Not indexed |
 
-Files above 32 MiB are skipped; index extraction stops at 200,000 characters. Full-document reading uses continuation offsets but retains the source-size limit. Transcription, photo OCR, faces, and automatic backup deduplication are not implemented. Search coverage depends on file format and extraction quality.
+Files above 32 MiB are skipped; index extraction stops at 200,000 characters. Full-document reading uses continuation offsets but retains the source-size limit. Transcription, photo OCR, independent face recognition, and automatic backup deduplication are not implemented. The optional Photos connector reuses Synology's existing People assignments. Search coverage depends on file format and extraction quality.
 
 Text search uses BGE-small English embeddings and SQLite FTS5 with sqlite-vec. Optional photo search uses CLIP. Models download from Hugging Face on first use and are cached in the persistent data folder. Content processing is local; excerpts sent to an assistant are handled under that provider's data policy. Photo indexing is disabled by default because it uses more memory.
 

@@ -191,6 +191,62 @@ module Core {
     0 <= failures < 5
   }
 
+  // Input limits for the read-only Photos protocol adapter. Integer arguments
+  // are unrestricted so malformed negative/large requests fail closed.
+  function ValidPhotoPage(offset: int, limit: int): bool
+    ensures ValidPhotoPage(offset, limit) <==>
+      0 <= offset <= 100000 && 1 <= limit <= 100
+  {
+    0 <= offset <= 100000 && 1 <= limit <= 100
+  }
+
+  function ValidPhotoPerson(id: int): bool
+    ensures ValidPhotoPerson(id) <==> 1 <= id <= 2147483647
+  {
+    1 <= id <= 2147483647
+  }
+
+  lemma PhotoRequestBounds(offset: int, limit: int, person: int)
+    ensures (ValidPhotoPage(offset, limit) && ValidPhotoPerson(person)) <==>
+      (0 <= offset <= 100000 && 1 <= limit <= 100 && 1 <= person <= 2147483647)
+  {}
+
+  lemma InvalidPhotoRequestRejected(offset: int, limit: int, person: int)
+    requires offset < 0 || offset > 100000 || limit < 1 || limit > 100 ||
+      person < 1 || person > 2147483647
+    ensures !(ValidPhotoPage(offset, limit) && ValidPhotoPerson(person))
+  {}
+
+  function PhotoDenyPath(path: string): bool
+    ensures PhotoDenyPath(path) <==>
+      (path == "Photos" || (|path| >= |"Photos/"| && path[..|"Photos/"|] == "Photos/"))
+  {
+    path == "Photos" || (|path| >= |"Photos/"| && path[..|"Photos/"|] == "Photos/")
+  }
+
+  function SynologyPhotosAllowed(configured: bool, allow: seq<string>, deny: seq<string>): bool
+    ensures SynologyPhotosAllowed(configured, allow, deny) <==>
+      (configured && "Photos" in allow && (forall path <- deny :: !PhotoDenyPath(path)))
+  {
+    configured && "Photos" in allow && (forall path <- deny :: !PhotoDenyPath(path))
+  }
+
+  lemma PhotosRequireExplicitRoot(configured: bool, allow: seq<string>, deny: seq<string>)
+    ensures SynologyPhotosAllowed(configured, allow, deny) ==> configured && "Photos" in allow
+    ensures (!configured || "Photos" !in allow) ==> !SynologyPhotosAllowed(configured, allow, deny)
+  {}
+
+  lemma PhotosDeniedRootBlocks(configured: bool, allow: seq<string>, deny: seq<string>, path: string)
+    requires path in deny && PhotoDenyPath(path)
+    ensures !SynologyPhotosAllowed(configured, allow, deny)
+  {}
+
+  lemma PhotosDenyMonotonic(configured: bool, allow: seq<string>, oldDeny: seq<string>, newDeny: seq<string>)
+    requires forall path <- oldDeny :: path in newDeny
+    ensures !SynologyPhotosAllowed(configured, allow, oldDeny) ==>
+      !SynologyPhotosAllowed(configured, allow, newDeny)
+  {}
+
   function FailedLoginCount(failures: int): int
     requires LoginAttemptAllowed(failures)
     ensures FailedLoginCount(failures) == failures + 1

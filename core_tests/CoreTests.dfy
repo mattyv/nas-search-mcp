@@ -52,6 +52,28 @@ module CoreTests {
     expect !LoginAttemptAllowed(6);
     expect FailedLoginCount(0) == 1;
     expect FailedLoginCount(4) == 5;
+    expect ValidPhotoPage(0, 1);
+    expect ValidPhotoPage(100000, 100);
+    expect ValidPhotoPage(20, 20);
+    expect !ValidPhotoPage(-1, 20);
+    expect !ValidPhotoPage(100001, 20);
+    expect !ValidPhotoPage(0, 0);
+    expect !ValidPhotoPage(0, 101);
+    expect ValidPhotoPerson(1);
+    expect ValidPhotoPerson(3753);
+    expect ValidPhotoPerson(2147483647);
+    expect !ValidPhotoPerson(0);
+    expect !ValidPhotoPerson(-1);
+    expect !ValidPhotoPerson(2147483648);
+    expect !SynologyPhotosAllowed(false, ["Photos"], []);
+    expect !SynologyPhotosAllowed(true, [], []);
+    expect !SynologyPhotosAllowed(true, ["Photos/Family"], []);
+    expect !SynologyPhotosAllowed(true, ["Photos2"], []);
+    expect SynologyPhotosAllowed(true, ["Photos"], []);
+    expect SynologyPhotosAllowed(true, ["Photos", "Code"], ["Code", "Photos2"]);
+    expect !SynologyPhotosAllowed(true, ["Photos"], ["Photos"]);
+    expect !SynologyPhotosAllowed(true, ["Photos"], ["Photos/Private"]);
+    expect !SynologyPhotosAllowed(true, ["Photos"], ["Photos/"]);
     print "Dafny core executable tests passed\n";
   }
 }

@@ -60,6 +60,110 @@ def test_install_order_and_private_state(tmp_path):
     assert (state / 'current-image').read_text().strip().endswith(':abc123')
 
 
+def photos_config(tmp_path, host_path=None, socket='/synology-photos/photos.sock'):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    if host_path is None:
+        host_path = tmp_path / 'protected-photos' / 'run'
+        host_path.mkdir(parents=True)
+    private = tmp_path / 'install' / '.env'
+    with private.open('a') as stream:
+        stream.write('NAS_SYNOLOGY_PHOTOS_HOST_PATH=' + str(host_path) + '\n')
+        stream.write('NAS_SYNOLOGY_PHOTOS_SOCKET=' + socket + '\n')
+    return args, env, log, private
+
+
+def test_optional_photos_mount_preserves_env_and_is_read_only(tmp_path):
+    args, env, log, private = photos_config(tmp_path)
+    before = private.read_bytes()
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert private.read_bytes() == before
+    compose = (tmp_path / 'install' / 'compose.yaml').read_text()
+    assert f'"{tmp_path}/protected-photos/run:/synology-photos:ro"' in compose
+    assert '${NAS_SYNOLOGY_PHOTOS_SOCKET:-}' in compose
+    assert (tmp_path / 'protected-photos' / 'run').exists()
+
+
+def test_absent_photos_settings_create_no_broker_mount(tmp_path):
+    args, env, _ = setup(tmp_path)
+    result = subprocess.run(args, env=env, capture_output=True)
+    assert result.returncode == 0
+    compose = (tmp_path / 'install' / 'compose.yaml').read_text()
+    assert ':/synology-photos:ro' not in compose
+
+
+def test_photos_settings_must_match_and_reject_overlap_before_pull(tmp_path):
+    args, env, log, private = photos_config(tmp_path, tmp_path / 'Photos')
+    log.write_text('')
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert 'pull ' not in log.read_text()
+    contents = private.read_text().replace(str(tmp_path / 'Photos'), str(tmp_path / 'index'))
+    private.write_text(contents)
+    result = subprocess.run(args, env=env, capture_output=True)
+    assert result.returncode != 0
+    assert 'pull ' not in log.read_text()
+
+
+def test_photos_socket_requires_existing_host_path_and_exact_container_socket(tmp_path):
+    args, env, log, private = photos_config(tmp_path, tmp_path / 'missing')
+    log.write_text('')
+    assert subprocess.run(args, env=env, capture_output=True).returncode != 0
+    assert not (tmp_path / 'missing').exists()
+    private.write_text(private.read_text().replace(str(tmp_path / 'missing'), str(tmp_path)))
+    private.write_text(private.read_text().replace('/synology-photos/photos.sock', '/upgrades/request.json'))
+    assert subprocess.run(args, env=env, capture_output=True).returncode != 0
+    assert 'pull ' not in log.read_text()
+
+
+def test_photos_broker_alias_and_single_missing_setting_rejected(tmp_path):
+    args, env, log, private = photos_config(tmp_path)
+    original = private.read_text()
+    link = tmp_path / 'broker-link'
+    link.symlink_to(tmp_path / 'protected-photos' / 'run', target_is_directory=True)
+    variants = [original.replace(str(tmp_path / 'protected-photos' / 'run'), str(link)),
+                original.replace('NAS_SYNOLOGY_PHOTOS_SOCKET=/synology-photos/photos.sock', 'NAS_SYNOLOGY_PHOTOS_SOCKET='),
+                original.replace('NAS_SYNOLOGY_PHOTOS_HOST_PATH=' + str(tmp_path / 'protected-photos' / 'run'), 'NAS_SYNOLOGY_PHOTOS_HOST_PATH=')]
+    for contents in variants:
+        private.write_text(contents)
+        log.write_text('')
+        assert subprocess.run(args, env=env, capture_output=True).returncode != 0
+        assert 'pull ' not in log.read_text()
+
+
+def test_photos_broker_mount_preserves_isolated_upload_modes(tmp_path):
+    for indexed in (False, True):
+        folder = tmp_path / ('indexed' if indexed else 'dedicated')
+        folder.mkdir()
+        args, env, log, private = photos_config(folder)
+        uploads = folder / 'Documents' / 'Uploads'
+        uploads.mkdir()
+        settings = (f'NAS_UPLOAD_ENABLED=true\nNAS_UPLOAD_PATH={uploads}\n'
+                    f'NAS_UPLOAD_INDEXED_DESTINATIONS={str(indexed).lower()}\n')
+        private.write_text(private.read_text() + settings)
+        before = private.read_bytes()
+        result = subprocess.run(args, env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert private.read_bytes() == before
+        compose = (folder / 'install' / 'compose.yaml').read_text()
+        reader, writer = compose.split('  nas-upload-writer:', 1)
+        assert reader.count(':/synology-photos:ro') == 1
+        assert ':/synology-photos:ro' not in writer
+        assert ':/write/' not in reader
+        assert ':/files/${NAS_DOCUMENTS_LABEL:-Documents}:ro' in reader
+        assert ':/files/Code:ro' in reader and ':/files/Photos:ro' in reader
+        assert '${NAS_DOCUMENTS_PATH:-/volume1/shared-documents}:/write/${NAS_DOCUMENTS_LABEL:-Documents}:rw' in writer
+        assert '${NAS_CODE_PATH:-/volume1/shared-code}:/write/Code:rw' in writer
+        assert '${NAS_PHOTOS_PATH:-/volume1/shared-photos}:/write/Photos:rw' in writer
+        if indexed:
+            assert ':/uploads:rw' not in reader
+            assert '--profile indexed-upload' in log.read_text()
+        else:
+            assert '${NAS_UPLOAD_PATH}:/uploads:rw' in reader
+            assert '--profile indexed-upload' not in log.read_text()
+
+
 def test_dry_run_and_reject_latest(tmp_path):
     args, env, log = setup(tmp_path)
     result = subprocess.run(args + ['--dry-run'], env=env, capture_output=True, text=True)
