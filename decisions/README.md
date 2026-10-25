@@ -38,7 +38,7 @@ This keeps deployment small. Exact vector scans trade simple, bounded operation 
 
 ## D005 — Use free local embeddings by default
 
-**Date:** 2026-10-11 · **Status:** Accepted for text; provisional for photos
+**Date:** 2026-10-11 · **Status:** Accepted for text; photo direction superseded by D030
 
 Use BGE-small English embeddings for documents/code and CLIP vision/text embeddings for optional visual photo search. External AI is acceptable to the user, but paid APIs must not be necessary for ordinary search.
 
@@ -152,7 +152,7 @@ Evidence: six new tests failed before implementation; nine downloader tests pass
 
 ## D019 — Validate visual search in an isolated NAS pilot
 
-**Date:** 2026-10-12 · **Status:** Accepted pilot approach; NAS fit and search quality unvalidated
+**Date:** 2026-10-12 · **Status:** Historical experimental pilot; superseded for people search by D030; NAS fit and quality unvalidated
 
 The user requested image search. Reuse existing local CLIP image and text embeddings, photo metadata, and `search` with `photos=true`. Start a separate photo-only pilot on port 8081 with its own data directory, a selected read-only source folder, one CPU, and a 1 GiB memory limit without extra swap. Preserve the running document service, its index, credentials, and source configuration. Do not turn on photos in the existing index: its pipeline signature requires a fresh index when this setting changes.
 
@@ -358,3 +358,38 @@ Funnel configuration is intact, and public OAuth metadata returns 200 when
 requested from the NAS. The checking laptop's public-name lookup failed, so this
 does not independently establish external phone access. Protected DSM schedules
 were not inspected, and a planned reboot/network-loss test remains pending.
+
+## D030 — Reuse Synology Photos for people search
+
+**Date:** 2026-10-25 · **Status:** Accepted product direction; authenticated feasibility test and implementation pending
+
+The user prefers reusing Synology Photos over the earlier semantic image-search
+pilot. Start with existing named People albums and photo metadata, then expose
+read-only people/photo lookup through MCP. Synology remains the source of face
+grouping and names. Do not add a second face-recognition model, enable CLIP on the
+live index, remove the experimental code, or change document semantic search as
+part of this choice. Reuse should avoid duplicate recognition work on the 2 GB
+NAS, but actual integration memory use and latency remain unmeasured.
+
+Read-only discovery on the NAS found Synology Photos 1.9.1-10928 and advertised
+SYNO.Foto.Browse.Person versions 1–3, SYNO.Foto.Browse.Item versions 1–7,
+SYNO.Foto.Search.Search versions 1–7 and shared-space people versions 1–3. No
+authenticated person listing, photo listing or retrieval has been tested. API
+advertisement alone does not prove authorization, result fields or compatibility.
+
+The next validation is a bounded authenticated lookup of one already named person
+and their photos. Keep all operations read-only and enforce existing authorized
+photo scope before returning metadata, thumbnails or originals. Photos access
+must not silently widen access to shared libraries or other users' home folders.
+Current direct-file mounts use a pilot photo folder; access to the real Photos
+library needs explicit, checked configuration rather than assuming existing
+mounts cover it. Do not write Synology's database or expose editing, deletion,
+people merging, naming or sharing tools. An adapter that only issues read calls
+does not make its underlying DSM credential read-only; validate the available
+account permissions and personal/shared-space behavior before choosing credentials.
+
+Treat the internal Photos interfaces as version-sensitive, detect capabilities
+and fail clearly after incompatible updates. People lookup does not establish
+support for descriptive requests such as a beach at sunset. Tags, dates and
+places may be added after their own validation. Preserve D019 as experimental
+history rather than treating its unmeasured CLIP pilot as a completed feature.

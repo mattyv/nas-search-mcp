@@ -75,6 +75,11 @@ These are tested operating-system and MCP adapters outside the Dafny proof bound
 
 ## Start a small visual image-search pilot
 
+**Historical experimental option:** the user chose Synology Photos as the preferred
+source for people search on 2026-10-25. Keep this pilot disabled while validating
+read-only access to Photos' existing named People albums. That integration is not
+implemented yet; the pilot instructions below do not enable it.
+
 Visual search is implemented but has not been measured on the DS220+. Start with 20–50 JPEG, PNG, WebP, GIF, BMP, or TIFF images in an existing subfolder under `/volume1/homes/matt/Photos`. Images must be at most 32 MiB and 25 megapixels. HEIC, camera RAW, face recognition, and image OCR are outside this pilot. Searches describe visible content, such as “a beach at sunset”; results are candidates to inspect, not confidence scores.
 
 Run the pilot launcher from an updated checkout on the NAS:
