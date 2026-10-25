@@ -153,6 +153,40 @@ def document_aliases(env):
     return legacy, additions
 
 
+def authorize_photos(original, env, grant_photos_access):
+    if type(grant_photos_access) is not bool:
+        raise ValueError('Explicit Photos grant flag required')
+    allowed = [item.strip() for item in env.get('NAS_ALLOWED_FOLDERS', '').split(',')]
+    denied = [item.strip() for item in env.get('NAS_DENIED_FOLDERS', '').split(',')]
+    if any(item == 'Photos' or item.startswith('Photos/') for item in denied):
+        raise ValueError('Declared Photos denials cannot be removed by setup')
+    if 'Photos' in allowed:
+        return original
+    if not grant_photos_access:
+        raise ValueError('Full Photos scope requires explicit --grant-photos-access')
+    previous = env.get('NAS_ALLOWED_FOLDERS', '')
+    suffix = (b',' if previous else b'') + b'Photos'
+    env['NAS_ALLOWED_FOLDERS'] = previous + (',' if previous else '') + 'Photos'
+    key = b'NAS_ALLOWED_FOLDERS='
+    lines = original.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if not line.startswith(key):
+            continue
+        body = line.rstrip(b'\r\n')
+        ending = line[len(body):]
+        raw = body[len(key):]
+        value = raw.strip(b' \t')
+        leading = raw[:len(raw) - len(raw.lstrip(b' \t'))]
+        trailing = raw[len(raw.rstrip(b' \t')):] if value else b''
+        if value[:1] in (b'"', b"'"):
+            value = value[:-1] + suffix + value[-1:]
+        else:
+            value += suffix
+        lines[index] = key + leading + value + trailing + ending
+        return b''.join(lines)
+    return original + (b'' if original.endswith(b'\n') else b'\n') + key + b'Photos\n'
+
+
 def atomic_write(path, body, mode=0o600):
     fd, temporary = tempfile.mkstemp(prefix='.photos-', dir=str(path.parent))
     try:
@@ -362,7 +396,7 @@ if issuer:
             time.sleep(2)
 
 
-def enable(source, install, image, dry_run=False):
+def enable(source, install, image, dry_run=False, grant_photos_access=False):
     validate_image(image)
     secure_directory(install)
     secure_directory(ROOT.parent)
@@ -382,11 +416,7 @@ def enable(source, install, image, dry_run=False):
                 'NAS_PHOTOS_PATH', 'NAS_INDEX_PATH', 'NAS_BIND_IP')
     if any(not env.get(key) for key in required):
         raise ValueError('Existing deployment configuration incomplete')
-    allowed = [item.strip() for item in env.get('NAS_ALLOWED_FOLDERS', '').split(',')]
-    denied = [item.strip() for item in env.get('NAS_DENIED_FOLDERS', '').split(',')]
-    if ('Photos' not in allowed
-            or any(item == 'Photos' or item.startswith('Photos/') for item in denied)):
-        raise ValueError('Full Photos scope is required without denied photo subfolders')
+    authorized = authorize_photos(original, env, grant_photos_access)
     env.setdefault('NAS_DOCUMENTS_LABEL', 'Documents')
     if not re.fullmatch(r'[A-Za-z0-9_-]+', env['NAS_DOCUMENTS_LABEL']):
         raise ValueError('Invalid document label')
@@ -428,14 +458,19 @@ def enable(source, install, image, dry_run=False):
                         stream.flush()
                         os.fsync(stream.fileno())
                     atomic_write(ROOT / 'account.json', json.dumps(account, sort_keys=True).encode())
-                    child = start_broker(log)
-                    wait_broker()
                     suffix = ('NAS_SYNOLOGY_PHOTOS_HOST_PATH=' + str(ROOT / 'run') + '\n'
                               'NAS_SYNOLOGY_PHOTOS_SOCKET=' + CONTAINER_SOCKET + '\n').encode()
-                    merged = original + (b'' if original.endswith(b'\n') else b'\n') + aliases + suffix
-                    atomic_write(install / '.env', merged)
+                    merged = authorized + (b'' if authorized.endswith(b'\n') else b'\n') + aliases + suffix
                     runner_changed = False
+                    install_started = False
                     try:
+                        # The host rechecks private policy for every request. Make
+                        # the explicitly authorized candidate visible before probing
+                        # it, and restore the original on any subsequent failure.
+                        atomic_write(install / '.env', merged)
+                        child = start_broker(log)
+                        wait_broker()
+                        install_started = True
                         run_install(root, install, image, env, log, lock_fd)
                         verify_mcp(env)
                         update_root_runner(root, install, updater, previous_worker)
@@ -447,10 +482,11 @@ def enable(source, install, image, dry_run=False):
                                 restore_root_runner(install, updater, original_worker)
                         finally:
                             atomic_write(install / '.env', original)
-                            if legacy:
-                                rollback_legacy(install, original_compose, original_image, env, log, lock_fd)
-                            else:
-                                run_install(root, install, previous_image, env, log, lock_fd)
+                            if install_started:
+                                if legacy:
+                                    rollback_legacy(install, original_compose, original_image, env, log, lock_fd)
+                                else:
+                                    run_install(root, install, previous_image, env, log, lock_fd)
                         raise
                 finally:
                     os.close(lock_fd)
@@ -472,12 +508,14 @@ def main():
     parser.add_argument('--source-dir', type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument('--install-dir', type=Path, default=INSTALL)
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--grant-photos-access', action='store_true',
+                        help='Explicitly add Photos to the existing allowlist; never remove any declared denial')
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error('Run as root on the NAS')
     os.umask(0o077)
     try:
-        enable(args.source_dir, args.install_dir, args.image, args.dry_run)
+        enable(args.source_dir, args.install_dir, args.image, args.dry_run, args.grant_photos_access)
     except Exception:
         print('Photos setup failed. Inspect protected setup logs and service health; no credentials were printed.')
         return 1

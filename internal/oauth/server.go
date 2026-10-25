@@ -1,4 +1,4 @@
-// Package oauth implements the single-user, pre-registered OAuth boundary.
+// Package oauth implements single-user OAuth with bounded public registration.
 // Its HTTP, cryptographic, and SQLite adapters are not formally verified.
 package oauth
 
@@ -46,12 +46,13 @@ type Config struct {
 	ChatGPTRedirectURI                                             string
 }
 type Server struct {
-	cfg               Config
-	db                *sql.DB
-	mu                sync.Mutex
-	limiter           *rate.Limiter
-	validationGate    chan struct{}
-	validationWaiters chan struct{}
+	cfg                 Config
+	db                  *sql.DB
+	mu                  sync.Mutex
+	limiter             *rate.Limiter
+	registrationLimiter *rate.Limiter
+	validationGate      chan struct{}
+	validationWaiters   chan struct{}
 }
 
 func New(c Config) (*Server, error) {
@@ -101,7 +102,11 @@ func New(c Config) (*Server, error) {
 		db.Close()
 		return nil, e
 	}
-	return &Server{cfg: c, db: db, limiter: rate.NewLimiter(rate.Every(time.Second), 10), validationGate: make(chan struct{}, 2), validationWaiters: make(chan struct{}, 60)}, nil
+	if _, e = db.Exec(registrationSchema); e != nil {
+		db.Close()
+		return nil, e
+	}
+	return &Server{cfg: c, db: db, limiter: rate.NewLimiter(rate.Every(time.Second), 10), registrationLimiter: rate.NewLimiter(rate.Every(10*time.Second), 4), validationGate: make(chan struct{}, 2), validationWaiters: make(chan struct{}, 60)}, nil
 }
 
 func validChatGPTRedirect(redirect string) bool {
@@ -128,7 +133,7 @@ func loopback(h string) bool {
 	return h == "localhost" || (net.ParseIP(h) != nil && net.ParseIP(h).IsLoopback())
 }
 func (s *Server) Close() error     { return s.db.Close() }
-func (s *Server) RevokeAll() error { _, e := s.db.Exec("DELETE FROM oauth_grants"); return e }
+func (s *Server) RevokeAll() error { return revokeDatabase(s.db) }
 func RevokeAll(path string) error {
 	if e := privateDatabase(path); e != nil {
 		return e
@@ -138,8 +143,7 @@ func RevokeAll(path string) error {
 		return e
 	}
 	defer db.Close()
-	_, e = db.Exec("DELETE FROM oauth_grants")
-	return e
+	return revokeDatabase(db)
 }
 func randomToken() (string, error) {
 	b := make([]byte, 32)
@@ -167,7 +171,7 @@ func (s *Server) Handler() http.Handler {
 		if s.cfg.ClientSecretHash != "" {
 			methods = []string{"client_secret_basic", "client_secret_post", "none"}
 		}
-		jsonReply(w, 200, map[string]any{"issuer": s.cfg.Issuer, "authorization_endpoint": s.cfg.Issuer + "/authorize", "token_endpoint": s.cfg.Issuer + "/token", "response_types_supported": []string{"code"}, "grant_types_supported": []string{"authorization_code", "refresh_token"}, "code_challenge_methods_supported": []string{"S256"}, "token_endpoint_auth_methods_supported": methods, "scopes_supported": []string{scope, browserScope}})
+		jsonReply(w, 200, map[string]any{"issuer": s.cfg.Issuer, "authorization_endpoint": s.cfg.Issuer + "/authorize", "token_endpoint": s.cfg.Issuer + "/token", "registration_endpoint": s.cfg.Issuer + "/register", "response_types_supported": []string{"code"}, "grant_types_supported": []string{"authorization_code", "refresh_token"}, "code_challenge_methods_supported": []string{"S256"}, "token_endpoint_auth_methods_supported": methods, "scopes_supported": []string{scope}})
 	})
 	metadata := func(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 200, map[string]any{"resource": s.resource(), "authorization_servers": []string{s.cfg.Issuer}, "scopes_supported": []string{scope}, "bearer_methods_supported": []string{"header"}})
@@ -177,6 +181,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /authorize", s.authorize)
 	mux.HandleFunc("POST /authorize", s.consent)
 	mux.HandleFunc("POST /token", s.token)
+	mux.HandleFunc("POST /register", s.register)
 	mux.HandleFunc("GET "+browserCallbackPath, s.browserCallback)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -195,6 +200,9 @@ func (s *Server) Handler() http.Handler {
 	})
 }
 func (s *Server) validAuthorize(v url.Values) bool {
+	return s.validAuthorizeWith(v, s.db)
+}
+func (s *Server) validAuthorizeWith(v url.Values, q rowQuerier) bool {
 	for key, values := range v {
 		switch key {
 		case "client_id", "redirect_uri", "response_type", "code_challenge_method", "code_challenge", "resource", "scope", "state", "ui_locales":
@@ -213,6 +221,10 @@ func (s *Server) validAuthorize(v url.Values) bool {
 		wantedScope = browserScope
 	} else if client == s.cfg.ClientID {
 		for _, redirect := range s.cfg.RedirectURIs {
+			redirectOK = redirectOK || v.Get("redirect_uri") == redirect
+		}
+	} else if registered, err := s.registeredClient(q, client); err == nil && registered != nil {
+		for _, redirect := range registered.RedirectURIs {
 			redirectOK = redirectOK || v.Get("redirect_uri") == redirect
 		}
 	}
@@ -290,7 +302,7 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v, e := url.ParseQuery(raw)
-	if e != nil || !s.validAuthorize(v) {
+	if e != nil || !s.validAuthorizeWith(v, tx) {
 		oauthError(w, 400, "invalid_request")
 		return
 	}
@@ -310,6 +322,11 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	_, e = tx.Exec("DELETE FROM oauth_grants WHERE hash=?", hash(session))
 	if e == nil {
 		_, e = tx.Exec("INSERT INTO oauth_grants(hash,kind,client,redirect,challenge,resource,family,expires) VALUES(?, 'code', ?, ?, ?, ?, ?, ?)", hash(code), v.Get("client_id"), v.Get("redirect_uri"), v.Get("code_challenge"), v.Get("resource"), hash(code), time.Now().Add(time.Minute).Unix())
+	}
+	if e == nil {
+		// Owner consent makes the connection reusable even after all tokens
+		// expire. Only never-authorized pending clients are aged out.
+		_, e = tx.Exec("UPDATE oauth_clients SET expires=0 WHERE client=?", v.Get("client_id"))
 	}
 	if e != nil {
 		grantError(w, e)
@@ -353,6 +370,13 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 	validClient := client == browserClient && secret == ""
 	if client == s.cfg.ClientID {
 		validClient = (s.cfg.ClientSecretHash == "" && secret == "") || (s.cfg.ClientSecretHash != "" && bcrypt.CompareHashAndPassword([]byte(s.cfg.ClientSecretHash), []byte(secret)) == nil)
+	} else if client != browserClient && !basic && secret == "" {
+		registered, err := s.registeredClient(s.db, client)
+		if err != nil {
+			oauthError(w, 503, "temporarily_unavailable")
+			return
+		}
+		validClient = registered != nil
 	}
 	if !validClient {
 		oauthError(w, 401, "invalid_client")
@@ -396,6 +420,16 @@ func (s *Server) exchange(client string, v url.Values) (tokenGrant, int, string)
 		return tokenGrant{}, 500, "server_error"
 	}
 	defer tx.Rollback()
+	var registration *registeredClient
+	if client != browserClient && client != s.cfg.ClientID {
+		registration, e = s.registeredClient(tx, client)
+		if e != nil || registration == nil {
+			return tokenGrant{}, 401, "invalid_client"
+		}
+		if kind == "refresh" && !registration.Refresh {
+			return tokenGrant{}, 400, "unauthorized_client"
+		}
+	}
 	var redirect, challenge, resource, family string
 	var expires int64
 	var used int
@@ -429,12 +463,12 @@ func (s *Server) exchange(client string, v url.Values) (tokenGrant, int, string)
 		return tokenGrant{}, 500, "server_error"
 	}
 	refresh := ""
-	if client != browserClient {
+	if client != browserClient && (registration == nil || registration.Refresh) {
 		refresh, e = randomToken()
 		if e != nil {
 			return tokenGrant{}, 500, "server_error"
 		}
-	} else {
+	} else if client == browserClient {
 		expires = time.Now().Add(10 * time.Minute).Unix()
 	}
 	_, e = tx.Exec("UPDATE oauth_grants SET used=1,expires=? WHERE hash=?", expires, hash(raw))
@@ -443,6 +477,11 @@ func (s *Server) exchange(client string, v url.Values) (tokenGrant, int, string)
 	}
 	if e == nil && refresh != "" {
 		_, e = tx.Exec("INSERT INTO oauth_grants(hash,kind,client,redirect,challenge,resource,family,expires) VALUES(?, 'refresh', ?, '', '', ?, ?, ?)", hash(refresh), client, resource, family, expires)
+	}
+	if e == nil && registration != nil {
+		// This also promotes transitional clients whose unexpired grants pin
+		// their registration until a successful code exchange or refresh.
+		_, e = tx.Exec("UPDATE oauth_clients SET expires=0 WHERE client=?", client)
 	}
 	if e != nil {
 		if strings.Contains(e.Error(), "oauth_capacity") {

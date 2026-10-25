@@ -74,6 +74,21 @@ module CoreTests {
     expect !SynologyPhotosAllowed(true, ["Photos"], ["Photos"]);
     expect !SynologyPhotosAllowed(true, ["Photos"], ["Photos/Private"]);
     expect !SynologyPhotosAllowed(true, ["Photos"], ["Photos/"]);
+    expect ValidOAuthRegistration(1, true, true, true, true, true);
+    expect ValidOAuthRegistration(4, true, true, true, true, true);
+    expect !ValidOAuthRegistration(0, true, true, true, true, true);
+    expect !ValidOAuthRegistration(5, true, true, true, true, true);
+    expect !ValidOAuthRegistration(1, false, true, true, true, true);
+    expect !ValidOAuthRegistration(1, true, false, true, true, true);
+    expect !ValidOAuthRegistration(1, true, true, false, true, true);
+    expect !ValidOAuthRegistration(1, true, true, true, false, true);
+    expect !ValidOAuthRegistration(1, true, true, true, true, false);
+    expect CanRegisterOAuthClient(0, 1);
+    expect CanRegisterOAuthClient(127, 128);
+    expect !CanRegisterOAuthClient(-1, 128);
+    expect !CanRegisterOAuthClient(128, 128);
+    expect !CanRegisterOAuthClient(0, 0);
+    expect !CanRegisterOAuthClient(0, 129);
     print "Dafny core executable tests passed\n";
   }
 }

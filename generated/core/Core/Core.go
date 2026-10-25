@@ -202,6 +202,12 @@ func (_static *CompanionStruct_Default___) SynologyPhotosAllowed(configured bool
 		return !(_dafny.Companion_Sequence_.Contains(deny, _0_path)) || (!(Companion_Default___.PhotoDenyPath(_0_path)))
 	}))
 }
+func (_static *CompanionStruct_Default___) ValidOAuthRegistration(redirectCount _dafny.Int, publicAuth bool, grantsOK bool, responseOK bool, scopeOK bool, redirectsOK bool) bool {
+	return (((((((_dafny.One).Cmp(redirectCount) <= 0) && ((redirectCount).Cmp(_dafny.IntOfInt64(4)) <= 0)) && (publicAuth)) && (grantsOK)) && (responseOK)) && (scopeOK)) && (redirectsOK)
+}
+func (_static *CompanionStruct_Default___) CanRegisterOAuthClient(existing _dafny.Int, capacity _dafny.Int) bool {
+	return (((existing).Sign() != -1) && (((_dafny.One).Cmp(capacity) <= 0) && ((capacity).Cmp(_dafny.IntOfInt64(128)) <= 0))) && ((existing).Cmp(capacity) < 0)
+}
 func (_static *CompanionStruct_Default___) FailedLoginCount(failures _dafny.Int) _dafny.Int {
 	return (failures).Plus(_dafny.One)
 }
