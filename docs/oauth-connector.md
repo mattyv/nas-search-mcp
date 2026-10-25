@@ -34,9 +34,37 @@ In Claude web, add a custom connector using the public MCP URL `https://NAS_PUBL
 
 ## ChatGPT plugin setup
 
-ChatGPT's cloud plugin builder can use the same public OAuth listener. Select **OAuth** and **User-Defined OAuth Client**. Use `https://NAS_PUBLIC_HOST/mcp` as the server URL and the public `NAS_OAUTH_CLIENT_ID` value as the OAuth client ID. Leave the client secret blank when the NAS uses a public PKCE client. The server does not offer dynamic client registration, so the builder's DCR warning is expected. If endpoint discovery needs manual values, use `https://NAS_PUBLIC_HOST/authorize` and `https://NAS_PUBLIC_HOST/token`; the scope is `files:read`.
+New MCP connections can register a public OAuth client automatically through the
+advertised `/register` endpoint. Use the public server URL
+`https://NAS_PUBLIC_HOST/mcp`, select OAuth when the client asks, and complete the
+NAS password and consent page. Registration does not grant file access. Public
+clients use PKCE with `S256` and do not need a client secret.
 
-Copy the exact callback URL displayed by ChatGPT into `NAS_OAUTH_CHATGPT_REDIRECT` in the root-only NAS `.env`, then deploy the updated service before creating the plugin. Do not post the callback or private settings to the repository. The server accepts only that configured ChatGPT callback; the Claude callback remains available. OpenAI's [OAuth guidance](https://developers.openai.com/plugins/build/auth) describes the pre-registered-client and PKCE flow. This ChatGPT path is not yet verified in the live product; test sign-in, tool listing, and a harmless search before relying on it.
+Callbacks are restricted to supported ChatGPT callback paths, the exact Claude
+callback, strictly validated local loopback callbacks, and callbacks already
+configured by the owner. Each registration binds its own exact callback URLs.
+The server accepts only `files:read` for these clients; first-party browser
+approvals use a separate scope and cannot be obtained through registration.
+
+Existing pre-registered connections remain valid. For a builder using
+**User-Defined OAuth Client**, use the existing public `NAS_OAUTH_CLIENT_ID` and
+its exact configured callback. Recreating that kind of connector can change its
+callback and requires updating `NAS_OAUTH_CHATGPT_REDIRECT`; automatic registration
+avoids reusing the old connector's callback. Never paste a client secret or NAS
+password into chat. OpenAI's [OAuth guidance](https://developers.openai.com/plugins/build/auth)
+describes both registered-client and dynamic-registration flows.
+
+Registration requests have separate rate and storage limits. An unused
+registration expires after fifteen minutes. After owner consent, the registration remains valid until revoked, even when
+its access and refresh tokens expire. Anonymous registration can temporarily exhaust
+capacity for new clients; it cannot displace active registrations or disable the
+existing pre-registered client. Retry after pending registrations expire. The
+owner's existing revoke-all operation also removes dynamic registrations.
+
+A discovery response alone does not prove a new connection works. Test from an
+empty client store through registration, password consent, PKCE exchange and an
+authenticated tool call. The regression suite also exercises this flow with the
+independent Python MCP SDK. Verify the final ChatGPT sign-in in the live app.
 
 ## Open files from Claude
 

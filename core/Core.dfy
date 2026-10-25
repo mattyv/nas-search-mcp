@@ -247,6 +247,53 @@ module Core {
       !SynologyPhotosAllowed(configured, allow, newDeny)
   {}
 
+  // The protocol adapter computes each flag from its strict request validation.
+  // This policy proves that none of those checks may be omitted at admission.
+  function ValidOAuthRegistration(redirectCount: int, publicAuth: bool, grantsOK: bool,
+                                 responseOK: bool, scopeOK: bool, redirectsOK: bool): bool
+    ensures ValidOAuthRegistration(redirectCount, publicAuth, grantsOK, responseOK, scopeOK, redirectsOK) <==>
+      (1 <= redirectCount <= 4 && publicAuth && grantsOK && responseOK && scopeOK && redirectsOK)
+  {
+    1 <= redirectCount <= 4 && publicAuth && grantsOK && responseOK && scopeOK && redirectsOK
+  }
+
+  lemma OAuthRegistrationRequiresEveryCheck(redirectCount: int, publicAuth: bool, grantsOK: bool,
+                                          responseOK: bool, scopeOK: bool, redirectsOK: bool)
+    requires ValidOAuthRegistration(redirectCount, publicAuth, grantsOK, responseOK, scopeOK, redirectsOK)
+    ensures 1 <= redirectCount <= 4
+    ensures publicAuth && grantsOK && responseOK && scopeOK && redirectsOK
+  {}
+
+  lemma OAuthRegistrationDenialMonotonic(redirectCount: int,
+      oldAuth: bool, oldGrants: bool, oldResponse: bool, oldScope: bool, oldRedirects: bool,
+      newAuth: bool, newGrants: bool, newResponse: bool, newScope: bool, newRedirects: bool)
+    requires newAuth ==> oldAuth
+    requires newGrants ==> oldGrants
+    requires newResponse ==> oldResponse
+    requires newScope ==> oldScope
+    requires newRedirects ==> oldRedirects
+    ensures !ValidOAuthRegistration(redirectCount, oldAuth, oldGrants, oldResponse, oldScope, oldRedirects) ==>
+      !ValidOAuthRegistration(redirectCount, newAuth, newGrants, newResponse, newScope, newRedirects)
+  {}
+
+  function CanRegisterOAuthClient(existing: int, capacity: int): bool
+    ensures CanRegisterOAuthClient(existing, capacity) <==>
+      (existing >= 0 && 1 <= capacity <= 128 && existing < capacity)
+  {
+    existing >= 0 && 1 <= capacity <= 128 && existing < capacity
+  }
+
+  lemma OAuthRegistrationInsertWithinCapacity(existing: int, capacity: int)
+    requires CanRegisterOAuthClient(existing, capacity)
+    ensures 1 <= existing + 1 <= capacity <= 128
+  {}
+
+  lemma OAuthRegistrationFullCapacityRemainsDenied(existing: int, capacity: int, laterCount: int)
+    requires 1 <= capacity <= 128 && capacity <= existing <= laterCount
+    ensures !CanRegisterOAuthClient(existing, capacity)
+    ensures !CanRegisterOAuthClient(laterCount, capacity)
+  {}
+
   function FailedLoginCount(failures: int): int
     requires LoginAttemptAllowed(failures)
     ensures FailedLoginCount(failures) == failures + 1

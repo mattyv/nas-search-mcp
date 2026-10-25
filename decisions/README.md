@@ -385,3 +385,37 @@ full-scope refusal, then passed after implementation. The helper tests also
 cover denied subfolders, default refusal, dry runs, raw settings preservation,
 readiness policy, and early and late rollback. The OS/settings adapter is tested,
 not formally proved; the existing compiled Dafny grant/deny policy is unchanged.
+
+
+## D045 — Support bounded registration for fresh OAuth MCP clients
+
+Status: accepted; live ChatGPT reconnect validation pending.
+
+A fresh MCP SDK client reproduced the connection failure: protected MCP returned
+401, resource and authorization discovery returned 200, then `/register` returned
+404 before the password page. Saved connections could continue using the
+pre-registered client. The Photos upgrade did not change the OAuth handler, and
+the NAS comparison confirmed its saved login settings were preserved. This
+evidence identifies a fresh-client interoperability gap; it does not prove which
+request caused the ChatGPT UI spinner.
+
+Add advertised public-client registration for supported callback destinations,
+with exact per-client callback binding, owner password consent, S256 PKCE and
+`files:read`. Preserve existing pre-registered clients and isolate first-party
+browser actions. Registration itself grants no file access and performs no
+remote metadata fetch. Request size, callback count, pending lifetime, rate and
+registry capacity are bounded; owner-authorized registrations persist until revocation so token expiry does
+not break a saved connection. Unapproved registrations expire after fifteen
+minutes. Anonymous requests can still temporarily exhaust
+new-client capacity. Revoking all access removes registrations too.
+
+The compiled Dafny policy proves required validation conditions and capacity
+bounds. URL parsing, HTTP, SQLite transactions, cryptography and client UI remain
+tested adapters outside the proof. A real Python MCP SDK regression failed at
+registration with the old implementation before the fix was written, then passed
+registration, password consent, PKCE exchange and authenticated access after the
+fix. Validation: full Go race tests, 347 Python tests plus two subtests, and 54
+combined Dafny verification obligations passed; eight local Compose checks were
+skipped for CI. Independent review also checked wrong-password handling, client
+and callback binding, browser-action isolation, old-database revocation and
+reauthentication after all tokens expire.
