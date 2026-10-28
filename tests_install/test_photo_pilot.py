@@ -108,9 +108,13 @@ def test_private_credentials_and_input_validation(tmp_path):
     secret.write_text(secret.read_text().replace('NAS_BIND_IP=192.0.2.10', 'NAS_BIND_IP=999.1.1.1'))
     result = subprocess.run(args, env=env, capture_output=True)
     assert result.returncode != 0
+    secret.write_text(secret.read_text().replace('NAS_BIND_IP=999.1.1.1', 'NAS_BIND_IP=192.0.2.10'))
     original = secret.read_text()
-    secret.write_text(original.replace('NAS_CPUSET=0', 'NAS_CPUSET=0;echo BAD'))
-    assert subprocess.run(args, env=env, capture_output=True).returncode != 0
+    for bad in ['0;echo BAD', '0,1', '1-0', '0-', '-1']:
+        secret.write_text(original.replace('NAS_CPUSET=0', 'NAS_CPUSET=' + bad))
+        assert subprocess.run(args, env=env, capture_output=True).returncode != 0, bad
+    secret.write_text(original.replace('NAS_CPUSET=0', 'NAS_CPUSET=0-1'))
+    assert subprocess.run(args + ['--dry-run'], env=env, capture_output=True).returncode == 0
     secret.write_text(original)
     moved = install / 'elsewhere.env'
     secret.rename(moved)
