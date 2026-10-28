@@ -133,7 +133,12 @@ func TestHandoffBetweenAssistantsThroughLiveService(t *testing.T) {
 		t.Fatal("assistant accepted a memory")
 	}
 	// The owner accepts it in the editor (actor user through the same store).
-	if _, err := live.client.CorrectMemory(context.Background(), []string{"personal"}, memoryapi.Correction{MemoryID: id, Status: "accepted", Reason: "confirmed in editor", Client: "editor", Actor: memoryapi.ActorUser}); err != nil {
+	// Over the socket, a caller claiming to be the owner is still treated as an assistant.
+	if _, err := live.client.CorrectMemory(context.Background(), []string{"personal"}, memoryapi.Correction{MemoryID: id, Status: "accepted", Reason: "claims to be the owner", Client: "editor", Actor: memoryapi.ActorUser}); err == nil {
+		t.Fatal("the socket accepted a memory on a caller's claim to be the owner")
+	}
+	// The editor runs in the memory container and calls the store in-process as the owner.
+	if _, err := live.store.CorrectMemory(context.Background(), []string{"personal"}, memoryapi.Correction{MemoryID: id, Status: "accepted", Reason: "confirmed in editor", Client: "editor", Actor: memoryapi.ActorUser}); err != nil {
 		t.Fatal(err)
 	}
 	pkg, _ = chatgpt("context_open", map[string]any{"project": "garden"})
