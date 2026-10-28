@@ -124,7 +124,7 @@ func admitPublic(next http.Handler) http.Handler {
 		}
 		parsed := json.Unmarshal(body, &request) == nil
 		protocol := parsed && (request.Method == "initialize" || request.Method == "ping" || request.Method == "tools/list" || strings.HasPrefix(request.Method, "notifications/"))
-		control := r.URL.Path == "/mcp" && (protocol || parsed && request.Method == "tools/call" && (request.Params.Name == "index_status" || request.Params.Name == "upgrade_status" || request.Params.Name == "upgrade_from_main"))
+		control := r.URL.Path == "/mcp" && (protocol || parsed && request.Method == "tools/call" && (request.Params.Name == "index_status" || request.Params.Name == "upgrade_status" || request.Params.Name == "upgrade_from_main" || memoryTool(request.Params.Name)))
 		gate := workGate
 		if control {
 			gate = controlGate
