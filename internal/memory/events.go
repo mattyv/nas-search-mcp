@@ -102,7 +102,7 @@ func (s *Store) prepareEvent(roots []string, e memoryapi.Event) (memoryapi.Event
 	if e.OccurredAt.IsZero() {
 		e.OccurredAt = now
 	}
-	e.Classified = e.Type == "checkpoint"
+	e.Classified = !policy.ProposesMemory(e.Type)
 	return e, nil
 }
 
@@ -169,7 +169,7 @@ func (s *Store) AppendEvent(ctx context.Context, roots []string, e memoryapi.Eve
 	created := false
 	err = s.tx(ctx, func(q queryer) error {
 		if e.IdempotencyKey != "" {
-			rows, err := q.QueryContext(ctx, `SELECT `+eventCols+` FROM events e WHERE e.idempotency_key = ?`, e.IdempotencyKey)
+			rows, err := q.QueryContext(ctx, `SELECT `+eventCols+` FROM events e WHERE e.scope = ? AND e.idempotency_key = ?`, e.Scope, e.IdempotencyKey)
 			if err != nil {
 				return internal(err)
 			}
@@ -178,17 +178,17 @@ func (s *Store) AppendEvent(ctx context.Context, roots []string, e memoryapi.Eve
 				return err
 			}
 			if len(prev) > 0 {
-				if !policy.ScopeVisible(prev[0].Scope, roots) {
-					return fmt.Errorf("%w: idempotency key is already used elsewhere", memoryapi.ErrScope)
-				}
 				out = prev[0]
 				return nil
 			}
 		}
 		if e.Supersedes != "" {
 			if old, err := getEvent(ctx, q, roots, e.Supersedes); err == nil {
-				if _, err := q.ExecContext(ctx, `UPDATE events SET status = 'superseded' WHERE id = ?`, old.ID); err != nil {
-					return internal(err)
+				// The link is kept either way; only the status change is gated.
+				if policy.MaySupersede(e.Actor == memoryapi.ActorUser, old.Status) {
+					if _, err := q.ExecContext(ctx, `UPDATE events SET status = 'superseded' WHERE id = ?`, old.ID); err != nil {
+						return internal(err)
+					}
 				}
 			} else if !errors.Is(err, memoryapi.ErrNotFound) {
 				return err

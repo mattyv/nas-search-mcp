@@ -178,6 +178,8 @@ func (c *Client) CorrectMemory(ctx context.Context, roots []string, cor Correcti
 	return out, err
 }
 
+// ForgetEvent and ForgetMemory always fail over the socket with ErrInvalid: only the
+// editor, which uses the store directly, may forget.
 func (c *Client) ForgetEvent(ctx context.Context, roots []string, id string, actor string) error {
 	return c.call(ctx, roots, "ForgetEvent", idParams{ID: id, Actor: actor}, nil)
 }

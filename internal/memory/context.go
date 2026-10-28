@@ -11,18 +11,6 @@ import (
 	"github.com/mattyv/nas-search-mcp/internal/policy"
 )
 
-var memoryStatuses = []string{"candidate", "accepted", "disputed", "rejected", "superseded", "retracted"}
-
-func statusesWhere(pred func(string) bool) []string {
-	var out []string
-	for _, st := range memoryStatuses {
-		if pred(st) {
-			out = append(out, st)
-		}
-	}
-	return out
-}
-
 const (
 	recentWindow   = 14 * 24 * time.Hour
 	maxRecent      = 20
@@ -98,7 +86,8 @@ func (s *Store) OpenContext(ctx context.Context, roots []string, r memoryapi.Con
 		if cp != nil && pkg.Scope == "" {
 			pkg.Scope = cp.Scope
 		}
-		cur, un := statusesWhere(policy.IsCurrentMemory), statusesWhere(policy.IsUnconfirmedMemory)
+		cur, un := policy.MemoryStatuses(policy.IsCurrentMemory), policy.MemoryStatuses(policy.IsUnconfirmedMemory)
+		wideList, wideArgs := inList(scopeWideCategories())
 		curList, curArgs := inList(cur)
 		unList, unArgs := inList(un)
 		if decisions, err = s.memoryList(ctx, memScopes, `m.category = 'decision' AND m.project = ? AND m.status IN `+curList, append([]any{project}, curArgs...)); err != nil {
@@ -108,8 +97,8 @@ func (s *Store) OpenContext(ctx context.Context, roots []string, r memoryapi.Con
 			return pkg, err
 		}
 		if others, err = s.memoryList(ctx, memScopes,
-			`m.status IN `+curList+` AND ((m.project = ? AND m.category <> 'decision') OR (m.project = '' AND m.category IN ('preference','constraint')))`,
-			append(append([]any{}, curArgs...), project)); err != nil {
+			`m.status IN `+curList+` AND ((m.project = ? AND m.category <> 'decision') OR (m.project = '' AND m.category IN `+wideList+`))`,
+			append(append(append([]any{}, curArgs...), project), wideArgs...)); err != nil {
 			return pkg, err
 		}
 		if recent, err = s.SearchEvents(ctx, roots, memoryapi.EventQuery{Project: project, From: s.now().Add(-recentWindow), Limit: maxRecent + 5}); err != nil {
@@ -123,8 +112,8 @@ func (s *Store) OpenContext(ctx context.Context, roots []string, r memoryapi.Con
 		}
 		recent = kept
 	} else if others, err = s.memoryList(ctx, memScopes,
-		`m.status IN `+mustList(statusesWhere(policy.IsCurrentMemory))+` AND m.project = '' AND m.category IN ('preference','constraint')`,
-		argsOf(statusesWhere(policy.IsCurrentMemory))); err != nil {
+		`m.status IN `+mustList(policy.MemoryStatuses(policy.IsCurrentMemory))+` AND m.project = '' AND m.category IN `+mustList(scopeWideCategories()),
+		append(argsOf(policy.MemoryStatuses(policy.IsCurrentMemory)), argsOf(scopeWideCategories())...)); err != nil {
 		return pkg, err
 	}
 
@@ -194,7 +183,7 @@ func (s *Store) Projects(ctx context.Context, roots []string) ([]memoryapi.Proje
 		return []memoryapi.ProjectSummary{}, err
 	}
 	scopeList, args := inList(scopes)
-	cand := statusesWhere(isOpenCandidate)
+	cand := policy.MemoryStatuses(policy.IsUnconfirmedMemory)
 	candList, candArgs := inList(cand)
 	args = append(append([]any{}, candArgs...), args...)
 	rows, err := s.db.QueryContext(ctx, `SELECT e.project, e.scope, MAX(e.recorded_at), COUNT(*),

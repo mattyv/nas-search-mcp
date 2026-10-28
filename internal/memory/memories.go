@@ -139,7 +139,12 @@ func (s *Store) SearchMemories(ctx context.Context, roots []string, query memory
 	args = append(args, a...)
 	statuses := query.Statuses
 	if len(statuses) == 0 {
-		statuses = []string{"accepted"}
+		statuses = policy.MemoryStatuses(policy.IsCurrentMemory)
+	}
+	for _, st := range statuses {
+		if !policy.ValidMemoryStatus(st) {
+			return nil, invalid("unknown memory status")
+		}
 	}
 	list, a = inList(statuses)
 	where = append(where, "m.status IN "+list)
@@ -153,7 +158,7 @@ func (s *Store) SearchMemories(ctx context.Context, roots []string, query memory
 		where = append(where, "m.category IN "+list)
 		args = append(args, a...)
 	}
-	args = append(args, clampLimit(query.Limit, 20, 100))
+	args = append(args, clampLimit(query.Limit, 20, 500))
 	rows, err := s.db.QueryContext(ctx, `SELECT `+memCols+` FROM `+from+` WHERE `+strings.Join(where, " AND ")+` ORDER BY `+order+` LIMIT ?`, args...)
 	if err != nil {
 		return nil, internal(err)
@@ -169,7 +174,7 @@ func (s *Store) CorrectMemory(ctx context.Context, roots []string, c memoryapi.C
 	if !validLength(reason, 1, 500) {
 		return memoryapi.Memory{}, invalid("a reason of 1 to 500 characters is required")
 	}
-	if c.Statement != "" && c.Status != "superseded" {
+	if c.Statement != "" && !policy.CorrectionMayCarryStatement(c.Status) {
 		return memoryapi.Memory{}, invalid("a replacement statement is only allowed when superseding")
 	}
 	var out memoryapi.Memory
@@ -285,29 +290,32 @@ func (s *Store) ForgetEvent(ctx context.Context, roots []string, id string, acto
 		fromJSON(extra, &meta)
 		if meta.Version > 0 && e.Project != "" {
 			tomb := memoryapi.Checkpoint{Project: e.Project, Scope: e.Scope, Version: meta.Version, Summary: "[forgotten]", UpdatedAt: e.RecordedAt}
-			if _, err := q.ExecContext(ctx, `UPDATE checkpoints SET payload = ? WHERE project = ? AND version = ?`, toJSON(tomb), e.Project, meta.Version); err != nil {
+			if _, err := q.ExecContext(ctx, `UPDATE checkpoints SET payload = ? WHERE scope = ? AND project = ? AND version = ?`, toJSON(tomb), e.Scope, e.Project, meta.Version); err != nil {
 				return internal(err)
 			}
 		}
 		// Derived memories: drop those that rested only on this event, unlink the rest.
-		rows, err := q.QueryContext(ctx, `SELECT id, evidence FROM memories WHERE evidence LIKE ?`, `%"`+e.ID+`"%`)
+		rows, err := q.QueryContext(ctx, `SELECT id, scope, evidence FROM memories WHERE evidence LIKE ?`, `%"`+e.ID+`"%`)
 		if err != nil {
 			return internal(err)
 		}
 		type derived struct {
 			id       string
+			scope    string
 			evidence []string
 		}
 		var found []derived
 		for rows.Next() {
 			var d derived
 			var ev string
-			if err := rows.Scan(&d.id, &ev); err != nil {
+			if err := rows.Scan(&d.id, &d.scope, &ev); err != nil {
 				rows.Close()
 				return internal(err)
 			}
 			fromJSON(ev, &d.evidence)
-			found = append(found, d)
+			if policy.ScopeVisible(d.scope, roots) {
+				found = append(found, d)
+			}
 		}
 		rows.Close()
 		for _, d := range found {

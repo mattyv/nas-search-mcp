@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,10 +119,11 @@ func TestIdempotentAppend(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("want 1 event, got %d", len(got))
 	}
-	// The same key must not reveal an event in another scope.
+	// A key reused in another scope is a different event, and reveals nothing.
 	e.Scope = "personal2"
-	if _, _, err := s.AppendEvent(ctx, personal2, e); err == nil {
-		t.Fatal("key reuse across scopes must fail")
+	other, created, err := s.AppendEvent(ctx, personal2, e)
+	if err != nil || !created || other.ID == first.ID || other.Title != "changed" {
+		t.Fatalf("cross-scope key: %+v created=%v err=%v", other, created, err)
 	}
 }
 
@@ -414,7 +416,7 @@ func TestRedaction(t *testing.T) {
 		"xoxb-1234567890-abcdefghij",
 		"AKIAIOSFODNN7EXAMPLE",
 		"Bearer abcdefghijklmnopqrstuvwxyz012345",
-		strings.Repeat("a1b2c3d4", 6),
+		"Zk3Pq9Xv2Lm8Rt5Wn7Yc4Hb6Jd1Fg0Aa9Ss2Dd3Ff",
 	}
 	for _, sec := range secrets {
 		got := redact("before " + sec + " after")
@@ -602,5 +604,222 @@ func TestReopenKeepsData(t *testing.T) {
 	}
 	if !strings.HasPrefix(e.ID, "evt_") || len(e.ID) != 30 {
 		t.Fatalf("id %q", e.ID)
+	}
+}
+
+func TestAssistantCannotSupersedeConfirmedEvent(t *testing.T) {
+	s, _ := newStore(t)
+	d := ev("personal", "owner decision")
+	d.Type = "decision"
+	old := mustAppend(t, s, personal, d)
+	if old.Status != "confirmed" {
+		t.Fatalf("setup: %q", old.Status)
+	}
+	n := ev("personal", "assistant disagrees")
+	n.Type = "correction"
+	n.Actor = memoryapi.ActorAssistant
+	n.Supersedes = old.ID
+	got := mustAppend(t, s, personal, n)
+	if got.Supersedes != old.ID {
+		t.Fatalf("link lost: %+v", got)
+	}
+	back, _ := s.GetEvent(ctx, personal, old.ID)
+	if back.Status != "confirmed" {
+		t.Fatalf("assistant changed owner status to %q", back.Status)
+	}
+	// The owner still can.
+	n.Actor = memoryapi.ActorUser
+	n.Title = "owner revises"
+	mustAppend(t, s, personal, n)
+	back, _ = s.GetEvent(ctx, personal, old.ID)
+	if back.Status != "superseded" {
+		t.Fatalf("owner supersede: %q", back.Status)
+	}
+}
+
+func TestCheckpointsAreKeyedPerScope(t *testing.T) {
+	s, clk := newStore(t)
+	a, err := s.SaveCheckpoint(ctx, all, cp("proj", "in personal"), 0)
+	if err != nil || a.Version != 1 {
+		t.Fatalf("%+v %v", a, err)
+	}
+	clk.advance(time.Minute)
+	other := cp("proj", "in personal2")
+	other.Scope = "personal2"
+	// A caller who only sees personal2 must not learn that "proj" exists in personal.
+	b, err := s.SaveCheckpoint(ctx, personal2, other, 0)
+	if err != nil || b.Version != 1 {
+		t.Fatalf("independent history: %+v %v", b, err)
+	}
+	l, _ := s.LatestCheckpoint(ctx, personal2, "proj")
+	if l == nil || l.Summary != "in personal2" {
+		t.Fatalf("%+v", l)
+	}
+	l, _ = s.LatestCheckpoint(ctx, all, "proj")
+	if l == nil || l.Summary != "in personal2" {
+		t.Fatalf("most recently updated first: %+v", l)
+	}
+	hist, _ := s.CheckpointHistory(ctx, all, "proj", 10)
+	if len(hist) != 2 || hist[0].Scope != "personal2" {
+		t.Fatalf("%+v", hist)
+	}
+	// Forgetting one scope's checkpoint event leaves the other's snapshot intact.
+	evs, _ := s.SearchEvents(ctx, personal, memoryapi.EventQuery{Types: []string{"checkpoint"}})
+	if len(evs) != 1 {
+		t.Fatalf("%+v", evs)
+	}
+	if err := s.ForgetEvent(ctx, personal, evs[0].ID, memoryapi.ActorUser); err != nil {
+		t.Fatal(err)
+	}
+	l, _ = s.LatestCheckpoint(ctx, personal2, "proj")
+	if l == nil || l.Summary != "in personal2" {
+		t.Fatalf("tombstone hit the wrong scope: %+v", l)
+	}
+	l, _ = s.LatestCheckpoint(ctx, personal, "proj")
+	if l == nil || l.Summary != "[forgotten]" {
+		t.Fatalf("%+v", l)
+	}
+}
+
+func TestForgetEventLeavesInvisibleMemoriesAlone(t *testing.T) {
+	s, _ := newStore(t)
+	e := mustAppend(t, s, personal, ev("personal", "shared evidence"))
+	hidden, err := s.ProposeMemory(ctx, all, memoryapi.Memory{Category: "fact", Statement: "hidden fact", Scope: "personal2", Probability: -1, Evidence: []string{e.ID}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ForgetEvent(ctx, personal, e.ID, memoryapi.ActorUser); err != nil {
+		t.Fatal(err)
+	}
+	m, err := s.GetMemory(ctx, personal2, hidden.ID)
+	if err != nil || len(m.Evidence) != 1 {
+		t.Fatalf("memory in another scope was changed: %+v %v", m, err)
+	}
+}
+
+func TestRedactionKeepsOrdinaryTechnicalText(t *testing.T) {
+	keep := []string{
+		"Fixed in commit 3f2a9c8b1d4e5f60718293a4b5c6d7e8f9012345 on main",
+		"see https://github.com/mattyv/nas-search-mcp/commit/3f2a9c8b1d4e5f60718293a4b5c6d7e8f9012345 for details",
+		"digest sha256:" + strings.Repeat("ab12", 16),
+		"socket at /volume1/app-data/nas-search/index/memory-ipc/memory.sock",
+		"branch feature/shared-memory-v2-passkeys-and-editor-2026",
+		"id 123e4567-e89b-12d3-a456-426614174000",
+		"short sha 3f2a9c8",
+	}
+	for _, k := range keep {
+		if got := redact(k); got != k {
+			t.Errorf("over-redacted %q -> %q", k, got)
+		}
+	}
+	for _, sec := range []string{"Zk3Pq9Xv2Lm8Rt5Wn7Yc4Hb6Jd1Fg0Aa9Ss2Dd3Ff", "sk-abcdefghijklmnopqrstuvwx", "Bearer abcdefghijklmnopqrstuvwxyz012345"} {
+		if got := redact("key " + sec); strings.Contains(got, sec) {
+			t.Errorf("not redacted: %q", sec)
+		}
+	}
+}
+
+func TestThresholdDefaultsAndValidation(t *testing.T) {
+	open := func(accept, reject int) (*Store, error) {
+		return Open(Config{Path: filepath.Join(t.TempDir(), "m.db"), AcceptAt: accept, RejectAt: reject})
+	}
+	s, err := open(900, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	m := memoryapi.Memory{Category: "fact", Statement: "x", Scope: "personal", Probability: 50}
+	if got, _ := s.ProposeMemory(ctx, personal, m, false); got.Status != "candidate" {
+		t.Fatalf("reject-at 0 must not reject 50: %q", got.Status)
+	}
+	d, err := open(0, 0)
+	if err != nil || d.acceptAt != 900 || d.rejectAt != 100 {
+		t.Fatalf("defaults: %+v %v", d, err)
+	}
+	d.Close()
+	if bad, err := open(100, 500); err == nil {
+		bad.Close()
+		t.Fatal("reject above accept must be an error")
+	}
+	if bad, err := open(1500, 10); err == nil {
+		bad.Close()
+		t.Fatal("accept above 1000 must be an error")
+	}
+}
+
+func TestStatusSetsFollowThePolicy(t *testing.T) {
+	s, _ := newStore(t)
+	cand, _ := s.ProposeMemory(ctx, personal, memoryapi.Memory{Category: "fact", Statement: "maybe", Scope: "personal", Project: "p", Probability: -1}, false)
+	other, _ := s.ProposeMemory(ctx, personal, memoryapi.Memory{Category: "fact", Statement: "sure", Scope: "personal", Project: "p", Probability: -1}, true)
+	if _, err := s.CorrectMemory(ctx, personal, memoryapi.Correction{MemoryID: other.ID, Status: "disputed", Reason: "r", Actor: memoryapi.ActorAssistant}); err != nil {
+		t.Fatal(err)
+	}
+	_ = cand
+	mustAppend(t, s, personal, func() memoryapi.Event { e := ev("personal", "x"); e.Project = "p"; return e }())
+	ps, _ := s.Projects(ctx, personal)
+	if len(ps) != 1 || ps[0].OpenCandidates != 2 {
+		t.Fatalf("candidate and disputed both await review: %+v", ps)
+	}
+	if _, err := s.SearchMemories(ctx, personal, memoryapi.MemoryQuery{Statuses: []string{"bogus"}}); !errors.Is(err, memoryapi.ErrInvalid) {
+		t.Fatalf("bogus status: %v", err)
+	}
+	// A statement may only accompany a supersede.
+	if _, err := s.CorrectMemory(ctx, personal, memoryapi.Correction{MemoryID: cand.ID, Status: "rejected", Statement: "z", Reason: "r", Actor: memoryapi.ActorUser}); !errors.Is(err, memoryapi.ErrInvalid) {
+		t.Fatalf("statement: %v", err)
+	}
+	// Only scope-wide categories appear in a project-less context.
+	s.ProposeMemory(ctx, personal, memoryapi.Memory{Category: "preference", Statement: "likes tea", Scope: "personal", Probability: -1}, true)
+	s.ProposeMemory(ctx, personal, memoryapi.Memory{Category: "fact", Statement: "loose fact", Scope: "personal", Probability: -1}, true)
+	pkg, _ := s.OpenContext(ctx, personal2, memoryapi.ContextRequest{})
+	if len(pkg.Memories) != 0 {
+		t.Fatalf("other scope: %+v", pkg.Memories)
+	}
+	pkg, _ = s.OpenContext(ctx, []string{"personal"}, memoryapi.ContextRequest{Project: "none"})
+	for _, m := range pkg.Memories {
+		if m.Category == "fact" && m.Project == "" {
+			t.Fatalf("project-less fact leaked into context: %+v", m)
+		}
+	}
+	found := false
+	for _, m := range pkg.Memories {
+		found = found || m.Category == "preference"
+	}
+	if !found {
+		t.Fatalf("preference missing: %+v", pkg.Memories)
+	}
+}
+
+func TestClassifiedAtInsertFollowsPolicy(t *testing.T) {
+	s, _ := newStore(t)
+	for typ, want := range map[string]bool{"observation": false, "decision": false, "correction": false, "manual_note": false, "discussion": true, "exploration": true, "action": true, "result": true, "checkpoint": true} {
+		e := ev("personal", "t "+typ)
+		e.Type = typ
+		if typ == "checkpoint" {
+			e.Actor = memoryapi.ActorUser
+		}
+		got, _, err := s.AppendEvent(ctx, personal, e)
+		if err != nil {
+			t.Fatalf("%s: %v", typ, err)
+		}
+		if got.Classified != want {
+			t.Errorf("%s classified=%v want %v", typ, got.Classified, want)
+		}
+	}
+}
+
+func TestSearchMemoriesLimitUpTo500(t *testing.T) {
+	s, _ := newStore(t)
+	for i := 0; i < 130; i++ {
+		if _, err := s.ProposeMemory(ctx, personal, memoryapi.Memory{Category: "fact", Statement: fmt.Sprintf("fact number %d", i), Scope: "personal", Probability: -1}, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, _ := s.SearchMemories(ctx, personal, memoryapi.MemoryQuery{Limit: 500})
+	if len(got) != 130 {
+		t.Fatalf("limit 500 returned %d", len(got))
+	}
+	got, _ = s.SearchMemories(ctx, personal, memoryapi.MemoryQuery{})
+	if len(got) != 20 {
+		t.Fatalf("default returned %d", len(got))
 	}
 }
