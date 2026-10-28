@@ -3,6 +3,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	sqlite3 "github.com/mattn/go-sqlite3"
@@ -33,6 +34,7 @@ type Stats struct {
 type Store struct {
 	db      *sql.DB
 	vectors bool
+	l2      map[string]bool // vector tables created without distance_metric=cosine (legacy)
 }
 
 var driverID atomic.Uint64
@@ -55,27 +57,75 @@ func New(path, extension string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,kind TEXT NOT NULL,metadata TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS chunks(id INTEGER PRIMARY KEY AUTOINCREMENT,path TEXT NOT NULL,location TEXT NOT NULL,text TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS chunk_path ON chunks(path);
- CREATE VIRTUAL TABLE IF NOT EXISTS words USING fts5(text);
  CREATE TABLE IF NOT EXISTS errors(path TEXT PRIMARY KEY,message TEXT NOT NULL);`
 	if _, e = db.Exec(schema); e != nil {
 		db.Close()
 		return nil, e
 	}
+	if e = migrateWords(db); e != nil {
+		db.Close()
+		return nil, e
+	}
 	if s.vectors {
-		if _, e = db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS text_vectors USING vec0(embedding float[384]); CREATE VIRTUAL TABLE IF NOT EXISTS photo_vectors USING vec0(embedding float[512]);`); e != nil {
+		if _, e = db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS text_vectors USING vec0(embedding float[384] distance_metric=cosine); CREATE VIRTUAL TABLE IF NOT EXISTS photo_vectors USING vec0(embedding float[512] distance_metric=cosine);`); e != nil {
 			db.Close()
 			return nil, e
+		}
+		// Databases created before distance_metric=cosine rank by L2. Embeddings are L2-normalised,
+		// so the order is identical and cosine distance = L2^2/2; Candidates converts for them.
+		s.l2 = map[string]bool{}
+		for _, t := range []string{"text_vectors", "photo_vectors"} {
+			var def string
+			if db.QueryRow("SELECT sql FROM sqlite_master WHERE name=?", t).Scan(&def) == nil && !strings.Contains(def, "distance_metric=cosine") {
+				s.l2[t] = true
+			}
 		}
 	}
 	return s, nil
 }
-func (s *Store) Close() error { return s.db.Close() }
-func vectorJSON(v []float32) string {
-	a := make([]string, len(v))
-	for i, x := range v {
-		a[i] = fmt.Sprintf("%g", x)
+
+// migrateWords creates the external-content FTS table, replacing the old content-storing one.
+func migrateWords(db *sql.DB) error {
+	var def string
+	err := db.QueryRow("SELECT sql FROM sqlite_master WHERE name='words'").Scan(&def)
+	if err != nil && err != sql.ErrNoRows {
+		return err
 	}
-	return "[" + strings.Join(a, ",") + "]"
+	legacy := err == nil && !strings.Contains(def, "content=")
+	if err == nil && !legacy {
+		return nil
+	}
+	tx, e := db.Begin()
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	if legacy {
+		if _, e = tx.Exec("DROP TABLE words"); e != nil {
+			return e
+		}
+	}
+	if _, e = tx.Exec("CREATE VIRTUAL TABLE words USING fts5(text, content='chunks', content_rowid='id')"); e != nil {
+		return e
+	}
+	if legacy {
+		if _, e = tx.Exec("INSERT INTO words(words) VALUES('rebuild')"); e != nil {
+			return e
+		}
+	}
+	return tx.Commit()
+}
+
+// prefixRange returns bounds lo <= path < hi that match exactly the paths starting with prefix
+// and let SQLite use the path indexes. An empty prefix matches everything.
+func prefixRange(prefix string) (string, string) { return prefix, prefix + "\U0010FFFF" }
+func (s *Store) Close() error                    { return s.db.Close() }
+func vectorBlob(v []float32) []byte {
+	b := make([]byte, 4*len(v))
+	for i, x := range v {
+		binary.LittleEndian.PutUint32(b[4*i:], math.Float32bits(x))
+	}
+	return b
 }
 func validate(v []float32, n int) error {
 	if len(v) != n {
@@ -89,8 +139,12 @@ func validate(v []float32, n int) error {
 	return nil
 }
 func (s *Store) clear(tx *sql.Tx, path string) error {
-	for _, table := range []string{"words", "text_vectors", "photo_vectors"} {
-		if table != "words" && !s.vectors {
+	// External-content FTS needs the old text to remove its index entries.
+	if _, e := tx.Exec("INSERT INTO words(words,rowid,text) SELECT 'delete',id,text FROM chunks WHERE path=?", path); e != nil {
+		return e
+	}
+	for _, table := range []string{"text_vectors", "photo_vectors"} {
+		if !s.vectors {
 			continue
 		}
 		if _, e := tx.Exec("DELETE FROM "+table+" WHERE rowid IN (SELECT id FROM chunks WHERE path=?)", path); e != nil {
@@ -142,7 +196,7 @@ func (s *Store) Replace(f File, chunks []Chunk, vectors [][]float32) error {
 			return e
 		}
 		if vectors != nil {
-			if _, e = tx.Exec("INSERT INTO "+table+"(rowid,embedding) VALUES(?,?)", id, vectorJSON(vectors[i])); e != nil {
+			if _, e = tx.Exec("INSERT INTO "+table+"(rowid,embedding) VALUES(?,?)", id, vectorBlob(vectors[i])); e != nil {
 				return e
 			}
 		}
@@ -186,7 +240,8 @@ func (s *Store) Fingerprints() (map[string]string, error) {
 	return m, rows.Err()
 }
 func (s *Store) List(prefix string, limit int) ([]File, error) {
-	rows, e := s.db.Query("SELECT path,fingerprint,kind,metadata FROM files WHERE substr(path,1,length(?))=? ORDER BY path LIMIT ?", prefix, prefix, limit)
+	lo, hi := prefixRange(prefix)
+	rows, e := s.db.Query("SELECT path,fingerprint,kind,metadata FROM files WHERE path>=? AND path<? ORDER BY path LIMIT ?", lo, hi, limit)
 	if e != nil {
 		return nil, e
 	}
@@ -255,12 +310,13 @@ func (s *Store) Candidates(query, prefix string, photos bool, vector []float32, 
 	}
 	out := []Candidate{}
 	byID := map[int64]int{}
+	lo, hi := prefixRange(prefix)
 	terms := keywordTerms(query)
 	for i, t := range terms {
 		terms[i] = "\"" + t + "\""
 	}
 	if len(terms) > 0 {
-		rows, e := s.db.Query(`SELECT c.id,c.path,c.location,c.text FROM words JOIN chunks c ON c.id=words.rowid WHERE words MATCH ? AND substr(c.path,1,length(?))=? AND (?=0 OR (SELECT kind FROM files WHERE path=c.path)='photo') ORDER BY bm25(words),c.id LIMIT ?`, strings.Join(terms, " OR "), prefix, prefix, photos, limit)
+		rows, e := s.db.Query(`SELECT c.id,c.path,c.location,c.text FROM words JOIN chunks c ON c.id=words.rowid WHERE words MATCH ? AND c.path>=? AND c.path<? AND (?=0 OR (SELECT kind FROM files WHERE path=c.path)='photo') ORDER BY bm25(words),c.id LIMIT ?`, strings.Join(terms, " OR "), lo, hi, photos, limit)
 		if e != nil {
 			return nil, e
 		}
@@ -293,18 +349,72 @@ func (s *Store) Candidates(query, prefix string, photos bool, vector []float32, 
 		if e := validate(vector, dim); e != nil {
 			return nil, e
 		}
-		rows, e := s.db.Query(`SELECT c.id,c.path,c.location,c.text,vec_distance_cosine(v.embedding,?) AS distance FROM `+table+` v JOIN chunks c ON c.id=v.rowid WHERE substr(c.path,1,length(?))=? ORDER BY distance,c.id LIMIT ?`, vectorJSON(vector), prefix, prefix, limit)
+		// Stage 1: KNN on the vector table alone. The prefix filter runs after ranking, so with a
+		// prefix we ask for 4x neighbours (vec0 caps k at 4096); a narrow prefix inside a huge
+		// index can therefore return fewer than limit semantic hits. photo_vectors holds only
+		// photos, so no kind filter is needed here.
+		k := limit
+		if prefix != "" {
+			k *= 4
+		}
+		if k > 4096 {
+			k = 4096
+		}
+		nn, e := s.db.Query("SELECT rowid,distance FROM "+table+" WHERE embedding MATCH ? AND k=?", vectorBlob(vector), k)
 		if e != nil {
 			return nil, e
 		}
-		rank := 0
-		for rows.Next() {
-			var c Candidate
-			if e = rows.Scan(&c.ID, &c.Path, &c.Location, &c.Text, &c.Distance); e != nil {
-				rows.Close()
+		var ids []any
+		dist := map[int64]float64{}
+		var order []int64
+		for nn.Next() {
+			var id int64
+			var d float64
+			if e = nn.Scan(&id, &d); e != nil {
+				nn.Close()
 				return nil, e
 			}
-			rank++
+			if s.l2[table] {
+				d = d * d / 2
+			}
+			ids, order, dist[id] = append(ids, id), append(order, id), d
+		}
+		e = nn.Err()
+		nn.Close()
+		if e != nil {
+			return nil, e
+		}
+		// Stage 2: fetch chunks for those rowids only, filter by prefix, keep KNN order.
+		found := map[int64]Candidate{}
+		if len(ids) > 0 {
+			rows, e := s.db.Query("SELECT id,path,location,text FROM chunks WHERE id IN (?"+strings.Repeat(",?", len(ids)-1)+") AND path>=? AND path<?", append(ids, lo, hi)...)
+			if e != nil {
+				return nil, e
+			}
+			for rows.Next() {
+				var c Candidate
+				if e = rows.Scan(&c.ID, &c.Path, &c.Location, &c.Text); e != nil {
+					rows.Close()
+					return nil, e
+				}
+				found[c.ID] = c
+			}
+			e = rows.Err()
+			rows.Close()
+			if e != nil {
+				return nil, e
+			}
+		}
+		rank := 0
+		for _, id := range order {
+			c, ok := found[id]
+			if !ok {
+				continue
+			}
+			if rank++; rank > limit {
+				break
+			}
+			c.Distance = dist[id]
 			c.SemanticRank = rank
 			if i, ok := byID[c.ID]; ok {
 				out[i].SemanticRank = rank
@@ -313,11 +423,6 @@ func (s *Store) Candidates(query, prefix string, photos bool, vector []float32, 
 				byID[c.ID] = len(out)
 				out = append(out, c)
 			}
-		}
-		e = rows.Err()
-		rows.Close()
-		if e != nil {
-			return nil, e
 		}
 	}
 	return out, nil
