@@ -196,6 +196,9 @@ func TestFailedModificationDropsOldChunksAndReportsError(t *testing.T) {
 	}
 	write(t, p, "new content")
 	a.Worker = filepath.Join(t.TempDir(), "missing-worker.py")
+	a.sessionMu.Lock()
+	a.stopSession()
+	a.sessionMu.Unlock()
 	if e := a.Scan(ctx); e != nil {
 		t.Fatal(e)
 	}
@@ -542,6 +545,7 @@ json.dump({'kind':'document','text':'forced' if force else 'automatic','sections
 		t.Fatal(e)
 	}
 	a.Worker = worker
+	a.modelKeepalive = 0
 	out, e := a.ReadDocumentWithOCR(context.Background(), "a.PDF", 0, 20, true)
 	if e != nil || out.Text != "forced" || out.Metadata["received_force_ocr"] != true {
 		t.Fatal(out, e)
@@ -600,6 +604,7 @@ json.dump({'kind':'document','sections':[{'location':'text','text':'needle'}],'m
 		t.Fatal(e)
 	}
 	a.Worker = worker
+	a.modelKeepalive = 0
 	done := make(chan error, 1)
 	go func() { done <- a.Scan(context.Background()) }()
 	// Always let the scan finish, including when assertions fail.

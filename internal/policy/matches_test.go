@@ -34,3 +34,12 @@ func TestLinkPolicy(t *testing.T) {
 		t.Fatal("link expiry boundary")
 	}
 }
+
+func TestFingerprintBridge(t *testing.T) {
+	if IndexedFingerprint("abc", true) != "abc;clip" || IndexedFingerprint("abc", false) != "abc" {
+		t.Fatal("flavour bridge")
+	}
+	if !CanSkipUnchanged("1:2", "1:2", "abc;clip", true) || CanSkipUnchanged("1:2", "1:2", "abc", true) || CanSkipUnchanged("", "", "abc", false) {
+		t.Fatal("skip bridge")
+	}
+}

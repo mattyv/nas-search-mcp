@@ -10,9 +10,11 @@ import pytest
 from test_nas_installer import setup, photos_config
 
 DOCKER = shutil.which('docker')
-pytestmark = pytest.mark.skipif(DOCKER is None, reason='Docker Compose is checked on CI')
+needs_docker = pytest.mark.skipif(DOCKER is None, reason='Docker Compose is checked on CI')
+COMPOSE = Path(__file__).resolve().parents[1] / 'compose.yaml'
 
 
+@needs_docker
 @pytest.mark.parametrize('bind,expected', [
     ('127.0.0.1', {'127.0.0.1'}),
     ('192.0.2.4', {'127.0.0.1', '192.0.2.4'}),
@@ -51,6 +53,7 @@ def test_rendered_compose_matches_validated_paths_scope_and_binding(tmp_path, bi
     assert private_ports == expected
 
 
+@needs_docker
 @pytest.mark.parametrize('indexed_upload', [False, True])
 def test_optional_photos_broker_mount_is_read_only_in_real_compose(tmp_path, indexed_upload):
     args, adapter_env, _, private_env = photos_config(tmp_path)
@@ -80,3 +83,16 @@ def test_optional_photos_broker_mount_is_read_only_in_real_compose(tmp_path, ind
         assert writer['read_only'] is True
         for target in ('/write/Documents', '/write/Code', '/write/Photos', '/ipc'):
             assert writer_mounts[target].get('read_only', False) is False
+
+
+@pytest.mark.parametrize('service', ['nas-search', 'nas-upload-writer'])
+def test_services_use_both_cores_with_low_cpu_shares(service):
+    text = COMPOSE.read_text()
+    block = text.split(f'\n  {service}:\n', 1)[1].split('\n  nas-', 1)[0]
+    assert 'cpuset: "${NAS_CPUSET:-0-1}"' in block
+    assert 'cpu_shares: ${NAS_CPU_SHARES:-512}' in block
+
+
+def test_main_service_keeps_single_threaded_workers():
+    text = COMPOSE.read_text()
+    assert 'GOMAXPROCS: "1"' in text and 'OMP_THREAD_LIMIT: "1"' in text

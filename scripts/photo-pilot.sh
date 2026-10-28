@@ -51,7 +51,8 @@ case "$photos" in "$photos_root"|"$photos_root"/*|"$documents_root"|"$documents_
 case "$install_dir/" in "$photos_root/"*|"$documents_root/"*) fail 'Pilot state must be outside protected source roots';; esac
 printf '%s\n' "$bind" | awk -F. 'NF != 4 {exit 1} {for(i=1;i<=4;i++) if($i !~ /^[0-9]+$/ || $i>255) exit 1}' || fail 'Bind address must be an IPv4 address'
 case "$uid:$gid" in *[!0-9:]*|:*|*:) fail 'Deployment UID/GID must be numeric';; esac
-printf '%s\n' "$cpuset" | LC_ALL=C grep -Eq '^[0-9]+$' || fail 'Deployment CPU affinity must select one CPU'
+printf '%s\n' "$cpuset" | LC_ALL=C grep -Eq '^[0-9]+(-[0-9]+)?$' || fail 'Deployment CPU affinity must be one CPU (0) or a range (0-1)'
+case "$cpuset" in *-*) [ "${cpuset%-*}" -le "${cpuset#*-}" ] || fail 'Deployment CPU affinity range must run low to high';; esac
 [ "$(id -u)" = 0 ] || fail 'Run on the NAS with sudo/root Docker access'
 PATH=/usr/local/bin:$PATH
 export PATH

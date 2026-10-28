@@ -80,16 +80,6 @@ func TestModelSessionCancellationRestarts(t *testing.T) {
 		t.Fatal("cancelled worker was reused")
 	}
 }
-func TestExtractionReleasesModelSession(t *testing.T) {
-	a := fakeSessionApp(t, time.Minute)
-	first := sessionPID(t, a)
-	if _, err := a.worker(context.Background(), map[string]any{"operation": "extract"}); err != nil {
-		t.Fatal(err)
-	}
-	if sessionPID(t, a) == first {
-		t.Fatal("extraction retained resident model")
-	}
-}
 
 func TestModelKeepaliveConfiguration(t *testing.T) {
 	for _, tc := range []struct {

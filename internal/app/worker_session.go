@@ -34,6 +34,19 @@ func modelKeepaliveFromEnv() (time.Duration, error) {
 	return time.Duration(minutes * float64(time.Minute)), nil
 }
 
+// workerMaxRSSKiB is the resident-set limit above which the session is recycled (default 600 MiB).
+func workerMaxRSSKiB() (int64, error) {
+	value := os.Getenv("NAS_WORKER_MAX_RSS_MIB")
+	if value == "" {
+		return 600 * 1024, nil
+	}
+	mib, err := strconv.ParseFloat(value, 64)
+	if err != nil || math.IsNaN(mib) || math.IsInf(mib, 0) || mib <= 0 || mib >= float64(math.MaxInt64)/1024 {
+		return 0, errors.New("NAS_WORKER_MAX_RSS_MIB must be a finite positive number of MiB")
+	}
+	return int64(mib * 1024), nil
+}
+
 // stopSession requires sessionMu. Wait reaps the child before another worker starts.
 func (a *App) stopSession() {
 	s := a.session
@@ -62,7 +75,9 @@ func (a *App) Close() error {
 }
 
 // sessionRequest runs with both the request gate and sessionMu held.
-func (a *App) sessionRequest(ctx context.Context, input []byte) (WorkerResult, error) {
+// recycle marks replies after which an oversized process is replaced: extraction can leak, while
+// a photo run must keep CLIP resident even though its peak exceeds the text-model budget.
+func (a *App) sessionRequest(ctx context.Context, input []byte, recycle bool) (WorkerResult, error) {
 	var result WorkerResult
 	if a.session == nil {
 		cmd := exec.Command(a.Python, a.Worker, "--serve")
@@ -126,6 +141,11 @@ func (a *App) sessionRequest(ctx context.Context, input []byte) (WorkerResult, e
 			return result, fmt.Errorf("invalid worker response: %w", err)
 		}
 	}
+	// rss_kib is a peak, so the first extraction after a photo run recycles the process once. The result is returned first.
+	if limit, err := workerMaxRSSKiB(); recycle && err == nil && result.RSSKiB > limit {
+		a.stopSession()
+		return result, resultError(result)
+	}
 	s.timer = time.AfterFunc(a.modelKeepalive, func() {
 		a.sessionMu.Lock()
 		defer a.sessionMu.Unlock()
@@ -133,8 +153,12 @@ func (a *App) sessionRequest(ctx context.Context, input []byte) (WorkerResult, e
 			a.stopSession()
 		}
 	})
+	return result, resultError(result)
+}
+
+func resultError(result WorkerResult) error {
 	if result.Error != "" {
-		return result, errors.New("document/model worker reported an error")
+		return errors.New("document/model worker reported an error")
 	}
-	return result, nil
+	return nil
 }

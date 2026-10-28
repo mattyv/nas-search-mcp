@@ -72,6 +72,7 @@ type WorkerResult struct {
 	Truncated  bool              `json:"truncated"`
 	Vectors    [][]float32       `json:"vectors"`
 	Error      string            `json:"error"`
+	RSSKiB     int64             `json:"rss_kib"`
 }
 type Hit struct {
 	ID       int64  `json:"id"`
@@ -89,6 +90,9 @@ type SearchResult struct {
 func New(root, data, python, worker, extension string, semantic, photos bool) (*App, error) {
 	keepalive, err := modelKeepaliveFromEnv()
 	if err != nil {
+		return nil, err
+	}
+	if _, err = workerMaxRSSKiB(); err != nil {
 		return nil, err
 	}
 	root, err = filepath.EvalSymlinks(root)
@@ -420,7 +424,7 @@ func Protect(token string, next http.Handler) http.Handler {
 	})
 }
 
-// Serialize workers; extraction releases the resident embedding worker before starting.
+// Serialize workers. With keepalive every operation shares one resident process, so extraction keeps the text model loaded; without it each call is a one-shot process.
 func (a *App) worker(ctx context.Context, request map[string]any) (WorkerResult, error) {
 	var result WorkerResult
 	select {
@@ -441,8 +445,8 @@ func (a *App) worker(ctx context.Context, request map[string]any) (WorkerResult,
 		return result, errors.New("app is closed")
 	}
 	operation, _ := request["operation"].(string)
-	if a.modelKeepalive > 0 && (operation == "embed" || operation == "image_query" || operation == "image_embed") {
-		return a.sessionRequest(ctx, input)
+	if a.modelKeepalive > 0 && (operation == "embed" || operation == "image_query" || operation == "image_embed" || operation == "extract" || operation == "read_document") {
+		return a.sessionRequest(ctx, input, operation == "extract" || operation == "read_document")
 	}
 	a.stopSession()
 	cmd := exec.CommandContext(ctx, a.Python, a.Worker)
@@ -497,22 +501,24 @@ func (a *App) Search(ctx context.Context, query, prefix string, photos bool, lim
 	if err != nil {
 		return result, err
 	}
+	byID := make(map[int64]Hit, len(candidates))
+	pairs := make([][2]int64, 0, len(candidates))
 	for _, c := range candidates {
-		// Do not return indexed content for files which have been removed or escaped the root.
-		if _, err = a.safeFile(c.Path); err != nil {
+		byID[c.ID] = Hit{c.ID, c.Path, c.Location, c.Text, policy.RankScore(c.LexicalRank, c.SemanticRank)}
+		pairs = append(pairs, [2]int64{c.ID, byID[c.ID].Score})
+	}
+	want := policy.ClampLimit(limit, 50)
+	// Rank everything first, then stat files only down the ranked list until the page is full.
+	// Removed files and root escapes never appear; the next-ranked hit takes their place.
+	for _, item := range policy.Top(pairs, len(pairs)) {
+		hit := byID[item[0]]
+		if _, err = a.safeFile(hit.Path); err != nil {
 			continue
 		}
-		result.Hits = append(result.Hits, Hit{c.ID, c.Path, c.Location, c.Text, policy.RankScore(c.LexicalRank, c.SemanticRank)})
-	}
-	byID := make(map[int64]Hit, len(result.Hits))
-	pairs := make([][2]int64, 0, len(result.Hits))
-	for _, hit := range result.Hits {
-		byID[hit.ID] = hit
-		pairs = append(pairs, [2]int64{hit.ID, hit.Score})
-	}
-	result.Hits = []Hit{}
-	for _, item := range policy.Top(pairs, policy.ClampLimit(limit, 50)) {
-		result.Hits = append(result.Hits, byID[item[0]])
+		result.Hits = append(result.Hits, hit)
+		if len(result.Hits) == want {
+			break
+		}
 	}
 
 	return result, nil
@@ -805,7 +811,7 @@ func (a *App) Scan(ctx context.Context) error {
 		a.lastScan = time.Now().UTC().Format(time.RFC3339)
 		a.stateMu.Unlock()
 	}()
-	old, err := a.Store.Fingerprints()
+	old, err := a.Store.Indexed()
 	if err != nil {
 		return err
 	}
@@ -867,19 +873,29 @@ func (a *App) Scan(ctx context.Context) error {
 			}
 			return a.Store.RecordError(rel, "File exceeds 32 MiB input limit")
 		}
-		snapshot, _, cleanup, e := a.snapshot(rel)
+		// The verified core decides when a stored row can be trusted without a copy or hash.
+		prior, known := old[rel]
+		if !forceRefresh && known && policy.CanSkipUnchanged(prior.Stamp, fileVersion(info), prior.Fingerprint, a.clipIndexed(rel)) {
+			return nil
+		}
+		snapshot, snapInfo, cleanup, e := a.snapshot(rel)
 		if e != nil {
 			return e
 		}
 		defer cleanup()
+		stamp := fileVersion(snapInfo)
 		hash, e := fingerprint(snapshot)
 		if e != nil {
 			return e
 		}
-		if !forceRefresh && !policy.ShouldReplace(old[rel], a.indexedFingerprint(rel, hash)) {
+		if !forceRefresh && !policy.ShouldReplace(prior.Fingerprint, a.indexedFingerprint(rel, hash)) {
+			// Same bytes under a new mtime: refresh the stamp so the next scan skips hashing.
+			if known && prior.Stamp != stamp {
+				return a.Store.UpdateStamp(rel, stamp)
+			}
 			return nil
 		}
-		if e = a.indexFile(ctx, snapshot, rel, hash, true); e != nil {
+		if e = a.indexFile(ctx, snapshot, rel, hash, stamp, true); e != nil {
 			if ctx.Err() != nil {
 				// The source changed, so its old chunks no longer describe the file.
 				if removeErr := a.Store.Remove(rel); removeErr != nil {
@@ -943,7 +959,7 @@ func (a *App) IndexUploaded(ctx context.Context, relative string) error {
 	if _, err := a.safeFile(relative); err != nil {
 		return err
 	}
-	snapshot, _, cleanup, err := a.snapshot(relative)
+	snapshot, info, cleanup, err := a.snapshot(relative)
 	if err != nil {
 		return err
 	}
@@ -952,10 +968,10 @@ func (a *App) IndexUploaded(ctx context.Context, relative string) error {
 	if err != nil {
 		return err
 	}
-	return a.indexFile(ctx, snapshot, relative, hash, false)
+	return a.indexFile(ctx, snapshot, relative, hash, fileVersion(info), false)
 }
 
-func (a *App) indexFile(ctx context.Context, full, relative, hash string, scanProgress bool) error {
+func (a *App) indexFile(ctx context.Context, full, relative, hash, stamp string, scanProgress bool) error {
 	progress := func(stage string) {
 		if scanProgress {
 			a.setScanProgress(relative, stage)
@@ -1032,14 +1048,15 @@ func (a *App) indexFile(ctx context.Context, full, relative, hash string, scanPr
 		return err
 	}
 	progress("storing")
-	return a.Store.Replace(store.File{Path: relative, Fingerprint: a.indexedFingerprint(relative, hash), Kind: extract.Kind, Metadata: string(encoded)}, chunks, vectors)
+	return a.Store.Replace(store.File{Path: relative, Fingerprint: a.indexedFingerprint(relative, hash), Stamp: stamp, Kind: extract.Kind, Metadata: string(encoded)}, chunks, vectors)
 }
 
-// indexedFingerprint marks photos indexed with visual vectors, so changing the photo
-// setting reindexes photos only and leaves documents and code untouched.
+// clipIndexed reports whether a path is indexed with visual vectors under the current settings.
+func (a *App) clipIndexed(relative string) bool {
+	return a.Photos && a.Semantic && imageFile(relative)
+}
+
+// indexedFingerprint is the verified fingerprint flavouring for the current photo setting.
 func (a *App) indexedFingerprint(relative, hash string) string {
-	if a.Photos && a.Semantic && imageFile(relative) {
-		return hash + ";clip"
-	}
-	return hash
+	return policy.IndexedFingerprint(hash, a.clipIndexed(relative))
 }

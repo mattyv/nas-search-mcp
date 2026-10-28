@@ -5,10 +5,11 @@
 - Record material technical and product decisions in `decisions/README.md`, including reasons, status, consequences, and evidence. Preserve superseded choices and distinguish accepted choices from unvalidated assumptions.
 - Use test-driven development for behavior changes: write a meaningful failing test, implement the behavior, and run the relevant tests. Record red-to-green evidence when practical. Do not claim TDD for tests written after implementation.
 - Write application logic in Dafny wherever practical. Use as much formal verification as possible: specify preconditions, postconditions, invariants, termination, and relevant safety properties.
+- Treat any pure decision rule as application logic, even when it appears mid-adapter: a comparison that decides whether to skip, replace, rank, or accept something belongs in `core/Core.dfy` with a proved property, bridged through `internal/policy`. Adapters call the core; they do not re-implement it inline in Go or Python.
 - Prefer compiled Dafny for performance-sensitive logic. Keep handwritten Go and Python focused on protocol, operating-system, database, extraction, and model adapters that Dafny cannot practically implement.
 - Do not bypass verification with assumptions, axioms, or disabled checks. Explain the boundary between proved properties and unverified adapters; never describe the entire system as formally verified.
 - Regenerate compiled Dafny output after source changes. Run `scripts/build-core.sh`, relevant Go tests with `sqlite_fts5`, and relevant Python tests before declaring work complete. Run the required CI checks before release.
-- Use parallel agents for independent work when this speeds delivery. Give each agent clear file ownership and contracts. Integrate and review their work, including tests and proof results.
+- Use parallel agents for independent work when this speeds delivery. Give each agent clear file ownership and contracts, and tell each one which decisions belong in Dafny. Delegated work defaults to adapter code, so when integrating, read each diff for inline decision logic and move it into the core before merging. Review tests and proof results as well as code.
 
 ## Product and deployment
 

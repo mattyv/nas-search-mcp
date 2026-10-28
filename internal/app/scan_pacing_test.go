@@ -79,6 +79,7 @@ func TestScanCancellationDuringIndexingIsNotRecordedAsDocumentError(t *testing.T
 	}
 	a.Python = "/bin/sh"
 	a.Worker = worker
+	a.modelKeepalive = 0
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- a.Scan(ctx) }()

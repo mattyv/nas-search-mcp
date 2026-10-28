@@ -656,3 +656,40 @@ def test_fixed_upload_mode_stops_prior_indexed_writer(tmp_path):
     result = subprocess.run(args, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert 'stop project-writer-container' in log.read_text()
+
+
+def test_new_env_uses_both_cores_and_probes_use_configured_cpu(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True, text=True).returncode == 0
+    contents = (tmp_path / 'install' / '.env').read_text()
+    assert 'NAS_CPUSET=0-1\n' in contents and 'NAS_CPU_SHARES=512\n' in contents
+    runs = [line for line in log.read_text().splitlines() if line.startswith('run ')]
+    assert runs and all('--cpuset-cpus 0-1' in line and '--cpu-shares 512' in line for line in runs)
+
+
+def test_existing_env_keeps_its_cpu_settings_for_probes(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True, text=True).returncode == 0
+    secret = tmp_path / 'install' / '.env'
+    secret.write_text(secret.read_text().replace('NAS_CPUSET=0-1', 'NAS_CPUSET=1').replace('NAS_CPU_SHARES=512', 'NAS_CPU_SHARES=256'))
+    log.unlink()
+    assert subprocess.run(args, env=env, capture_output=True, text=True).returncode == 0
+    runs = [line for line in log.read_text().splitlines() if line.startswith('run ')]
+    assert runs and all('--cpuset-cpus 1 ' in line and '--cpu-shares 256' in line for line in runs)
+    assert 'NAS_CPUSET=1\n' in secret.read_text()
+
+
+def test_cpu_settings_format_is_validated_before_pull(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True, text=True).returncode == 0
+    secret = tmp_path / 'install' / '.env'
+    original = secret.read_text()
+    for old, new in [('NAS_CPUSET=0-1', 'NAS_CPUSET=0,1'), ('NAS_CPUSET=0-1', 'NAS_CPUSET=1-0'), ('NAS_CPUSET=0-1', 'NAS_CPUSET=0;x'),
+                     ('NAS_CPUSET=0-1', 'NAS_CPUSET='), ('NAS_CPU_SHARES=512', 'NAS_CPU_SHARES=abc'), ('NAS_CPU_SHARES=512', 'NAS_CPU_SHARES=1')]:
+        secret.write_text(original.replace(old, new))
+        log.unlink(missing_ok=True)
+        assert subprocess.run(args, env=env, capture_output=True).returncode != 0, new
+        assert not log.exists() or 'pull ' not in log.read_text()
+    for good in ['NAS_CPUSET=0', 'NAS_CPUSET=1', 'NAS_CPUSET=0-1']:
+        secret.write_text(original.replace('NAS_CPUSET=0-1', good))
+        assert subprocess.run(args, env=env, capture_output=True).returncode == 0, good

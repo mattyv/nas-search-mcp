@@ -331,6 +331,41 @@ module Core {
     oldHash != newHash
   }
 
+  // Photos indexed with visual vectors carry a flavour suffix, so changing the photo
+  // setting reindexes photos only and leaves documents and code untouched.
+  const ClipFlavour: string := ";clip"
+
+  function IndexedFingerprint(hash: string, clip: bool): string
+    ensures clip ==> HasClipFlavour(IndexedFingerprint(hash, clip)) && ContentHash(IndexedFingerprint(hash, clip)) == hash
+    ensures !clip ==> IndexedFingerprint(hash, clip) == hash
+  {
+    if clip then hash + ClipFlavour else hash
+  }
+
+  predicate HasClipFlavour(fingerprint: string) {
+    |fingerprint| >= |ClipFlavour| && fingerprint[|fingerprint| - |ClipFlavour|..] == ClipFlavour
+  }
+
+  function ContentHash(fingerprint: string): string
+    ensures !HasClipFlavour(fingerprint) ==> ContentHash(fingerprint) == fingerprint
+    ensures HasClipFlavour(fingerprint) ==> ContentHash(fingerprint) + ClipFlavour == fingerprint
+  {
+    if HasClipFlavour(fingerprint) then fingerprint[..|fingerprint| - |ClipFlavour|] else fingerprint
+  }
+
+  // A stored file may be trusted without rereading it when its cheap stamp (size and
+  // modification time) still matches and its fingerprint already has the flavour the
+  // current photo setting would produce. An empty stamp predates stamps and never skips.
+  function CanSkipUnchanged(storedStamp: string, currentStamp: string, storedFingerprint: string, clip: bool): bool
+    ensures CanSkipUnchanged(storedStamp, currentStamp, storedFingerprint, clip) ==> storedStamp == currentStamp != ""
+    // Skipping agrees with the hash path: hashing the same bytes would not replace the row.
+    ensures CanSkipUnchanged(storedStamp, currentStamp, storedFingerprint, clip) ==>
+      !ShouldReplace(storedFingerprint, IndexedFingerprint(ContentHash(storedFingerprint), clip))
+  {
+    storedStamp != "" && storedStamp == currentStamp &&
+      IndexedFingerprint(ContentHash(storedFingerprint), clip) == storedFingerprint
+  }
+
   function Chunk(text: string, size: nat, overlap: nat): seq<string>
     requires size > 0 && overlap < size
     ensures |text| == 0 <==> |Chunk(text, size, overlap)| == 0

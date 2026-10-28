@@ -227,6 +227,26 @@ func (_static *CompanionStruct_Default___) RankScore(lexicalRank _dafny.Int, sem
 func (_static *CompanionStruct_Default___) ShouldReplace(oldHash _dafny.Sequence, newHash _dafny.Sequence) bool {
 	return !_dafny.Companion_Sequence_.Equal(oldHash, newHash)
 }
+func (_static *CompanionStruct_Default___) IndexedFingerprint(hash _dafny.Sequence, clip bool) _dafny.Sequence {
+	if clip {
+		return _dafny.Companion_Sequence_.Concatenate(hash, Companion_Default___.ClipFlavour())
+	} else {
+		return hash
+	}
+}
+func (_static *CompanionStruct_Default___) HasClipFlavour(fingerprint _dafny.Sequence) bool {
+	return ((_dafny.IntOfUint32((fingerprint).Cardinality())).Cmp(_dafny.IntOfUint32((Companion_Default___.ClipFlavour()).Cardinality())) >= 0) && (_dafny.Companion_Sequence_.Equal((fingerprint).Drop(((_dafny.IntOfUint32((fingerprint).Cardinality())).Minus(_dafny.IntOfUint32((Companion_Default___.ClipFlavour()).Cardinality()))).Uint32()), Companion_Default___.ClipFlavour()))
+}
+func (_static *CompanionStruct_Default___) ContentHash(fingerprint _dafny.Sequence) _dafny.Sequence {
+	if Companion_Default___.HasClipFlavour(fingerprint) {
+		return (fingerprint).Take(((_dafny.IntOfUint32((fingerprint).Cardinality())).Minus(_dafny.IntOfUint32((Companion_Default___.ClipFlavour()).Cardinality()))).Uint32())
+	} else {
+		return fingerprint
+	}
+}
+func (_static *CompanionStruct_Default___) CanSkipUnchanged(storedStamp _dafny.Sequence, currentStamp _dafny.Sequence, storedFingerprint _dafny.Sequence, clip bool) bool {
+	return ((!_dafny.Companion_Sequence_.Equal(storedStamp, _dafny.UnicodeSeqOfUtf8Bytes(""))) && (_dafny.Companion_Sequence_.Equal(storedStamp, currentStamp))) && (_dafny.Companion_Sequence_.Equal(Companion_Default___.IndexedFingerprint(Companion_Default___.ContentHash(storedFingerprint), clip), storedFingerprint))
+}
 func (_static *CompanionStruct_Default___) Chunk(text _dafny.Sequence, size _dafny.Int, overlap _dafny.Int) _dafny.Sequence {
 	var _0___accumulator _dafny.Sequence = _dafny.SeqOf()
 	_ = _0___accumulator
@@ -252,6 +272,9 @@ TAIL_CALL_START:
 }
 func (_static *CompanionStruct_Default___) InlineTypes() _dafny.Set {
 	return _dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("application/pdf"), _dafny.UnicodeSeqOfUtf8Bytes("image/jpeg"), _dafny.UnicodeSeqOfUtf8Bytes("image/png"), _dafny.UnicodeSeqOfUtf8Bytes("image/gif"), _dafny.UnicodeSeqOfUtf8Bytes("image/webp"), _dafny.UnicodeSeqOfUtf8Bytes("text/plain"))
+}
+func (_static *CompanionStruct_Default___) ClipFlavour() _dafny.Sequence {
+	return _dafny.UnicodeSeqOfUtf8Bytes(";clip")
 }
 
 // End of class Default__
