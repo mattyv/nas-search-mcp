@@ -144,6 +144,10 @@ func TestSocketCallersAreNeverTheOwner(t *testing.T) {
 	if _, err := c.CorrectMemory(ctx, roots, memoryapi.Correction{MemoryID: m.ID, Status: "accepted", Reason: "r", Actor: memoryapi.ActorUser}); !errors.Is(err, memoryapi.ErrInvalid) {
 		t.Fatalf("accept over socket: %v", err)
 	}
+	// Checkpoint entries come only from SaveCheckpoint.
+	if _, _, err := c.AppendEvent(ctx, roots, memoryapi.Event{Type: "checkpoint", Title: "fake", Scope: "personal", Client: "t"}); !errors.Is(err, memoryapi.ErrInvalid) {
+		t.Fatalf("checkpoint entry over socket: %v", err)
+	}
 	// Forget is editor-only.
 	err = c.ForgetMemory(ctx, roots, m.ID, memoryapi.ActorUser)
 	if !errors.Is(err, memoryapi.ErrInvalid) || !strings.Contains(err.Error(), "forget is only available in the editor") {

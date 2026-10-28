@@ -85,6 +85,9 @@ func methods(s Store) map[string]handlerFunc {
 	return map[string]handlerFunc{
 		"AppendEvent": method(func(ctx context.Context, r []string, p appendParams) (appendResult, error) {
 			p.Event.Actor = ActorAssistant
+			if !policy.AssistantMayAppendType(p.Event.Type) {
+				return appendResult{}, fmt.Errorf("%w: assistants cannot write this entry type", ErrInvalid)
+			}
 			e, created, err := s.AppendEvent(ctx, r, p.Event)
 			return appendResult{e, created}, err
 		}),
