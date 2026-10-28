@@ -89,7 +89,7 @@ Jev is a hosted classifier from TypeSafe that scores notes. It is optional, and 
 
 Only notes in `NAS_JEV_SCOPES` go to TypeSafe. Notes you write yourself in the editor are never sent.
 
-Two thresholds, scored from 0 to 1000, control the result. A score at or above `NAS_MEMORY_ACCEPT_AT` (default 900) is accepted. A score at or below `NAS_MEMORY_REJECT_AT` (default 100) is rejected. The classifier decides neither way for scores in between. Keep `0 <= reject < accept <= 1000`.
+Two thresholds, scored from 0 to 1000, control the result. A score at or above `NAS_MEMORY_ACCEPT_AT` (default 900) is accepted. A score at or below `NAS_MEMORY_REJECT_AT` (default 100) is rejected. Scores in between, and entries the classifier never sees, wait in the editor's Review screen for you to decide. Keep `0 <= reject < accept <= 1000`.
 
 Other settings: `NAS_JEV_URL` (default `https://api.typesafe.ai`), `NAS_JEV_MODEL` (default `jev-latest`), `NAS_EDITOR_PORT` (default 8083, range 1024 to 65535).
 
