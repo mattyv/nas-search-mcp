@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -44,11 +45,39 @@ func threshold(key string, fallback int) (int, error) {
 	return value, nil
 }
 
+// memoryThresholds reads the accept and reject scores (per mille) and checks them with the
+// verified rule.
+func memoryThresholds() (acceptAt, rejectAt int, err error) {
+	if acceptAt, err = threshold("NAS_MEMORY_ACCEPT_AT", 900); err != nil {
+		return 0, 0, err
+	}
+	if rejectAt, err = threshold("NAS_MEMORY_REJECT_AT", 100); err != nil {
+		return 0, 0, err
+	}
+	if !policy.ValidThresholds(acceptAt, rejectAt) {
+		return 0, 0, errors.New("NAS_MEMORY_REJECT_AT and NAS_MEMORY_ACCEPT_AT must satisfy 0 <= reject < accept <= 1000")
+	}
+	return acceptAt, rejectAt, nil
+}
+
+// externalScopes reads NAS_JEV_SCOPES: "none" sends no entry outside the NAS; anything
+// else is a list of valid scopes (default personal).
+func externalScopes(value string) ([]string, error) {
+	if value == "" {
+		value = "personal"
+	}
+	if strings.TrimSpace(value) == "none" {
+		return []string{}, nil
+	}
+	return memoryScopes(value)
+}
+
 // memorySetup is the search process's view of the memory service.
 type memorySetup struct {
 	client       *memoryapi.Client
 	roots        []string
 	defaultScope string
+	editorOrigin string // where the owner forgets things; empty when not configured
 }
 
 func configuredMemory() (*memorySetup, error) {
@@ -59,7 +88,7 @@ func configuredMemory() (*memorySetup, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &memorySetup{client: &memoryapi.Client{Socket: env("NAS_MEMORY_SOCKET", "/data/memory-ipc/memory.sock")}, roots: roots, defaultScope: roots[0]}, nil
+	return &memorySetup{client: &memoryapi.Client{Socket: env("NAS_MEMORY_SOCKET", "/data/memory-ipc/memory.sock")}, roots: roots, defaultScope: roots[0], editorOrigin: os.Getenv("NAS_EDITOR_ORIGIN")}, nil
 }
 
 // runMemoryService runs inside the nas-memory container: the store, its private socket,
@@ -69,18 +98,11 @@ func runMemoryService() error {
 	if err != nil {
 		return err
 	}
-	acceptAt, err := threshold("NAS_MEMORY_ACCEPT_AT", 900)
+	acceptAt, rejectAt, err := memoryThresholds()
 	if err != nil {
 		return err
 	}
-	rejectAt, err := threshold("NAS_MEMORY_REJECT_AT", 100)
-	if err != nil {
-		return err
-	}
-	if policy.RouteCandidate(1000, acceptAt, rejectAt) != "accept" {
-		return errors.New("NAS_MEMORY_REJECT_AT and NAS_MEMORY_ACCEPT_AT must satisfy 0 <= reject < accept <= 1000")
-	}
-	external, err := memoryScopes(env("NAS_JEV_SCOPES", "personal"))
+	external, err := externalScopes(os.Getenv("NAS_JEV_SCOPES"))
 	if err != nil {
 		return err
 	}
@@ -162,16 +184,19 @@ func memoryTool(name string) bool {
 	return false
 }
 
-// passkeyMode reads NAS_OAUTH_PASSKEYS (default "enroll"). Passkeys need a host name, so
-// when the setting is absent and the issuer is an IP address the default stays "off"
-// rather than stopping the service after an upgrade.
+// passkeyMode reads NAS_OAUTH_PASSKEYS; when it is unset the verified default applies,
+// which depends only on whether the issuer host is an IP address (passkeys need a name).
 func passkeyMode(issuer string) string {
 	if mode := os.Getenv("NAS_OAUTH_PASSKEYS"); mode != "" {
 		return mode
 	}
-	if u, err := url.Parse(issuer); err == nil && net.ParseIP(u.Hostname()) != nil {
-		log.Printf("passkeys off: the OAuth issuer is an IP address")
-		return "off"
+	isIP := false
+	if u, err := url.Parse(issuer); err == nil {
+		isIP = net.ParseIP(u.Hostname()) != nil
 	}
-	return "enroll"
+	mode := policy.DefaultPasskeyMode(isIP)
+	if isIP {
+		log.Printf("passkey mode %q by default: the OAuth issuer is an IP address", mode)
+	}
+	return mode
 }

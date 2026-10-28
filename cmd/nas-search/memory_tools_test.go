@@ -16,14 +16,15 @@ type memToolEnv struct {
 	session *mcp.ClientSession
 }
 
-func newMemToolEnv(t *testing.T, roots []string, defaultScope string, approval *memoryApproval) *memToolEnv {
+func newMemToolEnv(t *testing.T, roots []string, defaultScope string, editorOrigin ...string) *memToolEnv {
 	t.Helper()
 	store := newFakeMemoryStore()
-	if approval != nil {
-		approval.store = store
+	origin := ""
+	if len(editorOrigin) > 0 {
+		origin = editorOrigin[0]
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "mem-test", Version: "1"}, nil)
-	registerMemoryTools(server, store, roots, defaultScope, approval)
+	registerMemoryTools(server, store, roots, defaultScope, origin)
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := server.Connect(context.Background(), st, nil)
 	if err != nil {
@@ -73,7 +74,7 @@ func (e *memToolEnv) mustCall(name string, args map[string]any) map[string]any {
 }
 
 func TestMemoryToolsRegistered(t *testing.T) {
-	env := newMemToolEnv(t, []string{"personal"}, "personal", nil)
+	env := newMemToolEnv(t, []string{"personal"}, "personal")
 	tools, err := env.session.ListTools(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -92,8 +93,8 @@ func TestMemoryToolsRegistered(t *testing.T) {
 			t.Errorf("%s must be read-only", name)
 		}
 	}
-	if a := got["memory_forget"].Annotations; a == nil || a.DestructiveHint == nil || !*a.DestructiveHint {
-		t.Error("memory_forget must be destructive")
+	if a := got["memory_forget"].Annotations; a == nil || !a.ReadOnlyHint || (a.DestructiveHint != nil && *a.DestructiveHint) {
+		t.Error("memory_forget never erases, so it must be read-only and non-destructive")
 	}
 	if !strings.Contains(got["context_open"].Description, "start of a conversation") {
 		t.Error("context_open must say when to call it")
@@ -107,7 +108,7 @@ func TestMemoryToolsRegistered(t *testing.T) {
 }
 
 func TestJournalAppendRoundTripAndActor(t *testing.T) {
-	env := newMemToolEnv(t, []string{"personal"}, "personal", nil)
+	env := newMemToolEnv(t, []string{"personal"}, "personal")
 	out := env.mustCall("journal_append", map[string]any{
 		"type": "decision", "title": "Use SQLite", "body": "because simple", "project": "nas",
 		"occurred_at": "2026-10-01T10:00:00Z", "next_actions": []string{"write schema"},
@@ -139,7 +140,7 @@ func TestJournalAppendRoundTripAndActor(t *testing.T) {
 }
 
 func TestInputCannotClaimToBeTheUser(t *testing.T) {
-	env := newMemToolEnv(t, []string{"personal"}, "personal", nil)
+	env := newMemToolEnv(t, []string{"personal"}, "personal")
 	for name, args := range map[string]map[string]any{
 		"journal_append":  {"type": "observation", "title": "t", "actor": "user"},
 		"checkpoint_save": {"project": "p", "expected_version": 0, "summary": "s", "actor": "user"},
@@ -155,7 +156,7 @@ func TestInputCannotClaimToBeTheUser(t *testing.T) {
 }
 
 func TestJournalAppendRejections(t *testing.T) {
-	env := newMemToolEnv(t, []string{"work"}, "work", nil)
+	env := newMemToolEnv(t, []string{"work"}, "work")
 	cases := map[string]map[string]any{
 		"confirmed status": {"type": "observation", "title": "t", "status": "confirmed"},
 		"bad type":         {"type": "bogus", "title": "t"},
@@ -180,7 +181,7 @@ func TestJournalAppendRejections(t *testing.T) {
 }
 
 func TestScopeDefaultAndRootsPassedDown(t *testing.T) {
-	env := newMemToolEnv(t, []string{"work/acme", "personal"}, "work/acme", nil)
+	env := newMemToolEnv(t, []string{"work/acme", "personal"}, "work/acme")
 	out := env.mustCall("journal_append", map[string]any{"type": "observation", "title": "t"})
 	if out["event"].(map[string]any)["scope"] != "work/acme" {
 		t.Fatal("default scope not applied")
@@ -203,7 +204,7 @@ func TestScopeDefaultAndRootsPassedDown(t *testing.T) {
 }
 
 func TestContextOpen(t *testing.T) {
-	env := newMemToolEnv(t, []string{"personal"}, "personal", nil)
+	env := newMemToolEnv(t, []string{"personal"}, "personal")
 	out := env.mustCall("context_open", map[string]any{"project": "nas", "intent": "resume", "budget": 900})
 	if out["project"] != "nas" || out["budget"] != float64(900) {
 		t.Fatalf("package = %v", out)
@@ -220,7 +221,7 @@ func TestContextOpen(t *testing.T) {
 }
 
 func TestJournalSearch(t *testing.T) {
-	env := newMemToolEnv(t, []string{"personal"}, "personal", nil)
+	env := newMemToolEnv(t, []string{"personal"}, "personal")
 	env.mustCall("journal_append", map[string]any{"type": "observation", "title": "alpha thing", "project": "p"})
 	out := env.mustCall("journal_search", map[string]any{"text": "alpha", "types": []string{"observation"}, "from": "2026-01-01T00:00:00Z", "to": "2027-01-01T00:00:00Z", "limit": 5})
 	events := out["events"].([]any)
@@ -243,7 +244,7 @@ func TestJournalSearch(t *testing.T) {
 }
 
 func TestCheckpointSaveAndConflict(t *testing.T) {
-	env := newMemToolEnv(t, []string{"personal"}, "personal", nil)
+	env := newMemToolEnv(t, []string{"personal"}, "personal")
 	out := env.mustCall("checkpoint_save", map[string]any{"project": "nas", "expected_version": 0, "summary": "first", "next": []string{"a"}, "client": "claude-desktop"})
 	if out["version"] != float64(1) || out["actor"] != memoryapi.ActorAssistant || out["scope"] != "personal" || out["client"] != "claude-desktop" {
 		t.Fatalf("checkpoint = %v", out)
@@ -266,7 +267,7 @@ func TestCheckpointSaveAndConflict(t *testing.T) {
 }
 
 func TestMemorySearchAndCorrect(t *testing.T) {
-	env := newMemToolEnv(t, []string{"personal"}, "personal", nil)
+	env := newMemToolEnv(t, []string{"personal"}, "personal")
 	env.store.memories["m1"] = memoryapi.Memory{ID: "m1", Statement: "uses sqlite", Scope: "personal", Status: "accepted", Category: "fact"}
 	out := env.mustCall("memory_search", map[string]any{"text": "sqlite", "statuses": []string{"accepted"}, "categories": []string{"fact"}})
 	if len(out["memories"].([]any)) != 1 {
@@ -299,41 +300,118 @@ func TestMemorySearchAndCorrect(t *testing.T) {
 	}
 }
 
-func TestMemoryForgetPrivateForgetsDirectly(t *testing.T) {
-	env := newMemToolEnv(t, []string{"personal"}, "personal", nil)
+func TestMemoryForgetNeverForgets(t *testing.T) {
+	env := newMemToolEnv(t, []string{"personal"}, "personal", "https://nas.tail1234.ts.net")
 	ev := env.mustCall("journal_append", map[string]any{"type": "observation", "title": "secret"})["event"].(map[string]any)
+	env.store.memories["m1"] = memoryapi.Memory{ID: "m1", Statement: "likes tea", Scope: "personal", Status: "accepted"}
 	out := env.mustCall("memory_forget", map[string]any{"kind": "event", "id": ev["id"]})
-	if out["state"] != "forgotten" {
-		t.Fatalf("out = %v", out)
+	if out["state"] != "use_editor" || out["editor_url"] != "https://nas.tail1234.ts.net/e/"+ev["id"].(string) || out["message"] == "" {
+		t.Fatalf("event out = %v", out)
 	}
-	if got := env.store.forgottenList(); len(got) != 1 || got[0] != "event:"+ev["id"].(string)+":"+memoryapi.ActorAssistant {
-		t.Fatalf("forgotten = %v", got)
+	out = env.mustCall("memory_forget", map[string]any{"kind": "memory", "id": "m1"})
+	if out["state"] != "use_editor" || out["editor_url"] != "https://nas.tail1234.ts.net/m/m1" {
+		t.Fatalf("memory out = %v", out)
 	}
-	if _, text, isErr := env.call("memory_forget", map[string]any{"kind": "event", "id": "gone"}); !isErr || !strings.Contains(text, "not found") {
-		t.Fatalf("missing id: %q", text)
+	if len(env.store.forgottenList()) != 0 || len(env.store.memories) != 1 || len(env.store.events) != 1 {
+		t.Fatal("the tool erased something")
 	}
 	if _, _, isErr := env.call("memory_forget", map[string]any{"kind": "file", "id": "x"}); !isErr {
 		t.Fatal("bad kind must fail")
 	}
+	if _, _, isErr := env.call("memory_forget", map[string]any{"kind": "event", "id": ""}); !isErr {
+		t.Fatal("empty id must fail")
+	}
 }
 
-func TestMemoryForgetPublicRequiresApproval(t *testing.T) {
-	approval := newMemoryApproval("https://nas.example", nil, []string{"personal"})
-	env := newMemToolEnv(t, []string{"personal"}, "personal", approval)
-	env.store.memories["m1"] = memoryapi.Memory{ID: "m1", Statement: "likes tea", Scope: "personal", Status: "accepted"}
-	out := env.mustCall("memory_forget", map[string]any{"kind": "memory", "id": "m1"})
-	if out["state"] != "approval_required" {
+func TestMemoryForgetWithoutEditorOriginSaysWhere(t *testing.T) {
+	env := newMemToolEnv(t, []string{"personal"}, "personal")
+	out := env.mustCall("memory_forget", map[string]any{"kind": "event", "id": "e1"})
+	msg, _ := out["message"].(string)
+	if out["state"] != "use_editor" || out["editor_url"] != nil && out["editor_url"] != "" || !strings.Contains(strings.ToLower(msg), "editor") {
 		t.Fatalf("out = %v", out)
 	}
-	url, _ := out["approval_url"].(string)
-	if !strings.HasPrefix(url, "https://nas.example"+memoryApprovalPath+"?request=") || out["expires_at"] == "" || out["message"] == "" {
-		t.Fatalf("out = %v", out)
+	if len(env.store.forgottenList()) != 0 {
+		t.Fatal("the tool erased something")
 	}
-	if len(env.store.forgottenList()) != 0 || len(env.store.memories) != 1 {
-		t.Fatal("public path must not forget before approval")
+}
+
+func TestJournalAppendRefusesCheckpointType(t *testing.T) {
+	env := newMemToolEnv(t, []string{"personal"}, "personal")
+	if _, _, isErr := env.call("journal_append", map[string]any{"type": "checkpoint", "title": "fake checkpoint"}); !isErr {
+		t.Fatal("assistants must use checkpoint_save, not journal_append, for checkpoints")
 	}
-	// Unknown ids never get a link.
-	if _, _, isErr := env.call("memory_forget", map[string]any{"kind": "memory", "id": "zzz"}); !isErr {
-		t.Fatal("unknown id must not yield an approval link")
+	if len(env.store.events) != 0 {
+		t.Fatal("a fake checkpoint reached the store")
+	}
+}
+
+func TestToolLimitsMatchTheStore(t *testing.T) {
+	env := newMemToolEnv(t, []string{"personal"}, "personal")
+	long := func(n int) string { return strings.Repeat("é", n) }
+	items := func(n, size int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = long(size)
+		}
+		return out
+	}
+	src := func(n int) []map[string]any {
+		out := make([]map[string]any, n)
+		for i := range out {
+			out[i] = map[string]any{"kind": "file", "locator": "/a"}
+		}
+		return out
+	}
+	rejected := map[string]map[string]any{
+		"11 sources":      {"type": "observation", "title": "t", "sources": src(11)},
+		"source kind 51":  {"type": "observation", "title": "t", "sources": []map[string]any{{"kind": long(51), "locator": "/a"}}},
+		"excerpt 2001":    {"type": "observation", "title": "t", "sources": []map[string]any{{"kind": "file", "locator": "/a", "excerpt": long(2001)}}},
+		"21 next actions": {"type": "observation", "title": "t", "next_actions": items(21, 5)},
+		"action 301":      {"type": "observation", "title": "t", "next_actions": items(1, 301)},
+		"21 related":      {"type": "observation", "title": "t", "related": items(21, 5)},
+	}
+	for name, args := range rejected {
+		if _, _, isErr := env.call("journal_append", args); !isErr {
+			t.Errorf("journal_append accepted %s", name)
+		}
+	}
+	accepted := map[string]any{"type": "observation", "title": "t", "sources": []map[string]any{{"kind": long(50), "locator": "/a", "excerpt": long(2000)}}, "next_actions": items(20, 300)}
+	if _, text, isErr := env.call("journal_append", accepted); isErr {
+		t.Errorf("journal_append refused input the store accepts: %s", text)
+	}
+	cp := func(extra map[string]any) map[string]any {
+		m := map[string]any{"project": "p", "expected_version": 0, "summary": "s"}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+	for name, args := range map[string]map[string]any{
+		"summary 8001": cp(map[string]any{"summary": long(8001)}),
+		"goal 501":     cp(map[string]any{"goal": long(501)}),
+		"31 done":      cp(map[string]any{"done": items(31, 5)}),
+		"item 301":     cp(map[string]any{"next": items(1, 301)}),
+	} {
+		if _, _, isErr := env.call("checkpoint_save", args); !isErr {
+			t.Errorf("checkpoint_save accepted %s", name)
+		}
+	}
+	if _, text, isErr := env.call("checkpoint_save", cp(map[string]any{"summary": long(8000), "goal": long(500), "done": items(30, 300)})); isErr {
+		t.Errorf("checkpoint_save refused input the store accepts: %s", text)
+	}
+	tools, _ := env.session.ListTools(context.Background(), nil)
+	desc := map[string]string{}
+	for _, tool := range tools.Tools {
+		desc[tool.Name] = tool.Description
+	}
+	for _, want := range []string{"10 sources", "300 characters"} {
+		if !strings.Contains(desc["journal_append"], want) {
+			t.Errorf("journal_append description lacks %q", want)
+		}
+	}
+	for _, want := range []string{"8000", "500", "30 items", "300 characters"} {
+		if !strings.Contains(desc["checkpoint_save"], want) {
+			t.Errorf("checkpoint_save description lacks %q", want)
+		}
 	}
 }

@@ -187,7 +187,7 @@ func main() {
 	}
 	server := buildMCPServer(a, nil)
 	if mem != nil {
-		registerMemoryTools(server, mem.client, mem.roots, mem.defaultScope, nil)
+		registerMemoryTools(server, mem.client, mem.roots, mem.defaultScope, mem.editorOrigin)
 	}
 	var publicServer *http.Server
 	if issuer := os.Getenv("NAS_OAUTH_ISSUER"); issuer != "" && !stdio {
@@ -246,9 +246,7 @@ func main() {
 		publicMCP := buildMCPServer(a, approval, uploads)
 		extraRoutes := map[string]http.Handler{}
 		if mem != nil {
-			memApproval := newMemoryApproval(issuer, mem.client, mem.roots)
-			registerMemoryTools(publicMCP, mem.client, mem.roots, mem.defaultScope, memApproval)
-			extraRoutes[memoryApprovalPath] = hardenPublic(auth.BrowserActionHandler(memApproval, memApproval.known), log.Default())
+			registerMemoryTools(publicMCP, mem.client, mem.roots, mem.defaultScope, mem.editorOrigin)
 		}
 		publicServer = &http.Server{Addr: env("NAS_OAUTH_LISTEN", "127.0.0.1:8082"), Handler: withRoutes(buildPublicHandler(publicMCP, auth, a, approval, uploads), extraRoutes), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: readTimeout, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 		go func() {
