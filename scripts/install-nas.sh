@@ -58,6 +58,8 @@ canonical() {
 }
 install_dir=$(canonical "$install_dir") || fail 'Cannot resolve install path'
 existing_env=false
+cpuset=0-1
+cpu_shares=512
 [ ! -L "$install_dir/.env" ] || fail 'Refusing symlink .env; credentials must be a regular private file'
 if [ -f "$install_dir/.env" ]; then
     existing_env=true
@@ -97,6 +99,8 @@ if [ -f "$install_dir/.env" ]; then
     if grep -q '^NAS_BIND_IP=' "$install_dir/.env"; then bind=$(field NAS_BIND_IP)
     else bind=$(field NAS_LAN_IP); bind=${bind:-127.0.0.1}; fi
     queue=$(field NAS_UPGRADE_PATH)
+    if grep -q '^NAS_CPUSET=' "$install_dir/.env"; then cpuset=$(field NAS_CPUSET); fi
+    if grep -q '^NAS_CPU_SHARES=' "$install_dir/.env"; then cpu_shares=$(field NAS_CPU_SHARES); fi
     upload_enabled=$(field NAS_UPLOAD_ENABLED)
     upload_indexed=$(field NAS_UPLOAD_INDEXED_DESTINATIONS)
     upload_path=$(field NAS_UPLOAD_PATH)
@@ -121,6 +125,9 @@ for path in "$documents" "$photos" "$code" "$data" "$queue" "$upload_path"; do
     case "$path" in /*) :;; *) fail 'Effective mount paths must be absolute';; esac
     case "$path" in */../*|*/..|*/./*|*/.|*[!a-zA-Z0-9_./@\ -]*) fail 'Invalid effective mount path';; esac
 done
+printf '%s\n' "$cpuset" | LC_ALL=C grep -Eq '^[0-9]+(-[0-9]+)?$' || fail 'NAS_CPUSET must be one CPU (0) or a range (0-1)'
+case "$cpuset" in *-*) [ "${cpuset%-*}" -le "${cpuset#*-}" ] || fail 'NAS_CPUSET range must run low to high';; esac
+printf '%s\n' "$cpu_shares" | LC_ALL=C grep -Eq '^[0-9]{1,5}$' && [ "$cpu_shares" -ge 2 ] || fail 'NAS_CPU_SHARES must be a number from 2 to 99999'
 printf '%s\n' "$bind" | awk -F. 'NF != 4 {exit 1} {for(i=1;i<=4;i++) if ($i !~ /^[0-9]+$/ || length($i)>3 || $i+0>255 || (length($i)>1 && substr($i,1,1)=="0")) exit 1}' || fail 'Bind address must be a valid explicit IPv4 address'
 queue=$(canonical "$queue") || fail 'Cannot resolve upgrade queue'
 documents=$(canonical "$documents") || fail 'Cannot resolve selected source'
@@ -179,7 +186,7 @@ if [ "$existing_env" = true ]; then
 fi
 # No deployment/index state is changed before image/actual kernel limit validation.
 docker pull "$image"
-docker run --rm --memory 1g --memory-swap 1g --cpuset-cpus 0 --entrypoint /bin/true "$image" || fail 'Memory/CPU-affinity probe failed; nothing deployed'
+docker run --rm --memory 1g --memory-swap 1g --cpuset-cpus "$cpuset" --cpu-shares "$cpu_shares" --entrypoint /bin/true "$image" || fail 'Memory/CPU-affinity probe failed; nothing deployed'
 mkdir -p "$install_dir"
 if [ ! -f "$install_dir/.env" ]; then
     token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
@@ -187,7 +194,7 @@ if [ ! -f "$install_dir/.env" ]; then
     {
         printf 'NAS_TOKEN=%s\n' "$token"
         printf "NAS_DOCUMENTS_PATH='%s'\nNAS_DOCUMENTS_LABEL=%s\nNAS_PHOTOS_PATH='%s'\nNAS_CODE_PATH='%s'\nNAS_INDEX_PATH='%s'\n" "$documents" "$documents_label" "$photos" "$code" "$data"
-        printf 'NAS_UID=%s\nNAS_GID=%s\nNAS_BIND_IP=%s\nNAS_CPUSET=0\nNAS_PHOTOS=false\nNAS_ALLOWED_FOLDERS=%s,Code,Photos\n' "$uid" "$gid" "$bind" "$documents_label"
+        printf 'NAS_UID=%s\nNAS_GID=%s\nNAS_BIND_IP=%s\nNAS_CPUSET=%s\nNAS_CPU_SHARES=%s\nNAS_PHOTOS=false\nNAS_ALLOWED_FOLDERS=%s,Code,Photos\n' "$uid" "$gid" "$bind" "$cpuset" "$cpu_shares" "$documents_label"
     } > "$install_dir/.env"
     unset token
     chmod 600 "$install_dir/.env"
@@ -201,12 +208,12 @@ else
 fi
 # Verify mount access as the actual container user. Probe only the index directory
 # using a temporary file that is removed immediately; original sources stay read-only.
-docker run --rm --user "$uid:$gid" --memory 1g --memory-swap 1g --cpuset-cpus 0 \
+docker run --rm --user "$uid:$gid" --memory 1g --memory-swap 1g --cpuset-cpus "$cpuset" --cpu-shares "$cpu_shares" \
     -v "$documents:/check-documents:ro" -v "$photos:/check-photos:ro" -v "$code:/check-code:ro" -v "$data:/check-data" \
     --entrypoint python3 "$image" -c 'import os,tempfile; assert os.access("/check-documents",os.R_OK|os.X_OK); assert os.access("/check-photos",os.R_OK|os.X_OK); assert os.access("/check-code",os.R_OK|os.X_OK); f=tempfile.NamedTemporaryFile(dir="/check-data"); f.write(b"probe"); f.flush(); f.close()' \
     || fail 'Container user cannot read selected sources or write index data; fix DSM permissions before deployment'
 if [ "$upload_enabled" = true ] && [ "$upload_indexed" != true ]; then
-    docker run --rm --user "$uid:$gid" --memory 1g --memory-swap 1g --cpuset-cpus 0 \
+    docker run --rm --user "$uid:$gid" --memory 1g --memory-swap 1g --cpuset-cpus "$cpuset" --cpu-shares "$cpu_shares" \
         -v "$upload_path:/check-upload" --entrypoint python3 "$image" \
         -c 'import tempfile; f=tempfile.NamedTemporaryFile(dir="/check-upload"); f.write(b"probe"); f.flush(); f.close()' \
         || fail 'Container user cannot write the dedicated upload folder; fix DSM permissions before deployment'
@@ -219,7 +226,7 @@ if [ "$upload_indexed" = true ]; then
     fi
     [ -d "$data/upload-ipc" ] || fail 'Upload IPC path must be a directory'
     python3 -c 'import os,stat,sys; sys.exit(0 if stat.S_IMODE(os.stat(sys.argv[1],follow_symlinks=False).st_mode)==0o700 else 1)' "$data/upload-ipc" || fail 'Upload IPC directory must have mode 700'
-    docker run --rm --user "$uid:$gid" --memory 96m --memory-swap 96m --cpuset-cpus 0 \
+    docker run --rm --user "$uid:$gid" --memory 96m --memory-swap 96m --cpuset-cpus "$cpuset" --cpu-shares "$cpu_shares" \
         -v "$data/upload-ipc:/check-ipc" --entrypoint python3 "$image" \
         -c 'import tempfile; f=tempfile.NamedTemporaryFile(dir="/check-ipc"); f.write(b"probe"); f.flush(); f.close()' \
         || fail 'Container user cannot write the upload IPC directory'

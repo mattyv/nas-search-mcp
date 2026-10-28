@@ -52,8 +52,11 @@ services:
       - "${NAS_UPGRADE_PATH:-/volume1/app-data/nas-search/upgrades}:/upgrades"
     mem_limit: 1g
     memswap_limit: 1g
-    # Synology's kernel lacks CFS quotas; confine execution to one CPU instead.
-    cpuset: "${NAS_CPUSET:-0}"
+    # Synology's kernel has no CFS quota, so a cpuset cannot cap CPU time. Use both
+    # cores so Go, SQLite, Python, pdftoppm and tesseract overlap, and use low
+    # shares so DSM wins under contention. NAS_CPUSET=0 restores single-core pinning.
+    cpuset: "${NAS_CPUSET:-0-1}"
+    cpu_shares: ${NAS_CPU_SHARES:-512}
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
@@ -85,7 +88,9 @@ services:
       - "${NAS_INDEX_PATH:-/volume1/app-data/nas-search/index}/upload-ipc:/ipc:rw"
     mem_limit: 96m
     memswap_limit: 96m
-    cpuset: "${NAS_CPUSET:-0}"
+    # Same CPU policy as nas-search; see the comment there.
+    cpuset: "${NAS_CPUSET:-0-1}"
+    cpu_shares: ${NAS_CPU_SHARES:-512}
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]

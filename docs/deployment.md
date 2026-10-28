@@ -69,6 +69,8 @@ NAS_PHOTOS_PATH=/path/to/authorized-photos
 
 Do not add duplicate setting lines. Apply the settings through the normal deployment upgrade. Check `index_status`; photos become searchable as indexing completes. Enabling photos keeps the document index. To turn photo embeddings off, set `NAS_PHOTOS=false` and redeploy.
 
+The service uses both CPU cores by default, with low CPU shares so DSM keeps priority when the NAS is busy. Synology's kernel cannot cap CPU time, so shares limit contention instead. Set `NAS_CPUSET=0` in the protected `.env` to pin the service to one core, or `NAS_CPU_SHARES` to change the share (default 512; Docker's default is 1024). Measure DSM responsiveness during a scan before relying on this.
+
 Photo indexing uses local CLIP models, downloaded on first use, and can keep one CPU busy. Measure memory, indexing time, and search quality on the target NAS before expanding the collection. Development measurements are not NAS performance guarantees.
 
 For named-person lookup, prefer the optional [Synology Photos connector](synology-photos.md),
