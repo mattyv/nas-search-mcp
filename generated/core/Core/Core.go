@@ -450,6 +450,25 @@ func (_static *CompanionStruct_Default___) InitialMemoryStatus(userAttested bool
 func (_static *CompanionStruct_Default___) PasskeyRequired(mode _dafny.Sequence, registered _dafny.Int) bool {
 	return !((_dafny.Companion_Sequence_.Equal(mode, _dafny.UnicodeSeqOfUtf8Bytes("off"))) || ((_dafny.Companion_Sequence_.Equal(mode, _dafny.UnicodeSeqOfUtf8Bytes("enroll"))) && ((registered).Sign() != 1)))
 }
+func (_static *CompanionStruct_Default___) ValidPasskeyMode(mode _dafny.Sequence) bool {
+	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("off"), _dafny.UnicodeSeqOfUtf8Bytes("enroll"), _dafny.UnicodeSeqOfUtf8Bytes("required"))).Contains(mode)
+}
+func (_static *CompanionStruct_Default___) PasskeyStep(mode _dafny.Sequence, registered _dafny.Int) _dafny.Sequence {
+	if !(Companion_Default___.PasskeyRequired(mode, registered)) {
+		if _dafny.Companion_Sequence_.Equal(mode, _dafny.UnicodeSeqOfUtf8Bytes("enroll")) {
+			return _dafny.UnicodeSeqOfUtf8Bytes("enroll_optional")
+		} else {
+			return _dafny.UnicodeSeqOfUtf8Bytes("complete")
+		}
+	} else if (registered).Sign() != 1 {
+		return _dafny.UnicodeSeqOfUtf8Bytes("enroll_required")
+	} else {
+		return _dafny.UnicodeSeqOfUtf8Bytes("assert")
+	}
+}
+func (_static *CompanionStruct_Default___) PasskeyRemovalAllowed(mode _dafny.Sequence, registered _dafny.Int) bool {
+	return ((registered).Cmp(_dafny.One) >= 0) && (!((_dafny.Companion_Sequence_.Equal(mode, _dafny.UnicodeSeqOfUtf8Bytes("required"))) && ((registered).Cmp(_dafny.One) <= 0)))
+}
 func (_static *CompanionStruct_Default___) CanRegisterPasskey(registered _dafny.Int, capacity _dafny.Int) bool {
 	return (((registered).Sign() != -1) && (((_dafny.One).Cmp(capacity) <= 0) && ((capacity).Cmp(_dafny.IntOfInt64(32)) <= 0))) && ((registered).Cmp(capacity) < 0)
 }

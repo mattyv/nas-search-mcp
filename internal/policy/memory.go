@@ -146,3 +146,16 @@ func OrphanedAfterForget(evidence []string, forgotten string) bool {
 	}
 	return core.Companion_Default___.OrphanedAfterForget(dafny.SeqOf(values...), str(forgotten))
 }
+
+func ValidPasskeyMode(mode string) bool { return core.Companion_Default___.ValidPasskeyMode(str(mode)) }
+
+// PasskeyStep decides what follows a correct password: "complete", "assert",
+// "enroll_optional" or "enroll_required".
+func PasskeyStep(mode string, registered int) string {
+	return dafny.SequenceVerbatimString(core.Companion_Default___.PasskeyStep(str(mode), dafny.IntOf(registered)), false)
+}
+
+// PasskeyRemovalAllowed keeps required mode from removing its last passkey.
+func PasskeyRemovalAllowed(mode string, registered int) bool {
+	return core.Companion_Default___.PasskeyRemovalAllowed(str(mode), dafny.IntOf(registered))
+}

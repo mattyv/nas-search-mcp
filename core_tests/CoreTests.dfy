@@ -213,6 +213,18 @@ module CoreTests {
     expect !OrphanedAfterForget(["evt_a", "evt_b"], "evt_a");
     expect !OrphanedAfterForget([], "evt_a");
     expect !OrphanedAfterForget(["evt_b"], "evt_a");
+    expect ValidPasskeyMode("off") && ValidPasskeyMode("enroll") && ValidPasskeyMode("required");
+    expect !ValidPasskeyMode("") && !ValidPasskeyMode("Required");
+    expect PasskeyStep("off", 3) == "complete";
+    expect PasskeyStep("enroll", 0) == "enroll_optional";
+    expect PasskeyStep("enroll", 2) == "assert";
+    expect PasskeyStep("required", 0) == "enroll_required";
+    expect PasskeyStep("required", 1) == "assert";
+    expect PasskeyStep("typo", 0) == "enroll_required";
+    expect PasskeyRemovalAllowed("enroll", 1);
+    expect !PasskeyRemovalAllowed("required", 1);
+    expect PasskeyRemovalAllowed("required", 2);
+    expect !PasskeyRemovalAllowed("off", 0);
     print "Dafny core executable tests passed\n";
   }
 }

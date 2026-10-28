@@ -45,6 +45,13 @@ func browserTarget(r *http.Request) (string, bool) {
 			return path, true
 		}
 	}
+	switch r.URL.Path {
+	case "/passkeys", "/passkeys/options", "/passkeys/add", "/passkeys/rename", "/passkeys/remove":
+		// One fresh sign-in covers the page and its actions.
+		if r.URL.RawQuery == "" && !r.URL.ForceQuery {
+			return "/passkeys", true
+		}
+	}
 	if r.URL.Path == "/upgrade/approve" || r.URL.Path == "/memory/approve" {
 		q, err := url.ParseQuery(r.URL.RawQuery)
 		if err == nil && len(q) == 1 && len(q["request"]) == 1 && len(q.Get("request")) == 43 {

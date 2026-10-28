@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -158,4 +160,18 @@ func memoryTool(name string) bool {
 		return true
 	}
 	return false
+}
+
+// passkeyMode reads NAS_OAUTH_PASSKEYS (default "enroll"). Passkeys need a host name, so
+// when the setting is absent and the issuer is an IP address the default stays "off"
+// rather than stopping the service after an upgrade.
+func passkeyMode(issuer string) string {
+	if mode := os.Getenv("NAS_OAUTH_PASSKEYS"); mode != "" {
+		return mode
+	}
+	if u, err := url.Parse(issuer); err == nil && net.ParseIP(u.Hostname()) != nil {
+		log.Printf("passkeys off: the OAuth issuer is an IP address")
+		return "off"
+	}
+	return "enroll"
 }

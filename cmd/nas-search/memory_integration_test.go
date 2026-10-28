@@ -198,3 +198,14 @@ func TestMemoryRoutingHelpers(t *testing.T) {
 		}
 	}
 }
+
+func TestPasskeyModeDefault(t *testing.T) {
+	t.Setenv("NAS_OAUTH_PASSKEYS", "")
+	if passkeyMode("https://nas.example.ts.net") != "enroll" || passkeyMode("https://192.0.2.4:8443") != "off" {
+		t.Fatal("default passkey mode")
+	}
+	t.Setenv("NAS_OAUTH_PASSKEYS", "required")
+	if passkeyMode("https://192.0.2.4") != "required" {
+		t.Fatal("explicit setting must win")
+	}
+}

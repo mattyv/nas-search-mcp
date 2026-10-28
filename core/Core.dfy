@@ -662,6 +662,37 @@ module Core {
     ensures PasskeyRequired("enroll", later)
   {}
 
+  predicate ValidPasskeyMode(mode: string) {
+    mode in {"off", "enroll", "required"}
+  }
+
+  // What follows a correct password: finish, prove a registered passkey, or enroll one.
+  function PasskeyStep(mode: string, registered: int): string
+    ensures PasskeyStep(mode, registered) in {"complete", "assert", "enroll_optional", "enroll_required"}
+    ensures PasskeyStep(mode, registered) in {"complete", "enroll_optional"} <==> !PasskeyRequired(mode, registered)
+    ensures PasskeyRequired(mode, registered) && registered > 0 ==> PasskeyStep(mode, registered) == "assert"
+  {
+    if !PasskeyRequired(mode, registered) then (if mode == "enroll" then "enroll_optional" else "complete")
+    else if registered <= 0 then "enroll_required"
+    else "assert"
+  }
+
+  // Once a passkey exists in enroll or required mode, a password alone never completes sign-in.
+  lemma RegisteredPasskeyIsAlwaysAsked(mode: string, registered: int)
+    requires mode != "off" && registered > 0
+    ensures PasskeyStep(mode, registered) == "assert"
+  {}
+
+  // Required mode never removes its own last passkey.
+  predicate PasskeyRemovalAllowed(mode: string, registered: int) {
+    registered >= 1 && !(mode == "required" && registered <= 1)
+  }
+
+  lemma RequiredModeKeepsOnePasskey(registered: int)
+    requires PasskeyRemovalAllowed("required", registered)
+    ensures registered - 1 >= 1
+  {}
+
   predicate CanRegisterPasskey(registered: int, capacity: int) {
     registered >= 0 && 1 <= capacity <= 32 && registered < capacity
   }

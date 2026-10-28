@@ -108,6 +108,12 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "reset-passkeys" {
+		if err := oauth.ResetPasskeys(env("NAS_OAUTH_DB", env("NAS_DATA", "/data")+"/oauth.sqlite3")); err != nil {
+			log.Fatal("passkey reset failed")
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "memory-service" {
 		if err := runMemoryService(); err != nil {
 			log.Fatalf("memory service unavailable: %v", err)
@@ -185,7 +191,7 @@ func main() {
 	}
 	var publicServer *http.Server
 	if issuer := os.Getenv("NAS_OAUTH_ISSUER"); issuer != "" && !stdio {
-		auth, authErr := oauth.New(oauth.Config{ServiceUpgrades: os.Getenv("NAS_UPGRADE_DIR") != "", Issuer: issuer, DatabasePath: env("NAS_OAUTH_DB", a.Data+"/oauth.sqlite3"), PasswordHash: os.Getenv("NAS_OAUTH_PASSWORD_HASH"), ClientID: os.Getenv("NAS_OAUTH_CLIENT_ID"), ClientSecretHash: os.Getenv("NAS_OAUTH_CLIENT_SECRET_HASH"), RedirectURIs: folderList(os.Getenv("NAS_OAUTH_LOCAL_REDIRECTS")), ChatGPTRedirectURI: os.Getenv("NAS_OAUTH_CHATGPT_REDIRECT")})
+		auth, authErr := oauth.New(oauth.Config{ServiceUpgrades: os.Getenv("NAS_UPGRADE_DIR") != "", Issuer: issuer, DatabasePath: env("NAS_OAUTH_DB", a.Data+"/oauth.sqlite3"), PasswordHash: os.Getenv("NAS_OAUTH_PASSWORD_HASH"), ClientID: os.Getenv("NAS_OAUTH_CLIENT_ID"), ClientSecretHash: os.Getenv("NAS_OAUTH_CLIENT_SECRET_HASH"), RedirectURIs: folderList(os.Getenv("NAS_OAUTH_LOCAL_REDIRECTS")), ChatGPTRedirectURI: os.Getenv("NAS_OAUTH_CHATGPT_REDIRECT"), PasskeyMode: passkeyMode(issuer)})
 		if authErr != nil {
 			log.Fatal("OAuth configuration invalid; refusing to start")
 		}

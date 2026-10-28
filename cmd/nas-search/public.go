@@ -214,6 +214,8 @@ func buildPublicHandler(server *mcp.Server, auth *oauth.Server, a *app.App, appr
 	if approval != nil {
 		routes.Handle("/upgrade/approve", hardenPublic(auth.BrowserActionHandler(approval, approval.known), log.Default()))
 	}
+	routes.Handle("/passkeys", hardenPublic(auth.PasskeysHandler(), log.Default()))
+	routes.Handle("/passkeys/", hardenPublic(auth.PasskeysHandler(), log.Default()))
 	if len(uploads) > 0 && uploads[0] != nil {
 		page := uploads[0]
 		routes.Handle("/upload/", hardenUploads(auth.BrowserActionHandler(page, page.known), log.Default()))

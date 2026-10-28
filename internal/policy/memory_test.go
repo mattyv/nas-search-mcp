@@ -91,3 +91,15 @@ func TestEventStatusAndForgetBridge(t *testing.T) {
 		t.Fatal("orphaned")
 	}
 }
+
+func TestPasskeyStepBridge(t *testing.T) {
+	if !ValidPasskeyMode("enroll") || ValidPasskeyMode("") {
+		t.Fatal("modes")
+	}
+	if PasskeyStep("off", 2) != "complete" || PasskeyStep("enroll", 0) != "enroll_optional" || PasskeyStep("enroll", 1) != "assert" || PasskeyStep("required", 0) != "enroll_required" {
+		t.Fatal("steps")
+	}
+	if PasskeyRemovalAllowed("required", 1) || !PasskeyRemovalAllowed("required", 2) || !PasskeyRemovalAllowed("enroll", 1) {
+		t.Fatal("removal")
+	}
+}
