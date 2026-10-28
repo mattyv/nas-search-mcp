@@ -77,9 +77,14 @@ func method[P any, R any](fn func(ctx context.Context, roots []string, p P) (R, 
 	}
 }
 
+// methods maps wire names to store calls. Socket callers are AI clients, never the owner:
+// every write is attributed to the assistant and no write is attested by the owner. The
+// owner acts through the editor, which uses the store directly. Forget methods are
+// registered so Client keeps compiling, but ServeHTTP rejects them (policy.SocketMethodAllowed).
 func methods(s Store) map[string]handlerFunc {
 	return map[string]handlerFunc{
 		"AppendEvent": method(func(ctx context.Context, r []string, p appendParams) (appendResult, error) {
+			p.Event.Actor = ActorAssistant
 			e, created, err := s.AppendEvent(ctx, r, p.Event)
 			return appendResult{e, created}, err
 		}),
@@ -88,6 +93,7 @@ func methods(s Store) map[string]handlerFunc {
 			return s.SearchEvents(ctx, r, p.Query)
 		}),
 		"SaveCheckpoint": method(func(ctx context.Context, r []string, p saveCheckpointParams) (Checkpoint, error) {
+			p.Checkpoint.Actor = ActorAssistant
 			return s.SaveCheckpoint(ctx, r, p.Checkpoint, p.ExpectedVersion)
 		}),
 		"LatestCheckpoint": method(func(ctx context.Context, r []string, p projectParams) (*Checkpoint, error) {
@@ -100,13 +106,14 @@ func methods(s Store) map[string]handlerFunc {
 			return s.OpenContext(ctx, r, p.Request)
 		}),
 		"ProposeMemory": method(func(ctx context.Context, r []string, p proposeParams) (Memory, error) {
-			return s.ProposeMemory(ctx, r, p.Memory, p.UserAttested)
+			return s.ProposeMemory(ctx, r, p.Memory, false)
 		}),
 		"GetMemory": method(func(ctx context.Context, r []string, p idParams) (Memory, error) { return s.GetMemory(ctx, r, p.ID) }),
 		"SearchMemories": method(func(ctx context.Context, r []string, p searchMemoriesParams) ([]Memory, error) {
 			return s.SearchMemories(ctx, r, p.Query)
 		}),
 		"CorrectMemory": method(func(ctx context.Context, r []string, p correctParams) (Memory, error) {
+			p.Correction.Actor = ActorAssistant
 			return s.CorrectMemory(ctx, r, p.Correction)
 		}),
 		"ForgetEvent": method(func(ctx context.Context, r []string, p idParams) (struct{}, error) {
@@ -194,6 +201,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, fmt.Errorf("%w: request is not valid JSON", ErrInvalid))
+		return
+	}
+	if !policy.SocketMethodAllowed(req.Method) {
+		writeError(w, fmt.Errorf("%w: forget is only available in the editor", ErrInvalid))
 		return
 	}
 	fn, ok := s.methods[req.Method]

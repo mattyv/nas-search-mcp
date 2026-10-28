@@ -68,13 +68,10 @@ func (s *Store) SaveCheckpoint(ctx context.Context, roots []string, c memoryapi.
 	}
 	err = s.tx(ctx, func(q queryer) error {
 		current := 0
-		var lastScope string
-		switch err := q.QueryRowContext(ctx, `SELECT version, scope FROM checkpoints WHERE project = ? ORDER BY version DESC LIMIT 1`, c.Project).Scan(&current, &lastScope); {
+		switch err := q.QueryRowContext(ctx, `SELECT version FROM checkpoints WHERE scope = ? AND project = ? ORDER BY version DESC LIMIT 1`, c.Scope, c.Project).Scan(&current); {
 		case errors.Is(err, sql.ErrNoRows):
 		case err != nil:
 			return internal(err)
-		case !policy.ScopeVisible(lastScope, roots):
-			return fmt.Errorf("%w: project belongs to another scope", memoryapi.ErrScope)
 		}
 		ok, next := policy.CheckpointWrite(current, expectedVersion)
 		if !ok {
@@ -136,12 +133,10 @@ func (s *Store) checkpoints(ctx context.Context, roots []string, project string,
 	}
 	list, args := inList(scopes)
 	where := "scope IN " + list
-	order := "version DESC"
+	order := "updated_at DESC, version DESC"
 	if project != "" {
 		where += " AND project = ?"
 		args = append(args, project)
-	} else {
-		order = "updated_at DESC, version DESC"
 	}
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM checkpoints WHERE `+where+` ORDER BY `+order+` LIMIT ?`, args...)

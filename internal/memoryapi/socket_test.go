@@ -64,7 +64,7 @@ func TestRoundTripOverSocket(t *testing.T) {
 	roots := []string{"personal"}
 
 	e, created, err := c.AppendEvent(ctx, roots, memoryapi.Event{Type: "decision", Title: "use sockets", Project: "p", Scope: "personal", Client: "t", Actor: memoryapi.ActorUser, IdempotencyKey: "k"})
-	if err != nil || !created || e.Status != "confirmed" || e.OccurredAt.IsZero() {
+	if err != nil || !created || e.Status == "confirmed" || e.OccurredAt.IsZero() {
 		t.Fatalf("%+v %v %v", e, created, err)
 	}
 	again, created, err := c.AppendEvent(ctx, roots, memoryapi.Event{Type: "decision", Title: "other", Scope: "personal", Client: "t", Actor: memoryapi.ActorUser, IdempotencyKey: "k"})
@@ -91,13 +91,13 @@ func TestRoundTripOverSocket(t *testing.T) {
 		t.Fatalf("%+v %v", h, err)
 	}
 	m, err := c.ProposeMemory(ctx, roots, memoryapi.Memory{Category: "decision", Statement: "sockets are private", Scope: "personal", Project: "p", Probability: -1}, true)
-	if err != nil || m.Status != "accepted" {
+	if err != nil || m.Status != "candidate" {
 		t.Fatalf("%+v %v", m, err)
 	}
 	if got, err := c.GetMemory(ctx, roots, m.ID); err != nil || got.ID != m.ID {
 		t.Fatalf("%+v %v", got, err)
 	}
-	if got, err := c.SearchMemories(ctx, roots, memoryapi.MemoryQuery{Text: "private"}); err != nil || len(got) != 1 {
+	if got, err := c.SearchMemories(ctx, roots, memoryapi.MemoryQuery{Text: "private", Statuses: []string{"candidate"}}); err != nil || len(got) != 1 {
 		t.Fatalf("%+v %v", got, err)
 	}
 	if got, err := c.CorrectMemory(ctx, roots, memoryapi.Correction{MemoryID: m.ID, Status: "disputed", Reason: "check", Actor: memoryapi.ActorAssistant}); err != nil || got.Status != "disputed" {
@@ -116,11 +116,47 @@ func TestRoundTripOverSocket(t *testing.T) {
 	if err := c.MarkClassified(ctx, roots, e.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.ForgetMemory(ctx, roots, m.ID, memoryapi.ActorUser); err != nil {
-		t.Fatal(err)
+}
+
+func TestSocketCallersAreNeverTheOwner(t *testing.T) {
+	store := realStore(t)
+	c, _ := serve(t, store, []string{"personal"})
+	ctx := context.Background()
+	roots := []string{"personal"}
+
+	// Claiming to be the owner does not make an event confirmed or a memory accepted.
+	e, _, err := c.AppendEvent(ctx, roots, memoryapi.Event{Type: "decision", Title: "claimed", Scope: "personal", Client: "t", Actor: memoryapi.ActorUser})
+	if err != nil || e.Actor != memoryapi.ActorAssistant || e.Status == "confirmed" {
+		t.Fatalf("event: %+v %v", e, err)
 	}
-	if err := c.ForgetEvent(ctx, roots, e.ID, memoryapi.ActorUser); err != nil {
-		t.Fatal(err)
+	if _, _, err := c.AppendEvent(ctx, roots, memoryapi.Event{Type: "decision", Title: "claimed", Status: "confirmed", Scope: "personal", Client: "t", Actor: memoryapi.ActorUser}); !errors.Is(err, memoryapi.ErrInvalid) {
+		t.Fatalf("confirmed over socket: %v", err)
+	}
+	cp, err := c.SaveCheckpoint(ctx, roots, memoryapi.Checkpoint{Project: "p", Scope: "personal", Summary: "s", Client: "t", Actor: memoryapi.ActorUser}, 0)
+	if err != nil || cp.Actor != memoryapi.ActorAssistant {
+		t.Fatalf("checkpoint: %+v %v", cp, err)
+	}
+	m, err := c.ProposeMemory(ctx, roots, memoryapi.Memory{Category: "fact", Statement: "claimed", Scope: "personal", Probability: -1}, true)
+	if err != nil || m.Status != "candidate" {
+		t.Fatalf("attested over socket: %+v %v", m, err)
+	}
+	// An "owner" correction is treated as the assistant's: it may only dispute.
+	if _, err := c.CorrectMemory(ctx, roots, memoryapi.Correction{MemoryID: m.ID, Status: "accepted", Reason: "r", Actor: memoryapi.ActorUser}); !errors.Is(err, memoryapi.ErrInvalid) {
+		t.Fatalf("accept over socket: %v", err)
+	}
+	// Forget is editor-only.
+	err = c.ForgetMemory(ctx, roots, m.ID, memoryapi.ActorUser)
+	if !errors.Is(err, memoryapi.ErrInvalid) || !strings.Contains(err.Error(), "forget is only available in the editor") {
+		t.Fatalf("forget memory: %v", err)
+	}
+	if err := c.ForgetEvent(ctx, roots, e.ID, memoryapi.ActorUser); !errors.Is(err, memoryapi.ErrInvalid) {
+		t.Fatalf("forget event: %v", err)
+	}
+	if _, err := store.GetEvent(ctx, roots, e.ID); err != nil {
+		t.Fatalf("event must survive: %v", err)
+	}
+	if _, err := store.GetMemory(ctx, roots, m.ID); err != nil {
+		t.Fatalf("memory must survive: %v", err)
 	}
 }
 

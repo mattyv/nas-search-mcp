@@ -23,8 +23,8 @@ import (
 
 type Config struct {
 	Path     string
-	AcceptAt int // per-mille; default 900
-	RejectAt int // per-mille; default 100
+	AcceptAt int // per-mille; 0 selects the defaults 900/100
+	RejectAt int // per-mille; used as given unless AcceptAt is 0
 	Now      func() time.Time
 }
 
@@ -44,7 +44,7 @@ const schema = `
 CREATE TABLE IF NOT EXISTS events (
   rowid INTEGER PRIMARY KEY,
   id TEXT NOT NULL UNIQUE,
-  idempotency_key TEXT UNIQUE,
+  idempotency_key TEXT,
   type TEXT NOT NULL, status TEXT NOT NULL,
   title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
   project TEXT NOT NULL DEFAULT '', scope TEXT NOT NULL,
@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS events (
   occurred_at INTEGER NOT NULL, recorded_at INTEGER NOT NULL,
   sources TEXT NOT NULL DEFAULT '[]', related TEXT NOT NULL DEFAULT '[]', next_actions TEXT NOT NULL DEFAULT '[]',
   supersedes TEXT NOT NULL DEFAULT '', classified INTEGER NOT NULL DEFAULT 0,
-  extra TEXT NOT NULL DEFAULT '{}');
+  extra TEXT NOT NULL DEFAULT '{}',
+  UNIQUE (scope, idempotency_key));
 CREATE INDEX IF NOT EXISTS events_project_idx ON events(project, occurred_at);
 CREATE INDEX IF NOT EXISTS events_scope_idx ON events(scope);
 CREATE INDEX IF NOT EXISTS events_unclassified_idx ON events(classified, rowid);
@@ -60,7 +61,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(title, body, content='e
 CREATE TABLE IF NOT EXISTS checkpoints (
   project TEXT NOT NULL, scope TEXT NOT NULL, version INTEGER NOT NULL,
   payload TEXT NOT NULL, updated_at INTEGER NOT NULL, extra TEXT NOT NULL DEFAULT '{}',
-  PRIMARY KEY (project, version));
+  PRIMARY KEY (scope, project, version));
 CREATE TABLE IF NOT EXISTS memories (
   rowid INTEGER PRIMARY KEY,
   id TEXT NOT NULL UNIQUE,
@@ -79,6 +80,13 @@ CREATE TABLE IF NOT EXISTS forget_audit (
 func Open(cfg Config) (*Store, error) {
 	if cfg.Path == "" {
 		return nil, fmt.Errorf("memory: database path is required")
+	}
+	acceptAt, rejectAt := cfg.AcceptAt, cfg.RejectAt
+	if acceptAt == 0 { // an accept threshold of 0 is invalid, so 0 means "use the defaults"
+		acceptAt, rejectAt = 900, 100
+	}
+	if !policy.ValidThresholds(acceptAt, rejectAt) {
+		return nil, fmt.Errorf("memory: thresholds must satisfy 0 <= reject < accept <= 1000 (got accept %d, reject %d)", acceptAt, rejectAt)
 	}
 	f, err := os.OpenFile(cfg.Path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -103,13 +111,7 @@ func Open(cfg Config) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("memory: create tables: %w", err)
 	}
-	s := &Store{db: db, path: cfg.Path, acceptAt: cfg.AcceptAt, rejectAt: cfg.RejectAt, now: cfg.Now}
-	if s.acceptAt == 0 {
-		s.acceptAt = 900
-	}
-	if s.rejectAt == 0 {
-		s.rejectAt = 100
-	}
+	s := &Store{db: db, path: cfg.Path, acceptAt: acceptAt, rejectAt: rejectAt, now: cfg.Now}
 	if s.now == nil {
 		s.now = time.Now
 	}

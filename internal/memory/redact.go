@@ -2,6 +2,7 @@ package memory
 
 import (
 	"regexp"
+	"strings"
 	"unicode"
 )
 
@@ -26,19 +27,36 @@ func redact(s string) string {
 	s = tokenForms.ReplaceAllString(s, redacted)
 	s = bearer.ReplaceAllString(s, redacted)
 	return longRun.ReplaceAllStringFunc(s, func(run string) string {
-		var letter, digit bool
-		for _, r := range run {
-			if unicode.IsDigit(r) {
-				digit = true
-			} else if unicode.IsLetter(r) {
-				letter = true
-			}
-		}
-		if letter && digit {
+		if looksLikeSecret(run) {
 			return redacted
 		}
 		return run
 	})
+}
+
+// looksLikeSecret is the generic rule for an unlabelled long token: at least 40 characters,
+// mixed upper and lower case letters and digits, no path, URL or version punctuation, and
+// not a hex digest. Commit SHAs, digests, URLs, paths, branch names and UUIDs fail it.
+func looksLikeSecret(run string) bool {
+	if len(run) < 40 || strings.ContainsAny(run, "/.:") {
+		return false
+	}
+	var upper, lower, digit bool
+	allHex := true
+	for _, r := range run {
+		switch {
+		case unicode.IsDigit(r):
+			digit = true
+		case unicode.IsUpper(r):
+			upper = true
+		case unicode.IsLower(r):
+			lower = true
+		}
+		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
+			allHex = false
+		}
+	}
+	return upper && lower && digit && !allHex
 }
 
 func redactAll(in []string) []string {

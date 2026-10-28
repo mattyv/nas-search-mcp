@@ -5,6 +5,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mattyv/nas-search-mcp/internal/memoryapi"
+	"github.com/mattyv/nas-search-mcp/internal/policy"
 )
 
 // Input-format checks, size bounds and list helpers for the storage adapter. Status
@@ -30,9 +31,19 @@ func validLength(s string, min, max int) bool {
 // validActor: true iff a is "user" or "assistant".
 func validActor(a string) bool { return a == memoryapi.ActorUser || a == memoryapi.ActorAssistant }
 
-// isOpenCandidate: the status counted by Projects as awaiting review: "candidate".
-// A display count, not a decision; review routing uses policy.IsUnconfirmedMemory.
-func isOpenCandidate(status string) bool { return status == "candidate" }
+// memoryCategoryNames enumerates the categories for SQL filters; membership is decided by
+// policy.ValidMemoryCategory and policy.ScopeWideContextCategory.
+var memoryCategoryNames = []string{"fact", "preference", "decision", "constraint", "lesson"}
+
+func scopeWideCategories() []string {
+	out := []string{}
+	for _, c := range memoryCategoryNames {
+		if policy.ValidMemoryCategory(c) && policy.ScopeWideContextCategory(c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
 
 // itemCost: approximate token cost of an item whose JSON is n bytes: n/4 + 10.
 func itemCost(n int) int { return n/4 + 10 }
