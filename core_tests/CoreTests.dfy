@@ -99,6 +99,98 @@ module CoreTests {
     expect !CanRegisterOAuthClient(128, 128);
     expect !CanRegisterOAuthClient(0, 0);
     expect !CanRegisterOAuthClient(0, 129);
+    // Shared memory: scopes never leak across boundaries.
+    expect ValidScope("personal");
+    expect ValidScope("work/acme");
+    expect ValidScope("personal/projects/nas-search-mcp");
+    expect !ValidScope("");
+    expect !ValidScope("/personal");
+    expect !ValidScope("personal/");
+    expect !ValidScope("work//acme");
+    expect !ValidScope("Work");
+    expect !ValidScope("a b");
+    expect ScopeWithin("personal", "personal");
+    expect ScopeWithin("personal/projects/x", "personal");
+    expect !ScopeWithin("personal2", "personal");
+    expect !ScopeWithin("personal", "personal/projects");
+    expect !ScopeWithin("work/acme", "personal");
+    expect ScopeVisible("work/acme/x", ["personal", "work/acme"]);
+    expect !ScopeVisible("work/other", ["personal", "work/acme"]);
+    expect !ScopeVisible("personal", []);
+    // Memory status: only accepted memories are current; terminal states stay terminal.
+    expect IsCurrentMemory("accepted");
+    expect !IsCurrentMemory("candidate");
+    expect !IsCurrentMemory("retracted");
+    expect ValidMemoryTransition("candidate", "accepted");
+    expect ValidMemoryTransition("candidate", "rejected");
+    expect ValidMemoryTransition("accepted", "superseded");
+    expect ValidMemoryTransition("accepted", "retracted");
+    expect ValidMemoryTransition("disputed", "accepted");
+    expect !ValidMemoryTransition("retracted", "accepted");
+    expect !ValidMemoryTransition("superseded", "accepted");
+    expect !ValidMemoryTransition("rejected", "accepted");
+    expect !ValidMemoryTransition("accepted", "accepted");
+    expect !ValidMemoryTransition("candidate", "unknown");
+    expect ValidEventType("decision");
+    expect ValidEventType("manual_note");
+    expect !ValidEventType("chat");
+    expect ValidEventStatus("unverified");
+    expect !ValidEventStatus("accepted");
+    // Checkpoints: optimistic concurrency.
+    expect CheckpointWrite(0, 0) == (true, 1);
+    expect CheckpointWrite(3, 3) == (true, 4);
+    expect CheckpointWrite(3, 2) == (false, 3);
+    expect CheckpointWrite(0, 1) == (false, 0);
+    // Context packing: keep order, never exceed the budget, skip what does not fit.
+    expect PackBudget([3, 4, 5], 10) == [0, 1];
+    expect PackBudget([3, 9, 5], 10) == [0, 2];
+    expect PackBudget([11, 2], 10) == [1];
+    expect PackBudget([], 10) == [];
+    expect PackBudget([1, 1], 0) == [];
+    // Review routing on per-mille probabilities.
+    expect RouteCandidate(950, 900, 100) == "accept";
+    expect RouteCandidate(900, 900, 100) == "accept";
+    expect RouteCandidate(500, 900, 100) == "review";
+    expect RouteCandidate(100, 900, 100) == "reject";
+    expect InitialMemoryStatus(true, 0, 900, 100) == "accepted";
+    expect InitialMemoryStatus(false, 950, 900, 100) == "accepted";
+    expect InitialMemoryStatus(false, 500, 900, 100) == "candidate";
+    expect InitialMemoryStatus(false, 50, 900, 100) == "rejected";
+    // Passkeys.
+    expect !PasskeyRequired("off", 3);
+    expect !PasskeyRequired("enroll", 0);
+    expect PasskeyRequired("enroll", 1);
+    expect PasskeyRequired("required", 0);
+    expect PasskeyRequired("bogus", 0);
+    expect CanRegisterPasskey(0, 10);
+    expect CanRegisterPasskey(9, 10);
+    expect !CanRegisterPasskey(10, 10);
+    expect !CanRegisterPasskey(0, 0);
+    expect PasskeySignCountValid(0, 0);
+    expect PasskeySignCountValid(4, 5);
+    expect !PasskeySignCountValid(5, 5);
+    expect !PasskeySignCountValid(5, 0);
+    expect PasskeySignCountValid(0, 7);
+    // Editor: only the configured Tailscale owner.
+    expect EditorAllowed("matt@example.com", "matt@example.com");
+    expect !EditorAllowed("", "");
+    expect !EditorAllowed("eve@example.com", "matt@example.com");
+    expect RouteCandidate(-1, 900, 100) == "review";
+    expect RouteCandidate(1001, 900, 100) == "review";
+    expect InitialMemoryStatus(false, -1, 900, 100) == "candidate";
+    expect AssistantMayTransition("accepted", "disputed");
+    expect AssistantMayTransition("candidate", "disputed");
+    expect !AssistantMayTransition("candidate", "accepted");
+    expect !AssistantMayTransition("accepted", "retracted");
+    expect !AssistantMayTransition("retracted", "disputed");
+    expect ProposesMemory("decision");
+    expect ProposesMemory("manual_note");
+    expect !ProposesMemory("discussion");
+    expect !ProposesMemory("checkpoint");
+    expect DefaultMemoryCategory("decision") == "decision";
+    expect DefaultMemoryCategory("observation") == "fact";
+    expect ValidMemoryCategory("lesson");
+    expect !ValidMemoryCategory("rumour");
     print "Dafny core executable tests passed\n";
   }
 }
