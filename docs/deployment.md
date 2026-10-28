@@ -20,6 +20,10 @@ Replace placeholders with your repository and published commit. The installer re
 
 Keep original sources read-only and disjoint from writable index and upgrade-queue directories. Keep secrets out of source control. English PDF OCR is enabled by default; it uses Poppler and Tesseract. Other OCR languages and photo OCR are not implemented. Unsupported formats are listed in the [coverage table](../README.md#coverage-and-limits).
 
+## Shared memory
+
+Shared memory is off by default. To turn it on, set `NAS_MEMORY_ENABLED=true` and its folder and editor settings in the private `.env`, then upgrade. The installer validates the settings first, adds a 128 MB `nas-memory` container, and rolls back if it does not become healthy. See [shared memory](memory.md).
+
 ## Upgrade through MCP
 
 After one-time setup, a private bearer client can call `upgrade_from_main` to queue an upgrade. A public OAuth client receives a short-lived approval link; the owner must complete fresh browser sign-in and click Approve before the upgrade is queued. Call `upgrade_status` after reconnecting. The host worker resolves the current `main` commit, requires successful verification and image publication for that exact commit, and installs its pinned image. If verification has not passed, the request fails rather than selecting an older commit.

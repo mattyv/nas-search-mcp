@@ -5,6 +5,7 @@ umask 077
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 image= install_dir= documents= photos= code= data= bind=127.0.0.1 documents_label=Documents dry=false upload_enabled=false upload_indexed=false upload_path=
 synology_path= synology_socket=
+memory_enabled=false memory_path=
 uid=${SUDO_UID:-$(id -u)}
 gid=${SUDO_GID:-$(id -g)}
 while [ "$#" -gt 0 ]; do
@@ -106,6 +107,22 @@ if [ -f "$install_dir/.env" ]; then
     upload_path=$(field NAS_UPLOAD_PATH)
     synology_path=$(field NAS_SYNOLOGY_PHOTOS_HOST_PATH)
     synology_socket=$(field NAS_SYNOLOGY_PHOTOS_SOCKET)
+    memory_enabled=$(field NAS_MEMORY_ENABLED)
+    memory_path=$(field NAS_MEMORY_PATH)
+    # Shared memory settings are read only when the feature is on. Absent keys use
+    # the compose defaults; a key that is present but empty is an error.
+    memory_setting() {
+        if grep -q "^$1=" "$install_dir/.env"; then field "$1"; else printf '%s\n' "$2"; fi
+    }
+    if [ "$memory_enabled" = true ]; then
+        editor_owner=$(field NAS_EDITOR_OWNER)
+        editor_origin=$(field NAS_EDITOR_ORIGIN)
+        editor_port=$(memory_setting NAS_EDITOR_PORT 8083)
+        memory_scopes=$(memory_setting NAS_MEMORY_SCOPES personal)
+        jev_scopes=$(memory_setting NAS_JEV_SCOPES personal)
+        accept_at=$(memory_setting NAS_MEMORY_ACCEPT_AT 900)
+        reject_at=$(memory_setting NAS_MEMORY_REJECT_AT 100)
+    fi
     uid=$(field NAS_UID)
     gid=$(field NAS_GID)
     [ -d "$documents" ] && [ -d "$photos" ] && [ -d "$code" ] && [ -d "$data" ] || fail 'Existing .env source and index directories must exist; refusing automatic recreation'
@@ -117,6 +134,7 @@ case "$documents_label" in ''|*[!a-zA-Z0-9_-]*) fail 'Document label must use le
 queue=${queue:-$install_dir/upgrades}
 upload_enabled=${upload_enabled:-false}
 upload_indexed=${upload_indexed:-false}
+memory_enabled=${memory_enabled:-false}
 case "$upload_enabled" in true|false) :;; *) fail 'NAS_UPLOAD_ENABLED must be true or false';; esac
 case "$upload_indexed" in true|false) :;; *) fail 'NAS_UPLOAD_INDEXED_DESTINATIONS must be true or false';; esac
 [ "$upload_indexed" != true ] || [ "$upload_enabled" = true ] || fail 'Indexed upload destinations require uploads to be enabled'
@@ -165,6 +183,28 @@ if [ -n "$synology_path" ] || [ -n "$synology_socket" ]; then
         overlap "$synology_path" "$other" && fail 'Photos broker socket directory must not overlap sources, data or upgrade queue'
     done
     case "$install_dir/" in "$synology_path/"*) fail 'Photos broker directory must not contain installer state';; esac
+fi
+# Shared memory (optional). Validate every setting before anything is pulled or created.
+case "$memory_enabled" in true|false) :;; *) fail 'NAS_MEMORY_ENABLED must be true or false';; esac
+if [ "$memory_enabled" = true ]; then
+    [ -n "$memory_path" ] || fail 'Shared memory needs NAS_MEMORY_PATH, an absolute folder for its database'
+    case "$memory_path" in /*) :;; *) fail 'NAS_MEMORY_PATH must be absolute';; esac
+    case "$memory_path" in */../*|*/..|*/./*|*/.|*[!a-zA-Z0-9_./@\ -]*) fail 'NAS_MEMORY_PATH must use letters, digits, spaces, underscores, dots, slashes, at signs, or hyphens, without dot segments';; esac
+    memory_path=$(canonical "$memory_path") || fail 'Cannot resolve NAS_MEMORY_PATH'
+    for other in "$documents" "$photos" "$code" "$data" "$queue" "$install_dir" "$synology_path"; do
+        [ -n "$other" ] || continue
+        overlap "$memory_path" "$other" && fail 'NAS_MEMORY_PATH must not overlap sources, index data, the upgrade queue, or installer state'
+    done
+    [ -n "$editor_owner" ] || fail 'Shared memory needs NAS_EDITOR_OWNER, your Tailscale login'
+    printf '%s\n' "$editor_origin" | LC_ALL=C grep -Eq '^https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$' || fail 'NAS_EDITOR_ORIGIN must look like https://host[:port] with no path'
+    scope_list='^[a-z0-9_-]+(/[a-z0-9_-]+)*(,[a-z0-9_-]+(/[a-z0-9_-]+)*)*$'
+    printf '%s\n' "$memory_scopes" | LC_ALL=C grep -Eq "$scope_list" || fail 'NAS_MEMORY_SCOPES must be comma-separated scopes of a-z, 0-9, _ or -, with / between parts'
+    printf '%s\n' "$jev_scopes" | LC_ALL=C grep -Eq "$scope_list" || fail 'NAS_JEV_SCOPES must be comma-separated scopes of a-z, 0-9, _ or -, with / between parts'
+    for number in "$accept_at" "$reject_at" "$editor_port"; do
+        printf '%s\n' "$number" | LC_ALL=C grep -Eq '^[0-9]{1,5}$' || fail 'Memory thresholds and NAS_EDITOR_PORT must be whole numbers'
+    done
+    [ "$reject_at" -lt "$accept_at" ] && [ "$accept_at" -le 1000 ] || fail 'Memory thresholds need 0 <= NAS_MEMORY_REJECT_AT < NAS_MEMORY_ACCEPT_AT <= 1000'
+    [ "$editor_port" -ge 1024 ] && [ "$editor_port" -le 65535 ] || fail 'NAS_EDITOR_PORT must be from 1024 to 65535'
 fi
 [ "$(id -u)" = 0 ] || fail 'Run on the NAS with sudo/root Docker access'
 PATH=/usr/local/bin:$PATH
@@ -231,6 +271,27 @@ if [ "$upload_indexed" = true ]; then
         -c 'import tempfile; f=tempfile.NamedTemporaryFile(dir="/check-ipc"); f.write(b"probe"); f.flush(); f.close()' \
         || fail 'Container user cannot write the upload IPC directory'
 fi
+if [ "$memory_enabled" = true ]; then
+    memory_ipc=$data/memory-ipc
+    [ ! -L "$memory_path" ] || fail 'Memory folder must not be a symlink'
+    [ ! -L "$memory_ipc" ] || fail 'Memory IPC directory must not be a symlink'
+    if [ ! -e "$memory_path" ]; then
+        mkdir -p "$(dirname "$memory_path")" && mkdir -m 700 "$memory_path" || fail 'Cannot create memory folder'
+        chown "$uid:$gid" "$memory_path" || fail 'Cannot assign memory folder'
+    fi
+    if [ ! -e "$memory_ipc" ]; then
+        mkdir -m 700 "$memory_ipc" || fail 'Cannot create memory IPC directory'
+        chown "$uid:$gid" "$memory_ipc" || fail 'Cannot assign memory IPC directory'
+    fi
+    for dir in "$memory_path" "$memory_ipc"; do
+        [ -d "$dir" ] || fail 'Memory paths must be directories'
+        python3 -c 'import os,stat,sys; sys.exit(0 if stat.S_IMODE(os.stat(sys.argv[1],follow_symlinks=False).st_mode)==0o700 else 1)' "$dir" || fail 'Memory folder and IPC directory must have mode 700'
+    done
+    docker run --rm --user "$uid:$gid" --memory 128m --memory-swap 128m --cpuset-cpus "$cpuset" --cpu-shares "$cpu_shares" \
+        -v "$memory_path:/check-memory" -v "$memory_ipc:/check-memory-ipc" --entrypoint python3 "$image" \
+        -c 'import tempfile; [tempfile.NamedTemporaryFile(dir=d).close() for d in ("/check-memory", "/check-memory-ipc")]' \
+        || fail 'Container user cannot write the memory folder or IPC directory'
+fi
 # The deployment copy is pull-only; upstream resource and security defaults remain.
 previous_compose=
 if [ -f "$install_dir/compose.yaml" ]; then
@@ -256,11 +317,11 @@ compose() (
     for name in $(env | sed -n 's/^\(NAS_[A-Za-z0-9_]*\)=.*/\1/p'); do
         unset "$name"
     done
-    if [ "$upload_indexed" = true ]; then
-        docker compose --profile indexed-upload --env-file "$install_dir/.env" --project-name nas-search --project-directory "$install_dir" -f "$install_dir/compose.yaml" "$@"
-    else
-        docker compose --env-file "$install_dir/.env" --project-name nas-search --project-directory "$install_dir" -f "$install_dir/compose.yaml" "$@"
-    fi
+    profiles=
+    [ "$upload_indexed" != true ] || profiles="$profiles --profile indexed-upload"
+    [ "$memory_enabled" != true ] || profiles="$profiles --profile memory"
+    # Unquoted on purpose: each --profile flag is its own word.
+    docker compose $profiles --env-file "$install_dir/.env" --project-name nas-search --project-directory "$install_dir" -f "$install_dir/compose.yaml" "$@"
 )
 rollback() {
     if [ -n "$previous" ]; then
@@ -292,6 +353,20 @@ else
     # A previously enabled writer must not retain writable source mounts.
     old_writer=$(docker ps -q --filter 'name=^/nas-search-nas-upload-writer-1$') || rollback
     [ -z "$old_writer" ] || docker stop "$old_writer" >/dev/null || rollback
+fi
+if [ "$memory_enabled" = true ]; then
+    memory_ready=false
+    memory_attempt=0
+    while [ "$memory_attempt" -lt 20 ]; do
+        if compose exec -T nas-memory /app/nas-search memory-health >/dev/null 2>&1; then memory_ready=true; break; fi
+        memory_attempt=$((memory_attempt + 1))
+        sleep 1
+    done
+    [ "$memory_ready" = true ] || rollback
+else
+    # Turning memory off must also stop a container started by an earlier release.
+    old_memory=$(docker ps -q --filter 'name=^/nas-search-nas-memory-1$') || rollback
+    [ -z "$old_memory" ] || docker stop "$old_memory" >/dev/null || rollback
 fi
 # Check authenticated MCP status inside the container, without exposing tokens in args.
 # A first start can open a large index or load models; allow about two minutes before rolling back.

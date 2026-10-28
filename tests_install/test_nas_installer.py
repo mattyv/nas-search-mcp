@@ -1,3 +1,4 @@
+import pytest
 import os
 from pathlib import Path
 import subprocess
@@ -15,12 +16,14 @@ printf '%s\\n' "$*" >> "$DOCKER_LOG"
 case "$1" in
 info) echo 'Server ready';;
 inspect) [ -n "${ACTIVE_INSTALL:-}" ] || exit 1; printf '%s\\n' "$ACTIVE_INSTALL";;
-ps) [ -z "${OLD_WRITER:-}" ] || printf '%s\\n' "$OLD_WRITER";;
+ps) case "$*" in *nas-memory*) [ -z "${OLD_MEMORY:-}" ] || printf '%s\\n' "$OLD_MEMORY";;
+    *) [ -z "${OLD_WRITER:-}" ] || printf '%s\\n' "$OLD_WRITER";; esac;;
 pull) [ "${FAIL_PULL:-0}" = 0 ];;
 run) [ "${FAIL_LIMITS:-0}" = 0 ];;
 compose) if [ "${CHECK_NAS_ENV:-0}" = 1 ] && [ "${2:-}" != version ]; then
     [ -z "$(env | sed -n '/^NAS_[A-Za-z0-9_]*=/p')" ] || exit 91
 fi
+case "$*" in *"exec -T nas-memory"*) [ "${FAIL_MEMORY_HEALTH:-0}" = 0 ] || exit 1;; esac
 case "$*" in *"exec -T nas-search"*) [ "${FAIL_HEALTH:-0}" = 0 ] || exit 1
     if [ -n "${SLOW_START:-}" ]; then
         n=$(cat "$SLOW_START" 2>/dev/null || echo 0); echo $((n + 1)) > "$SLOW_START"
@@ -709,3 +712,197 @@ def test_slow_first_start_is_not_rolled_back(tmp_path):
     result = subprocess.run(args, env=env, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     assert (tmp_path / 'install' / 'current-image').read_text().strip().endswith(':def456')
+
+
+# ---- Shared memory service (optional, off by default) ----
+
+SECRET_KEY = 'sk-test-secret-key-value'
+MEMORY_SETTINGS = {
+    'NAS_MEMORY_ENABLED': 'true',
+    'NAS_EDITOR_OWNER': 'owner@example.com',
+    'NAS_EDITOR_ORIGIN': 'https://nas.example.ts.net:8444',
+    'NAS_MEMORY_SCOPES': 'personal,work/acme',
+    'NAS_JEV_SCOPES': 'personal',
+    'NAS_MEMORY_ACCEPT_AT': '900',
+    'NAS_MEMORY_REJECT_AT': '100',
+    'NAS_EDITOR_PORT': '8083',
+    'NAS_JEV_API_KEY': SECRET_KEY,
+}
+
+
+def memory_config(tmp_path, **overrides):
+    """Install once, then append memory settings to the private .env."""
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    memory = tmp_path / 'memory'
+    settings = dict(MEMORY_SETTINGS, NAS_MEMORY_PATH=str(memory))
+    settings.update(overrides)
+    secret = tmp_path / 'install' / '.env'
+    with secret.open('a') as stream:
+        for key, value in settings.items():
+            if value is not None:
+                stream.write(f'{key}={value}\n')
+    log.write_text('')
+    return args, env, log, secret, memory
+
+
+def run_memory(args, env):
+    return subprocess.run(args, env=env, capture_output=True, text=True)
+
+
+def test_memory_enabled_creates_private_dirs_probes_and_waits_for_health(tmp_path):
+    args, env, log, secret, memory = memory_config(tmp_path)
+    result = run_memory(args, env)
+    assert result.returncode == 0, result.stderr
+    assert memory.is_dir() and memory.stat().st_mode & 0o777 == 0o700
+    ipc = tmp_path / 'index' / 'memory-ipc'
+    assert ipc.is_dir() and ipc.stat().st_mode & 0o777 == 0o700
+    chowns = (tmp_path / 'chown.log').read_text()
+    assert f'1234:1234 {memory}' in chowns and f'1234:1234 {ipc}' in chowns
+    calls = log.read_text()
+    assert '--profile memory' in calls
+    assert '--profile indexed-upload' not in calls
+    assert f'{memory}:/check-memory' in calls and f'{ipc}:/check-memory-ipc' in calls
+    assert calls.index('up -d --no-build') < calls.index('exec -T nas-memory /app/nas-search memory-health') < calls.index('exec -T nas-search')
+
+
+def test_memory_and_indexed_upload_pass_both_profiles(tmp_path):
+    args, env, log, secret, memory = memory_config(tmp_path, NAS_UPLOAD_ENABLED='true', NAS_UPLOAD_INDEXED_DESTINATIONS='true')
+    result = run_memory(args, env)
+    assert result.returncode == 0, result.stderr
+    up = [line for line in log.read_text().splitlines() if 'up -d --no-build' in line][0]
+    assert '--profile indexed-upload' in up and '--profile memory' in up
+    assert (tmp_path / 'index' / 'upload-ipc').is_dir()
+
+
+@pytest.mark.parametrize('overrides', [
+    {'NAS_MEMORY_PATH': None},
+    {'NAS_MEMORY_PATH': 'relative/memory'},
+    {'NAS_MEMORY_PATH': '/tmp/a;b'},
+    {'NAS_MEMORY_PATH': '/tmp/../x'},
+    {'NAS_MEMORY_PATH': '@DOCUMENTS@'},
+    {'NAS_MEMORY_PATH': '@DOCUMENTS@/inner'},
+    {'NAS_MEMORY_PATH': '@PHOTOS@/inner'},
+    {'NAS_MEMORY_PATH': '@CODE@'},
+    {'NAS_MEMORY_PATH': '@TMP@'},
+    {'NAS_MEMORY_PATH': '@INDEX@'},
+    {'NAS_MEMORY_PATH': '@INDEX@/memory'},
+    {'NAS_MEMORY_PATH': '@INSTALL@'},
+    {'NAS_MEMORY_PATH': '@INSTALL@/memory'},
+    {'NAS_MEMORY_PATH': '/'},
+    {'NAS_EDITOR_OWNER': ''},
+    {'NAS_EDITOR_ORIGIN': ''},
+    {'NAS_EDITOR_ORIGIN': 'http://nas.example.ts.net:8444'},
+    {'NAS_EDITOR_ORIGIN': 'https://nas.example.ts.net:8444/path'},
+    {'NAS_EDITOR_ORIGIN': 'https://nas.example.ts.net:8444/'},
+    {'NAS_EDITOR_ORIGIN': 'https://'},
+    {'NAS_EDITOR_ORIGIN': 'https://nas.example.ts.net:abc'},
+    {'NAS_MEMORY_SCOPES': 'Personal'},
+    {'NAS_MEMORY_SCOPES': 'personal,,work'},
+    {'NAS_MEMORY_SCOPES': ''},
+    {'NAS_MEMORY_SCOPES': 'work//x'},
+    {'NAS_MEMORY_SCOPES': 'work/x/'},
+    {'NAS_MEMORY_SCOPES': 'a b'},
+    {'NAS_JEV_SCOPES': 'Work/ACME'},
+    {'NAS_JEV_SCOPES': 'a,/b'},
+    {'NAS_MEMORY_ACCEPT_AT': 'abc'},
+    {'NAS_MEMORY_ACCEPT_AT': '1001'},
+    {'NAS_MEMORY_REJECT_AT': '-1'},
+    {'NAS_MEMORY_REJECT_AT': '900'},
+    {'NAS_MEMORY_REJECT_AT': '901'},
+    {'NAS_MEMORY_ACCEPT_AT': '0', 'NAS_MEMORY_REJECT_AT': '0'},
+    {'NAS_EDITOR_PORT': '80'},
+    {'NAS_EDITOR_PORT': '1023'},
+    {'NAS_EDITOR_PORT': '65536'},
+    {'NAS_EDITOR_PORT': 'x'},
+    {'NAS_MEMORY_ENABLED': 'yes'},
+])
+def test_memory_settings_are_validated_before_pull_and_change_nothing(tmp_path, overrides):
+    names = {'@DOCUMENTS@': 'Documents', '@PHOTOS@': 'Photos', '@CODE@': 'Code', '@INDEX@': 'index', '@INSTALL@': 'install'}
+    resolved = {}
+    for key, value in overrides.items():
+        if value:
+            for token, folder in names.items():
+                value = value.replace(token, str(tmp_path / folder))
+            value = value.replace('@TMP@', str(tmp_path))
+        resolved[key] = value
+    args, env, log, secret, memory = memory_config(tmp_path, **resolved)
+    before = secret.read_text()
+    result = run_memory(args, env)
+    assert result.returncode != 0
+    assert 'pull ' not in log.read_text() and 'up -d' not in log.read_text()
+    assert not memory.exists()
+    assert not (tmp_path / 'index' / 'memory-ipc').exists()
+    assert secret.read_text() == before
+    assert SECRET_KEY not in result.stdout + result.stderr
+
+
+def test_memory_path_may_not_overlap_upgrade_queue(tmp_path):
+    queue = tmp_path / 'queue'
+    queue.mkdir()
+    args, env, log, secret, memory = memory_config(tmp_path, NAS_UPGRADE_PATH=str(queue), NAS_MEMORY_PATH=str(queue / 'mem'))
+    result = run_memory(args, env)
+    assert result.returncode != 0 and 'pull ' not in log.read_text()
+
+
+def test_memory_settings_ignored_when_disabled(tmp_path):
+    args, env, log, secret, memory = memory_config(tmp_path, NAS_MEMORY_ENABLED='false', NAS_EDITOR_OWNER='', NAS_MEMORY_PATH='relative', NAS_EDITOR_ORIGIN='junk')
+    result = run_memory(args, env)
+    assert result.returncode == 0, result.stderr
+    assert '--profile memory' not in log.read_text()
+    assert not memory.exists() and not (tmp_path / 'index' / 'memory-ipc').exists()
+
+
+def test_memory_disabled_stops_old_memory_container(tmp_path):
+    args, env, log = setup(tmp_path)
+    env['OLD_MEMORY'] = 'project-memory-container'
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text()
+    assert 'stop project-memory-container' in calls
+    assert '--profile memory' not in calls
+
+
+def test_default_install_has_no_memory_directories(tmp_path):
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    assert not (tmp_path / 'index' / 'memory-ipc').exists()
+    assert '--profile memory' not in log.read_text()
+
+
+def test_unhealthy_memory_service_rolls_back_to_previous_image(tmp_path):
+    args, env, log, secret, memory = memory_config(tmp_path)
+    state = tmp_path / 'install'
+    (state / 'current-image').write_text('ghcr.io/mattyv/nas-search-mcp:old\n')
+    env['FAIL_MEMORY_HEALTH'] = '1'
+    result = run_memory(args, env)
+    assert result.returncode != 0
+    assert 'rolling back' in result.stderr
+    assert (state / 'current-image').read_text().strip().endswith(':old')
+    assert 'exec -T nas-memory' in log.read_text()
+
+
+def test_unhealthy_memory_service_without_previous_image_stops_stack(tmp_path):
+    args, env, log, secret, memory = memory_config(tmp_path)
+    (tmp_path / 'install' / 'current-image').unlink()
+    env['FAIL_MEMORY_HEALTH'] = '1'
+    result = run_memory(args, env)
+    assert result.returncode != 0
+    assert any(line.endswith(' stop') for line in log.read_text().splitlines())
+
+
+def test_jev_key_is_never_printed_or_logged(tmp_path):
+    args, env, log, secret, memory = memory_config(tmp_path)
+    result = run_memory(args, env)
+    assert result.returncode == 0, result.stderr
+    assert SECRET_KEY not in result.stdout + result.stderr + log.read_text()
+    assert SECRET_KEY not in (tmp_path / 'install' / 'compose.yaml').read_text()
+
+
+def test_memory_directory_with_wrong_mode_is_rejected(tmp_path):
+    args, env, log, secret, memory = memory_config(tmp_path)
+    memory.mkdir(mode=0o777)
+    memory.chmod(0o777)
+    result = run_memory(args, env)
+    assert result.returncode != 0 and 'mode 700' in result.stderr
+    assert memory.stat().st_mode & 0o777 == 0o777
