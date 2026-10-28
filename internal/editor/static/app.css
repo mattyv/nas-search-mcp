@@ -1,0 +1,129 @@
+:root {
+  --bg: #f6f7fb;
+  --card: #ffffff;
+  --text: #1b1f2a;
+  --muted: #5d6578;
+  --line: #dde1ec;
+  --accent: #3a4fb5;
+  --accent-text: #ffffff;
+  --warn-bg: #fff4d6;
+  --warn-text: #5c4300;
+  --bad: #b3261e;
+  --ok: #1d6b3a;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12141c;
+    --card: #1b1f2b;
+    --text: #e8eaf2;
+    --muted: #9aa2b8;
+    --line: #2d3446;
+    --accent: #8ea2ff;
+    --accent-text: #11142a;
+    --warn-bg: #3b3012;
+    --warn-text: #ffe29a;
+    --bad: #ff8a80;
+    --ok: #7fd6a0;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding-bottom: calc(76px + env(safe-area-inset-bottom));
+}
+main { max-width: 42rem; margin: 0 auto; padding: 16px; }
+h1 { font-size: 1.5rem; margin: 8px 0 16px; line-height: 1.25; overflow-wrap: anywhere; }
+h2 { font-size: 1.05rem; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+a { color: var(--accent); }
+p { margin: 8px 0; overflow-wrap: anywhere; }
+.muted { color: var(--muted); font-size: 0.9rem; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin: 10px 0;
+  overflow-wrap: anywhere;
+}
+a.card { display: block; text-decoration: none; color: inherit; min-height: 48px; }
+.card h3 { margin: 0 0 4px; font-size: 1.05rem; }
+.tag {
+  display: inline-block;
+  font-size: 0.78rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 9px;
+  margin-right: 4px;
+  color: var(--muted);
+}
+.tag.warn { background: var(--warn-bg); color: var(--warn-text); border-color: transparent; }
+.notice { background: var(--warn-bg); color: var(--warn-text); border-radius: 12px; padding: 12px 14px; margin: 10px 0; }
+.notice.error { background: var(--bad); color: var(--bg); }
+.unconfirmed { border-style: dashed; }
+ul.plain { list-style: none; padding: 0; margin: 4px 0; }
+ul.plain li { padding: 4px 0; overflow-wrap: anywhere; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 6px 0; }
+label { display: block; font-weight: 600; margin: 14px 0 4px; }
+input, select, textarea {
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  min-height: 48px;
+}
+textarea { min-height: 7rem; resize: vertical; }
+button, .button {
+  display: inline-block;
+  font: inherit;
+  font-weight: 600;
+  min-height: 48px;
+  min-width: 48px;
+  padding: 10px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+  text-decoration: none;
+  cursor: pointer;
+  margin: 6px 6px 6px 0;
+  text-align: center;
+}
+button.secondary, .button.secondary { background: transparent; color: var(--accent); }
+button.danger, .button.danger { background: transparent; border-color: var(--bad); color: var(--bad); }
+.row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+details { margin: 8px 0; }
+summary { min-height: 48px; display: flex; align-items: center; cursor: pointer; color: var(--accent); font-weight: 600; }
+nav.bottom {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  background: var(--card);
+  border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: 10;
+}
+nav.bottom a {
+  flex: 1;
+  text-align: center;
+  padding: 14px 4px;
+  min-height: 56px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+nav.bottom a[aria-current="page"] { color: var(--accent); font-weight: 700; }
+#offline { position: sticky; top: 0; z-index: 11; background: var(--warn-bg); color: var(--warn-text); text-align: center; padding: 8px; }
+.pager { display: flex; justify-content: space-between; gap: 8px; }
+.filter { display: flex; gap: 8px; }
+.filter input { flex: 1; }

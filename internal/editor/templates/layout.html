@@ -1,0 +1,48 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{.Title}} · NAS Memory</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#26326e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Memory">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<div id="offline" hidden>Offline copy: this is the last version saved on your phone.</div>
+<main>
+{{if .Msg}}<p class="notice" role="status">{{.Msg}}</p>{{end}}
+{{if .Err}}<p class="notice error" role="alert">{{.Err}}</p>{{end}}
+{{end}}
+
+{{define "foot"}}</main>
+<nav class="bottom" aria-label="Main">
+<a href="/"{{if eq .Nav "projects"}} aria-current="page"{{end}}>Projects</a>
+<a href="/timeline"{{if eq .Nav "timeline"}} aria-current="page"{{end}}>Timeline</a>
+<a href="/new"{{if eq .Nav "new"}} aria-current="page"{{end}}>New</a>
+<a href="/review"{{if eq .Nav "review"}} aria-current="page"{{end}}>Review</a>
+</nav>
+</body>
+</html>
+{{end}}
+
+{{define "memcard"}}<div class="card{{if not (current .Status)}} unconfirmed{{end}}">
+<p>{{.Statement}}</p>
+<span class="tag{{if not (current .Status)}} warn{{end}}">{{if eq .Status "candidate"}}not confirmed{{else if eq .Status "disputed"}}disputed, not confirmed{{else}}{{.Status}}{{end}}</span>
+<span class="tag">{{.Category}}</span>
+{{if .Project}}<span class="tag">{{.Project}}</span>{{end}}
+{{if .Reason}}<p class="muted">Reason: {{.Reason}}</p>{{end}}
+</div>{{end}}
+
+{{define "eventrow"}}<a class="card" href="/e/{{pe .ID}}">
+<h3>{{.Title}}</h3>
+<span class="tag">{{.Type}}</span>{{if .Project}}<span class="tag">{{.Project}}</span>{{end}}<span class="tag">{{.Status}}</span>
+<div class="muted">{{ts .OccurredAt}}</div>
+</a>{{end}}
