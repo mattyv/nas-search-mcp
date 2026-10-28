@@ -56,7 +56,7 @@ func (s *Store) OpenContext(ctx context.Context, roots []string, r memoryapi.Con
 	}
 	pkg := memoryapi.ContextPackage{
 		Decisions: []memoryapi.Memory{}, Memories: []memoryapi.Memory{}, Unconfirmed: []memoryapi.Memory{},
-		Recent: []memoryapi.Event{}, NextActions: []string{}, Budget: contextBudget(r.Budget),
+		Recent: []memoryapi.Event{}, NextActions: []string{}, Budget: policy.ContextBudget(r.Budget),
 	}
 	evScopes, err := visibleScopes(ctx, s.db, "events", roots)
 	if err != nil {
@@ -98,7 +98,7 @@ func (s *Store) OpenContext(ctx context.Context, roots []string, r memoryapi.Con
 		if cp != nil && pkg.Scope == "" {
 			pkg.Scope = cp.Scope
 		}
-		cur, un := statusesWhere(policy.IsCurrentMemory), statusesWhere(isUnconfirmedMemory)
+		cur, un := statusesWhere(policy.IsCurrentMemory), statusesWhere(policy.IsUnconfirmedMemory)
 		curList, curArgs := inList(cur)
 		unList, unArgs := inList(un)
 		if decisions, err = s.memoryList(ctx, memScopes, `m.category = 'decision' AND m.project = ? AND m.status IN `+curList, append([]any{project}, curArgs...)); err != nil {

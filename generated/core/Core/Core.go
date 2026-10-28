@@ -328,6 +328,39 @@ func (_static *CompanionStruct_Default___) ValidEventType(t _dafny.Sequence) boo
 func (_static *CompanionStruct_Default___) ValidEventStatus(s _dafny.Sequence) bool {
 	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("proposed"), _dafny.UnicodeSeqOfUtf8Bytes("confirmed"), _dafny.UnicodeSeqOfUtf8Bytes("unverified"), _dafny.UnicodeSeqOfUtf8Bytes("superseded"))).Contains(s)
 }
+func (_static *CompanionStruct_Default___) DefaultEventStatus(actorIsUser bool, eventType _dafny.Sequence) _dafny.Sequence {
+	if actorIsUser {
+		return _dafny.UnicodeSeqOfUtf8Bytes("confirmed")
+	} else if _dafny.Companion_Sequence_.Equal(eventType, _dafny.UnicodeSeqOfUtf8Bytes("exploration")) {
+		return _dafny.UnicodeSeqOfUtf8Bytes("proposed")
+	} else {
+		return _dafny.UnicodeSeqOfUtf8Bytes("unverified")
+	}
+}
+func (_static *CompanionStruct_Default___) EventStatusAllowed(actorIsUser bool, status _dafny.Sequence) bool {
+	return (Companion_Default___.ValidEventStatus(status)) && ((actorIsUser) || (!_dafny.Companion_Sequence_.Equal(status, _dafny.UnicodeSeqOfUtf8Bytes("confirmed"))))
+}
+func (_static *CompanionStruct_Default___) IsUnconfirmedMemory(status _dafny.Sequence) bool {
+	return (_dafny.Companion_Sequence_.Equal(status, _dafny.UnicodeSeqOfUtf8Bytes("candidate"))) || (_dafny.Companion_Sequence_.Equal(status, _dafny.UnicodeSeqOfUtf8Bytes("disputed")))
+}
+func (_static *CompanionStruct_Default___) ContextBudget(requested _dafny.Int) _dafny.Int {
+	if (requested).Sign() != 1 {
+		return _dafny.IntOfInt64(1500)
+	} else if (requested).Cmp(_dafny.IntOfInt64(200)) < 0 {
+		return _dafny.IntOfInt64(200)
+	} else if (requested).Cmp(_dafny.IntOfInt64(8000)) > 0 {
+		return _dafny.IntOfInt64(8000)
+	} else {
+		return requested
+	}
+}
+func (_static *CompanionStruct_Default___) OrphanedAfterForget(evidence _dafny.Sequence, forgotten _dafny.Sequence) bool {
+	return ((_dafny.IntOfUint32((evidence).Cardinality())).Sign() == 1) && (_dafny.Quantifier(_dafny.IntegerRange(_dafny.Zero, _dafny.IntOfUint32((evidence).Cardinality())), true, func(_forall_var_0 _dafny.Int) bool {
+		var _0_i _dafny.Int
+		_0_i = interface{}(_forall_var_0).(_dafny.Int)
+		return !(((_0_i).Sign() != -1) && ((_0_i).Cmp(_dafny.IntOfUint32((evidence).Cardinality())) < 0)) || (_dafny.Companion_Sequence_.Equal((evidence).Select((_0_i).Uint32()).(_dafny.Sequence), forgotten))
+	}))
+}
 func (_static *CompanionStruct_Default___) CheckpointWrite(current _dafny.Int, expected _dafny.Int) _dafny.Tuple {
 	if (expected).Cmp(current) == 0 {
 		return _dafny.TupleOf(true, (current).Plus(_dafny.One))

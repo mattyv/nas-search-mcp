@@ -1,7 +1,7 @@
 // Package memory is the shared-memory service's SQLite store. It is an unverified
 // adapter: every decision (scope visibility, status transitions, checkpoint versions,
-// context packing, initial status) is delegated to internal/policy. Rules that policy
-// does not yet cover are isolated in rules.go with TODO(core) markers.
+// context packing, initial status, confirmation, forget orphaning) is delegated to
+// internal/policy. rules.go holds input-format checks and list helpers only.
 package memory
 
 import (

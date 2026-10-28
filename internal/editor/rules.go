@@ -15,16 +15,16 @@ import (
 // Input checks. These mirror limits the memory service enforces again; they exist so a
 // person sees a friendly message before a write. They are not verified.
 
-// TODO(core): move to Dafny. Event titles are 1..200 characters (memoryapi.Event).
+// Event titles are 1..200 characters (memoryapi.Event).
 func validTitle(s string) bool {
 	n := utf8.RuneCountInString(strings.TrimSpace(s))
 	return n >= 1 && n <= 200
 }
 
-// TODO(core): move to Dafny. Reasons, statements, and summaries must not be blank.
+// Reasons, statements, and summaries must not be blank.
 func nonBlank(s string) bool { return strings.TrimSpace(s) != "" }
 
-// TODO(core): move to Dafny. Idempotency keys: empty, or 1..128 of [A-Za-z0-9_.:-].
+// Idempotency keys: empty, or 1..128 of [A-Za-z0-9_.:-].
 func validKey(s string) bool {
 	if len(s) > 128 {
 		return false
@@ -41,7 +41,7 @@ func validKey(s string) bool {
 // noteTypes are the event types the New note form offers.
 var noteTypes = []string{"manual_note", "decision", "observation", "action", "result", "exploration"}
 
-// TODO(core): move to Dafny. A note type must be offered by the form and valid for the store.
+// A note type must be offered by the form and valid for the store.
 func validNoteType(t string) bool {
 	for _, n := range noteTypes {
 		if n == t {
@@ -51,10 +51,20 @@ func validNoteType(t string) bool {
 	return false
 }
 
-// TODO(core): move to Dafny. Project names are at most 200 characters.
-func validProject(s string) bool { return utf8.RuneCountInString(s) <= 200 }
+// Project names: empty, or 1..100 of [a-z0-9._-], the same format the store enforces.
+func validProject(s string) bool {
+	if len(s) > 100 {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
 
-// TODO(core): move to Dafny. A note's scope must be well formed and inside the editor's roots.
+// A note's scope must be well formed and inside the editor's roots (verified rules).
 func (s *server) scopeAllowed(scope string) bool {
 	return policy.ValidScope(scope) && policy.ScopeVisible(scope, s.roots)
 }

@@ -195,6 +195,24 @@ module CoreTests {
     expect !ExternalClassificationAllowed(true, true, "personal/x", ["personal"]);
     expect !ExternalClassificationAllowed(false, false, "personal/x", ["personal"]);
     expect !ExternalClassificationAllowed(true, false, "work/acme", ["personal"]);
+    expect DefaultEventStatus(true, "decision") == "confirmed";
+    expect DefaultEventStatus(false, "exploration") == "proposed";
+    expect DefaultEventStatus(false, "decision") == "unverified";
+    expect EventStatusAllowed(true, "confirmed");
+    expect !EventStatusAllowed(false, "confirmed");
+    expect EventStatusAllowed(false, "proposed");
+    expect !EventStatusAllowed(true, "accepted");
+    expect IsUnconfirmedMemory("candidate");
+    expect IsUnconfirmedMemory("disputed");
+    expect !IsUnconfirmedMemory("accepted");
+    expect ContextBudget(0) == 1500;
+    expect ContextBudget(50) == 200;
+    expect ContextBudget(9000) == 8000;
+    expect ContextBudget(2000) == 2000;
+    expect OrphanedAfterForget(["evt_a"], "evt_a");
+    expect !OrphanedAfterForget(["evt_a", "evt_b"], "evt_a");
+    expect !OrphanedAfterForget([], "evt_a");
+    expect !OrphanedAfterForget(["evt_b"], "evt_a");
     print "Dafny core executable tests passed\n";
   }
 }

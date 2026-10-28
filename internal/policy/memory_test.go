@@ -73,3 +73,21 @@ func TestExternalClassificationBridge(t *testing.T) {
 		t.Fatal("external classification gate")
 	}
 }
+
+func TestEventStatusAndForgetBridge(t *testing.T) {
+	if DefaultEventStatus(true, "decision") != "confirmed" || DefaultEventStatus(false, "exploration") != "proposed" || DefaultEventStatus(false, "action") != "unverified" {
+		t.Fatal("default status")
+	}
+	if !EventStatusAllowed(true, "confirmed") || EventStatusAllowed(false, "confirmed") || EventStatusAllowed(true, "accepted") {
+		t.Fatal("status allowed")
+	}
+	if !IsUnconfirmedMemory("disputed") || IsUnconfirmedMemory("accepted") {
+		t.Fatal("unconfirmed")
+	}
+	if ContextBudget(0) != 1500 || ContextBudget(9000) != 8000 || ContextBudget(10) != 200 {
+		t.Fatal("budget")
+	}
+	if !OrphanedAfterForget([]string{"a"}, "a") || OrphanedAfterForget([]string{"a", "b"}, "a") || OrphanedAfterForget(nil, "a") {
+		t.Fatal("orphaned")
+	}
+}

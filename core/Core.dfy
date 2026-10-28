@@ -520,6 +520,50 @@ module Core {
     s in {"proposed", "confirmed", "unverified", "superseded"}
   }
 
+  // The status an event gets when its writer leaves it empty.
+  function DefaultEventStatus(actorIsUser: bool, eventType: string): string
+    ensures ValidEventStatus(DefaultEventStatus(actorIsUser, eventType))
+    ensures !actorIsUser ==> DefaultEventStatus(actorIsUser, eventType) != "confirmed"
+  {
+    if actorIsUser then "confirmed" else if eventType == "exploration" then "proposed" else "unverified"
+  }
+
+  // Only the owner may confirm; assistants may write any other valid status.
+  predicate EventStatusAllowed(actorIsUser: bool, status: string) {
+    ValidEventStatus(status) && (actorIsUser || status != "confirmed")
+  }
+
+  // Whatever an assistant writes, explicitly or by default, is never confirmed.
+  lemma AssistantNeverConfirms(eventType: string, explicit: string)
+    ensures DefaultEventStatus(false, eventType) != "confirmed"
+    ensures EventStatusAllowed(false, explicit) ==> explicit != "confirmed"
+  {}
+
+  predicate IsUnconfirmedMemory(status: string) {
+    status == "candidate" || status == "disputed"
+  }
+
+  lemma UnconfirmedIsNeverCurrent(status: string)
+    requires IsUnconfirmedMemory(status)
+    ensures !IsCurrentMemory(status)
+  {}
+
+  function ContextBudget(requested: int): int
+    ensures 200 <= ContextBudget(requested) <= 8000
+  {
+    if requested <= 0 then 1500 else if requested < 200 then 200 else if requested > 8000 then 8000 else requested
+  }
+
+  // A memory is erased with a forgotten event only when that event was its sole evidence.
+  predicate OrphanedAfterForget(evidence: seq<string>, forgotten: string) {
+    |evidence| > 0 && forall i | 0 <= i < |evidence| :: evidence[i] == forgotten
+  }
+
+  lemma OtherEvidenceKeepsMemory(evidence: seq<string>, forgotten: string, i: int)
+    requires 0 <= i < |evidence| && evidence[i] != forgotten
+    ensures !OrphanedAfterForget(evidence, forgotten)
+  {}
+
   // Optimistic concurrency: a checkpoint write succeeds only against the version it read.
   function CheckpointWrite(current: nat, expected: int): (bool, nat)
     ensures CheckpointWrite(current, expected).0 <==> expected == current

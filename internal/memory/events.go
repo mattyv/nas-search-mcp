@@ -49,12 +49,12 @@ func (s *Store) prepareEvent(roots []string, e memoryapi.Event) (memoryapi.Event
 		return e, invalid("actor must be user or assistant")
 	}
 	if e.Status == "" {
-		e.Status = defaultEventStatus(e.Actor, e.Type)
+		e.Status = policy.DefaultEventStatus(e.Actor == memoryapi.ActorUser, e.Type)
 	}
 	if !policy.ValidEventStatus(e.Status) {
 		return e, invalid("unknown event status")
 	}
-	if !actorMayWriteEventStatus(e.Actor, e.Status) {
+	if !policy.EventStatusAllowed(e.Actor == memoryapi.ActorUser, e.Status) {
 		return e, invalid("an assistant cannot write a confirmed event")
 	}
 	e.Title = strings.TrimSpace(redact(e.Title))

@@ -9,8 +9,8 @@
 // changing requests also need an exact Origin match as a second, independent check
 // against cross-site request forgery.
 //
-// Decision rules live in internal/policy (verified Dafny core). The few small input
-// checks in rules.go are marked TODO(core) and are not verified.
+// Decision rules live in internal/policy (verified Dafny core). The input-format checks in
+// rules.go only give friendly messages; the memory service enforces the same limits.
 package editor
 
 import (

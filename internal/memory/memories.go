@@ -311,7 +311,7 @@ func (s *Store) ForgetEvent(ctx context.Context, roots []string, id string, acto
 		}
 		rows.Close()
 		for _, d := range found {
-			rest, orphaned := evidenceAfterForget(d.evidence, e.ID)
+			rest, orphaned := withoutEvidence(d.evidence, e.ID), policy.OrphanedAfterForget(d.evidence, e.ID)
 			switch {
 			case len(rest) == len(d.evidence):
 				continue

@@ -116,3 +116,33 @@ func ExternalClassificationAllowed(configured, userAttested bool, scope string, 
 	}
 	return core.Companion_Default___.ExternalClassificationAllowed(configured, userAttested, str(scope), dafny.SeqOf(values...))
 }
+
+// DefaultEventStatus is the status for an event written without one; never "confirmed"
+// for an assistant.
+func DefaultEventStatus(actorIsUser bool, eventType string) string {
+	return dafny.SequenceVerbatimString(core.Companion_Default___.DefaultEventStatus(actorIsUser, str(eventType)), false)
+}
+
+// EventStatusAllowed lets only the owner confirm an event.
+func EventStatusAllowed(actorIsUser bool, status string) bool {
+	return core.Companion_Default___.EventStatusAllowed(actorIsUser, str(status))
+}
+
+// IsUnconfirmedMemory reports statuses that await the owner's review.
+func IsUnconfirmedMemory(status string) bool {
+	return core.Companion_Default___.IsUnconfirmedMemory(str(status))
+}
+
+// ContextBudget applies the default and bounds for a context package's token budget.
+func ContextBudget(requested int) int {
+	return core.Companion_Default___.ContextBudget(dafny.IntOf(requested)).Int()
+}
+
+// OrphanedAfterForget reports whether a memory's only evidence was the forgotten event.
+func OrphanedAfterForget(evidence []string, forgotten string) bool {
+	values := make([]interface{}, len(evidence))
+	for i, id := range evidence {
+		values[i] = str(id)
+	}
+	return core.Companion_Default___.OrphanedAfterForget(dafny.SeqOf(values...), str(forgotten))
+}
