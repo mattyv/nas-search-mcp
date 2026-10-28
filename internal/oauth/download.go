@@ -45,7 +45,7 @@ func browserTarget(r *http.Request) (string, bool) {
 			return path, true
 		}
 	}
-	if r.URL.Path == "/upgrade/approve" {
+	if r.URL.Path == "/upgrade/approve" || r.URL.Path == "/memory/approve" {
 		q, err := url.ParseQuery(r.URL.RawQuery)
 		if err == nil && len(q) == 1 && len(q["request"]) == 1 && len(q.Get("request")) == 43 {
 			return r.URL.Path + "?" + q.Encode(), true
