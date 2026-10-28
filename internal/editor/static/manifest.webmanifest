@@ -1,0 +1,14 @@
+{
+  "name": "NAS Memory",
+  "short_name": "Memory",
+  "description": "Notes and shared memory on your NAS",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#26326e",
+  "background_color": "#f6f7fb",
+  "icons": [
+    {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}
