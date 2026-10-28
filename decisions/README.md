@@ -507,3 +507,74 @@ previous-release and half-migrated databases. The first failed before the fix wi
 "table files has 5 columns but 4 values were supplied". A new installer test shows a
 start that answers on the twenty-first health check now succeeds. It failed before
 the wait was extended. Go, Python and Dafny checks pass.
+
+## D048 — Add shared memory, a private editor, passkeys and Jev review
+
+Status: provisional; built and tested in development, not yet tried on the NAS, in a
+real browser, with a real passkey, or against the live Jev API.
+
+Claude web, desktop and mobile, ChatGPT and local CLIs should share project context:
+what happened, where work stands, and what the owner has decided. The design is in
+[shared-memory design](../docs/shared-memory-design.md); its section 0 lists the
+choices below.
+
+Decisions:
+
+- **Journal first.** Journal entries are append-only history. Checkpoints are versioned
+  snapshots of where a project stands. Memories are curated statements derived from
+  entries. A memory is current only when accepted.
+- **Chat-first capture.** The assistant writes when asked, and opens context at the start
+  of a conversation because the owner's Claude instructions say so. No client hooks.
+- **Separate container.** `nas-memory` owns `memory.sqlite3` on its own mount and has no
+  access to searchable folders. The search process reaches it through a private socket
+  in `<index>/memory-ipc`, as the upload writer does. Memory is off by default.
+- **Assistants never confirm.** Anything an assistant writes is unverified, proposed or a
+  candidate. Assistants may only dispute a memory. Accepting, rejecting and retracting
+  happen in the editor. Forgetting from a chat needs a fresh browser sign-in and approval
+  on the public connector; the private LAN bearer client forgets directly, as it queues
+  upgrades directly.
+- **Private editor.** The editor is served only on the tailnet through `tailscale serve`,
+  bound to `127.0.0.1` on the NAS. Tailscale's login header identifies the owner, so there
+  is no editor password. POSTs need an exact Origin match. It installs to a phone's home
+  screen and keeps unsent notes on the device.
+- **Passkeys on the public side.** The public OAuth sign-in asks for a passkey after the
+  password. `NAS_OAUTH_PASSKEYS` defaults to `enroll`: sign-in offers enrollment until the
+  first passkey exists, then always asks for one. `required` forces enrollment; `off`
+  disables passkeys. An IP-address issuer defaults to `off` because passkeys need a host
+  name. Recovery is the host-only `reset-passkeys` command. Until the first passkey is
+  registered, anyone with the password can register one, so register promptly.
+- **Jev gates, it does not extract.** TypeSafe's Jev scores whether an entry records
+  something the owner decided or confirmed, and suggests a category. Scores at or above
+  `NAS_MEMORY_ACCEPT_AT` are accepted, at or below `NAS_MEMORY_REJECT_AT` rejected, and
+  the rest wait for review. Unscored candidates always wait. Only entries in
+  `NAS_JEV_SCOPES` are sent, and the owner's own entries never are.
+- **No embeddings yet.** Memory and journal search are full-text. Vector search is
+  deferred until measured need.
+
+Verified core: scope visibility and boundaries, the memory lifecycle (terminal states are
+final), assistant limits, event confirmation, checkpoint versions, context packing and
+budget bounds, review routing (unscored goes to review), the external-classification gate
+(the owner's entries never leave), forget orphaning, passkey modes, steps and removal
+(a registered passkey is always asked for outside `off`; `required` keeps one), passkey
+sign counts and capacity, and editor access. Unverified adapters: SQLite storage and FTS,
+the socket client and server, MCP tool handling, the editor's HTTP and JavaScript, the
+WebAuthn library and ceremonies, the Jev HTTP client, secret redaction, input-format
+checks, Compose and the installer.
+
+Schema: `memory.sqlite3` is new; every table has an `extra` JSON column so later fields
+need no new columns. `oauth.sqlite3` gains two tables only (`oauth_passkeys`,
+`oauth_passkey_flows`); the previous release ignores them.
+
+Dependency: `github.com/go-webauthn/webauthn` v0.18.0, pinned because later releases
+need Go 1.26 and the image builds with Go 1.25.
+
+Delivery: the verified rules and the shared contract were written first; six parallel
+agents built the store and socket, the MCP tools and forget approval, the editor,
+passkeys, the Jev client and consolidation, and deployment, each test-first within its
+own files. Decision rules the agents left inline were moved into the core during
+integration. Integration wiring was written before its tests: end-to-end tests run two
+assistants against the real store over the real socket. Independent reviews then
+checked security, correctness and these project rules; their outcomes are below.
+
+Limits: no automatic capture of chats; keyword search only; nothing measured on the NAS;
+the editor's offline behaviour and passkey pages are untested in real browsers.
