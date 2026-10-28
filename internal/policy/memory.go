@@ -159,3 +159,53 @@ func PasskeyStep(mode string, registered int) string {
 func PasskeyRemovalAllowed(mode string, registered int) bool {
 	return core.Companion_Default___.PasskeyRemovalAllowed(str(mode), dafny.IntOf(registered))
 }
+
+// MaySupersede keeps an assistant from changing the status of an entry the owner confirmed.
+func MaySupersede(newActorIsUser bool, oldStatus string) bool {
+	return core.Companion_Default___.MaySupersede(newActorIsUser, str(oldStatus))
+}
+
+// SocketMethodAllowed: socket callers are never the owner, so they never forget.
+func SocketMethodAllowed(name string) bool {
+	return core.Companion_Default___.SocketMethodAllowed(str(name))
+}
+
+func ValidMemoryStatus(status string) bool {
+	return core.Companion_Default___.ValidMemoryStatus(str(status))
+}
+
+func CorrectionMayCarryStatement(to string) bool {
+	return core.Companion_Default___.CorrectionMayCarryStatement(str(to))
+}
+
+// AssistantMayAppendType allows every journal type except checkpoints.
+func AssistantMayAppendType(t string) bool {
+	return core.Companion_Default___.AssistantMayAppendType(str(t))
+}
+
+func DefaultPasskeyMode(issuerHostIsIP bool) string {
+	return dafny.SequenceVerbatimString(core.Companion_Default___.DefaultPasskeyMode(issuerHostIsIP), false)
+}
+
+func ScopeWideContextCategory(category string) bool {
+	return core.Companion_Default___.ScopeWideContextCategory(str(category))
+}
+
+func ValidThresholds(acceptAt, rejectAt int) bool {
+	return core.Companion_Default___.ValidThresholds(dafny.IntOf(acceptAt), dafny.IntOf(rejectAt))
+}
+
+// memoryStatusNames is every status the adapters may enumerate; each must satisfy
+// ValidMemoryStatus (checked by tests), and the verified predicates decide membership.
+var memoryStatusNames = []string{"candidate", "accepted", "disputed", "rejected", "superseded", "retracted"}
+
+// MemoryStatuses lists the valid statuses selected by a verified predicate, for SQL filters.
+func MemoryStatuses(selected func(string) bool) []string {
+	out := []string{}
+	for _, s := range memoryStatusNames {
+		if ValidMemoryStatus(s) && selected(s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}

@@ -103,3 +103,42 @@ func TestPasskeyStepBridge(t *testing.T) {
 		t.Fatal("removal")
 	}
 }
+
+func TestReviewFixBridge(t *testing.T) {
+	if !MaySupersede(true, "confirmed") || MaySupersede(false, "confirmed") || !MaySupersede(false, "proposed") {
+		t.Fatal("supersede")
+	}
+	if !SocketMethodAllowed("AppendEvent") || SocketMethodAllowed("ForgetEvent") || SocketMethodAllowed("ForgetMemory") {
+		t.Fatal("socket methods")
+	}
+	if !ValidMemoryStatus("retracted") || ValidMemoryStatus("deleted") {
+		t.Fatal("memory status")
+	}
+	if !CorrectionMayCarryStatement("superseded") || CorrectionMayCarryStatement("accepted") {
+		t.Fatal("correction statement")
+	}
+	if !AssistantMayAppendType("decision") || AssistantMayAppendType("checkpoint") {
+		t.Fatal("assistant types")
+	}
+	if DefaultPasskeyMode(true) != "off" || DefaultPasskeyMode(false) != "enroll" {
+		t.Fatal("passkey default")
+	}
+	if !ScopeWideContextCategory("constraint") || ScopeWideContextCategory("fact") {
+		t.Fatal("scope-wide categories")
+	}
+	if !ValidThresholds(900, 0) || ValidThresholds(100, 900) {
+		t.Fatal("thresholds")
+	}
+	if got := MemoryStatuses(IsCurrentMemory); len(got) != 1 || got[0] != "accepted" {
+		t.Fatal("current statuses", got)
+	}
+	if got := MemoryStatuses(func(s string) bool { return IsCurrentMemory(s) || IsUnconfirmedMemory(s) }); len(got) != 3 {
+		t.Fatal("live statuses", got)
+	}
+}
+
+func TestMemoryStatusNamesAreValid(t *testing.T) {
+	if got := MemoryStatuses(func(string) bool { return true }); len(got) != len(memoryStatusNames) {
+		t.Fatal("every enumerated status must be valid in the core", got)
+	}
+}

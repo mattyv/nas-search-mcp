@@ -225,6 +225,23 @@ module CoreTests {
     expect !PasskeyRemovalAllowed("required", 1);
     expect PasskeyRemovalAllowed("required", 2);
     expect !PasskeyRemovalAllowed("off", 0);
+    expect MaySupersede(true, "confirmed");
+    expect !MaySupersede(false, "confirmed");
+    expect MaySupersede(false, "unverified");
+    expect SocketMethodAllowed("AppendEvent");
+    expect !SocketMethodAllowed("ForgetEvent");
+    expect !SocketMethodAllowed("ForgetMemory");
+    expect ValidMemoryStatus("disputed");
+    expect !ValidMemoryStatus("deleted");
+    expect CorrectionMayCarryStatement("superseded");
+    expect !CorrectionMayCarryStatement("disputed");
+    expect AssistantMayAppendType("decision");
+    expect !AssistantMayAppendType("checkpoint");
+    expect !AssistantMayAppendType("chat");
+    expect DefaultPasskeyMode(true) == "off";
+    expect DefaultPasskeyMode(false) == "enroll";
+    expect ScopeWideContextCategory("preference");
+    expect !ScopeWideContextCategory("fact");
     print "Dafny core executable tests passed\n";
   }
 }

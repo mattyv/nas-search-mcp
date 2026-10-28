@@ -442,6 +442,10 @@ module Core {
     ensures !ScopeVisible(scope, [])
   {}
 
+  predicate ValidMemoryStatus(status: string) {
+    status in {"candidate", "accepted", "disputed", "rejected", "superseded", "retracted"}
+  }
+
   predicate IsCurrentMemory(status: string) {
     status == "accepted"
   }
@@ -520,6 +524,38 @@ module Core {
     s in {"proposed", "confirmed", "unverified", "superseded"}
   }
 
+  // Assistants may record any journal type except checkpoints, which only the
+  // checkpoint operation writes.
+  predicate AssistantMayAppendType(t: string) {
+    ValidEventType(t) && t != "checkpoint"
+  }
+
+  // Superseding marks the older event "superseded". An assistant may not do that to an
+  // entry the owner confirmed; the link is kept but the owner's status stands.
+  predicate MaySupersede(newActorIsUser: bool, oldStatus: string) {
+    newActorIsUser || oldStatus != "confirmed"
+  }
+
+  lemma AssistantsKeepOwnerConfirmations(oldStatus: string)
+    requires oldStatus == "confirmed"
+    ensures !MaySupersede(false, oldStatus)
+  {}
+
+  // Callers of the private socket are never the owner, so it never forgets.
+  predicate SocketMethodAllowed(name: string) {
+    name != "ForgetEvent" && name != "ForgetMemory"
+  }
+
+  // A correction carries a replacement statement only when it supersedes.
+  predicate CorrectionMayCarryStatement(to: string) {
+    to == "superseded"
+  }
+
+  // Project-less memories that apply across a scope in every context package.
+  predicate ScopeWideContextCategory(category: string) {
+    category == "preference" || category == "constraint"
+  }
+
   // The status an event gets when its writer leaves it empty.
   function DefaultEventStatus(actorIsUser: bool, eventType: string): string
     ensures ValidEventStatus(DefaultEventStatus(actorIsUser, eventType))
@@ -594,6 +630,10 @@ module Core {
       PackFrom(costs, remaining, start)[a] < PackFrom(costs, remaining, start)[b]
     ensures SumCosts(costs, PackFrom(costs, remaining, start)) <= remaining
     ensures TotalFrom(costs, start) <= remaining ==> |PackFrom(costs, remaining, start)| == |costs| - start
+    ensures start < |costs| && costs[start] <= remaining ==>
+      |PackFrom(costs, remaining, start)| > 0 && PackFrom(costs, remaining, start)[0] == start
+    ensures start < |costs| && costs[start] > remaining ==>
+      PackFrom(costs, remaining, start) == PackFrom(costs, remaining, start + 1)
     decreases |costs| - start
   {
     if start == |costs| then []
@@ -612,6 +652,8 @@ module Core {
       PackBudget(costs, budget)[a] < PackBudget(costs, budget)[b]
     ensures SumCosts(costs, PackBudget(costs, budget)) <= budget
     ensures TotalFrom(costs, 0) <= budget ==> |PackBudget(costs, budget)| == |costs|
+    // The highest-priority item (the checkpoint) is always kept when it fits on its own.
+    ensures |costs| > 0 && costs[0] <= budget ==> |PackBudget(costs, budget)| > 0 && PackBudget(costs, budget)[0] == 0
   {
     PackFrom(costs, budget, 0)
   }
@@ -661,6 +703,13 @@ module Core {
     requires registered <= later && PasskeyRequired("enroll", registered)
     ensures PasskeyRequired("enroll", later)
   {}
+
+  // Passkeys need a host name, so an IP-address issuer defaults to off.
+  function DefaultPasskeyMode(issuerHostIsIP: bool): string
+    ensures ValidPasskeyMode(DefaultPasskeyMode(issuerHostIsIP))
+  {
+    if issuerHostIsIP then "off" else "enroll"
+  }
 
   predicate ValidPasskeyMode(mode: string) {
     mode in {"off", "enroll", "required"}

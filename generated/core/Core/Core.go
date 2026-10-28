@@ -294,6 +294,9 @@ func (_static *CompanionStruct_Default___) ScopeVisible(scope _dafny.Sequence, r
 		return (((_0_i).Sign() != -1) && ((_0_i).Cmp(_dafny.IntOfUint32((roots).Cardinality())) < 0)) && (Companion_Default___.ScopeWithin(scope, (roots).Select((_0_i).Uint32()).(_dafny.Sequence)))
 	})
 }
+func (_static *CompanionStruct_Default___) ValidMemoryStatus(status _dafny.Sequence) bool {
+	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("candidate"), _dafny.UnicodeSeqOfUtf8Bytes("accepted"), _dafny.UnicodeSeqOfUtf8Bytes("disputed"), _dafny.UnicodeSeqOfUtf8Bytes("rejected"), _dafny.UnicodeSeqOfUtf8Bytes("superseded"), _dafny.UnicodeSeqOfUtf8Bytes("retracted"))).Contains(status)
+}
 func (_static *CompanionStruct_Default___) IsCurrentMemory(status _dafny.Sequence) bool {
 	return _dafny.Companion_Sequence_.Equal(status, _dafny.UnicodeSeqOfUtf8Bytes("accepted"))
 }
@@ -327,6 +330,21 @@ func (_static *CompanionStruct_Default___) ValidEventType(t _dafny.Sequence) boo
 }
 func (_static *CompanionStruct_Default___) ValidEventStatus(s _dafny.Sequence) bool {
 	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("proposed"), _dafny.UnicodeSeqOfUtf8Bytes("confirmed"), _dafny.UnicodeSeqOfUtf8Bytes("unverified"), _dafny.UnicodeSeqOfUtf8Bytes("superseded"))).Contains(s)
+}
+func (_static *CompanionStruct_Default___) AssistantMayAppendType(t _dafny.Sequence) bool {
+	return (Companion_Default___.ValidEventType(t)) && (!_dafny.Companion_Sequence_.Equal(t, _dafny.UnicodeSeqOfUtf8Bytes("checkpoint")))
+}
+func (_static *CompanionStruct_Default___) MaySupersede(newActorIsUser bool, oldStatus _dafny.Sequence) bool {
+	return (newActorIsUser) || (!_dafny.Companion_Sequence_.Equal(oldStatus, _dafny.UnicodeSeqOfUtf8Bytes("confirmed")))
+}
+func (_static *CompanionStruct_Default___) SocketMethodAllowed(name _dafny.Sequence) bool {
+	return (!_dafny.Companion_Sequence_.Equal(name, _dafny.UnicodeSeqOfUtf8Bytes("ForgetEvent"))) && (!_dafny.Companion_Sequence_.Equal(name, _dafny.UnicodeSeqOfUtf8Bytes("ForgetMemory")))
+}
+func (_static *CompanionStruct_Default___) CorrectionMayCarryStatement(to _dafny.Sequence) bool {
+	return _dafny.Companion_Sequence_.Equal(to, _dafny.UnicodeSeqOfUtf8Bytes("superseded"))
+}
+func (_static *CompanionStruct_Default___) ScopeWideContextCategory(category _dafny.Sequence) bool {
+	return (_dafny.Companion_Sequence_.Equal(category, _dafny.UnicodeSeqOfUtf8Bytes("preference"))) || (_dafny.Companion_Sequence_.Equal(category, _dafny.UnicodeSeqOfUtf8Bytes("constraint")))
 }
 func (_static *CompanionStruct_Default___) DefaultEventStatus(actorIsUser bool, eventType _dafny.Sequence) _dafny.Sequence {
 	if actorIsUser {
@@ -449,6 +467,13 @@ func (_static *CompanionStruct_Default___) InitialMemoryStatus(userAttested bool
 }
 func (_static *CompanionStruct_Default___) PasskeyRequired(mode _dafny.Sequence, registered _dafny.Int) bool {
 	return !((_dafny.Companion_Sequence_.Equal(mode, _dafny.UnicodeSeqOfUtf8Bytes("off"))) || ((_dafny.Companion_Sequence_.Equal(mode, _dafny.UnicodeSeqOfUtf8Bytes("enroll"))) && ((registered).Sign() != 1)))
+}
+func (_static *CompanionStruct_Default___) DefaultPasskeyMode(issuerHostIsIP bool) _dafny.Sequence {
+	if issuerHostIsIP {
+		return _dafny.UnicodeSeqOfUtf8Bytes("off")
+	} else {
+		return _dafny.UnicodeSeqOfUtf8Bytes("enroll")
+	}
 }
 func (_static *CompanionStruct_Default___) ValidPasskeyMode(mode _dafny.Sequence) bool {
 	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("off"), _dafny.UnicodeSeqOfUtf8Bytes("enroll"), _dafny.UnicodeSeqOfUtf8Bytes("required"))).Contains(mode)
