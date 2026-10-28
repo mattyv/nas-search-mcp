@@ -30,6 +30,8 @@ func (t bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 func TestMCPHTTPTools(t *testing.T) {
 	t.Setenv("NAS_OCR", "true")
+	// The test swaps worker scripts mid-run; one-shot workers make each swap take effect immediately.
+	t.Setenv("NAS_MODEL_KEEPALIVE_MINUTES", "0")
 	root := t.TempDir()
 	if e := os.WriteFile(filepath.Join(root, "doc.txt"), []byte("kitchen renovation"), 0600); e != nil {
 		t.Fatal(e)

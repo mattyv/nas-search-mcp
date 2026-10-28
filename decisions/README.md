@@ -442,12 +442,16 @@ Decisions:
   the stamp is refreshed. An existing database gains the column in place; rows
   without a stamp are hashed once. This trusts size plus mtime as a change
   signal, which a same-size, same-mtime rewrite would defeat; `NAS_SCAN_FILE_DELAY_SECONDS`
-  stays at its default until scan contention is measured again.
+  stays at its default until scan contention is measured again. The skip rule and
+  the photo fingerprint flavour are Dafny functions (`CanSkipUnchanged`,
+  `IndexedFingerprint`) with a proved property: skipping agrees with what the
+  hash path would decide for the same bytes.
 - **Extract through the resident worker.** When model keepalive is on, `extract`
   and `read_document` reuse the warm Python process, and the text model stays
   loaded. The worker reports its peak RSS and is recycled above
-  `NAS_WORKER_MAX_RSS_MIB` (default 600), so a CLIP request still forces a fresh
-  process afterwards. Embedding batches are passed to the model whole.
+  `NAS_WORKER_MAX_RSS_MIB` (default 600), checked only after extraction replies so
+  a photo run keeps CLIP resident and the first extraction afterwards recycles the
+  process once. Embedding batches are passed to the model whole.
 - **Run the vector query as a two-stage KNN.** Vectors are stored and queried as
   float32 blobs, the vec0 KNN path ranks on the vector table alone, and only the
   top rows are joined to `chunks` and prefix-filtered. New tables use the cosine
@@ -460,8 +464,8 @@ Decisions:
   and `NAS_CPU_SHARES=512`; DSM keeps priority under contention. `NAS_CPUSET=0`
   restores single-core pinning. Existing `.env` files keep their value.
 
-Proved properties are unchanged; all of this is adapter code outside the Dafny
-core. Evidence: new Go tests for stamp skipping, warm-session extraction, KNN
+Apart from the two core functions above, this is adapter code outside the Dafny
+core. Evidence: 58 verification obligations and the executable core tests pass; new Go tests for stamp skipping, warm-session extraction, KNN
 ordering and legacy migrations, new installer and compose tests, and query plans
 showing the `files` primary key and chunk rowid lookups in use. Nothing here has
 been timed on the NAS; measure scan duration, search latency and DSM

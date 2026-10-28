@@ -15,6 +15,12 @@ func ClampLimit(n, max int) int {
 func ShouldReplace(old, new string) bool {
 	return core.Companion_Default___.ShouldReplace(dafny.UnicodeSeqOfUtf8Bytes(old), dafny.UnicodeSeqOfUtf8Bytes(new))
 }
+func IndexedFingerprint(hash string, clip bool) string {
+	return dafny.SequenceVerbatimString(core.Companion_Default___.IndexedFingerprint(dafny.UnicodeSeqOfUtf8Bytes(hash), clip), false)
+}
+func CanSkipUnchanged(storedStamp, currentStamp, storedFingerprint string, clip bool) bool {
+	return core.Companion_Default___.CanSkipUnchanged(dafny.UnicodeSeqOfUtf8Bytes(storedStamp), dafny.UnicodeSeqOfUtf8Bytes(currentStamp), dafny.UnicodeSeqOfUtf8Bytes(storedFingerprint), clip)
+}
 func RankScore(lexical, semantic int) int64 {
 	return core.Companion_Default___.RankScore(dafny.IntOf(lexical), dafny.IntOf(semantic)).Int64()
 }

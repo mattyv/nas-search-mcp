@@ -873,10 +873,9 @@ func (a *App) Scan(ctx context.Context) error {
 			}
 			return a.Store.RecordError(rel, "File exceeds 32 MiB input limit")
 		}
-		// A matching size+mtime stamp and photo flavour proves nothing changed: skip the copy and hash.
+		// The verified core decides when a stored row can be trusted without a copy or hash.
 		prior, known := old[rel]
-		if !forceRefresh && known && prior.Stamp != "" && prior.Stamp == fileVersion(info) &&
-			a.indexedFingerprint(rel, strings.TrimSuffix(prior.Fingerprint, ";clip")) == prior.Fingerprint {
+		if !forceRefresh && known && policy.CanSkipUnchanged(prior.Stamp, fileVersion(info), prior.Fingerprint, a.clipIndexed(rel)) {
 			return nil
 		}
 		snapshot, snapInfo, cleanup, e := a.snapshot(rel)
@@ -1052,11 +1051,12 @@ func (a *App) indexFile(ctx context.Context, full, relative, hash, stamp string,
 	return a.Store.Replace(store.File{Path: relative, Fingerprint: a.indexedFingerprint(relative, hash), Stamp: stamp, Kind: extract.Kind, Metadata: string(encoded)}, chunks, vectors)
 }
 
-// indexedFingerprint marks photos indexed with visual vectors, so changing the photo
-// setting reindexes photos only and leaves documents and code untouched.
+// clipIndexed reports whether a path is indexed with visual vectors under the current settings.
+func (a *App) clipIndexed(relative string) bool {
+	return a.Photos && a.Semantic && imageFile(relative)
+}
+
+// indexedFingerprint is the verified fingerprint flavouring for the current photo setting.
 func (a *App) indexedFingerprint(relative, hash string) string {
-	if a.Photos && a.Semantic && imageFile(relative) {
-		return hash + ";clip"
-	}
-	return hash
+	return policy.IndexedFingerprint(hash, a.clipIndexed(relative))
 }

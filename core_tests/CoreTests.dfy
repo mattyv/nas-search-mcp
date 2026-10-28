@@ -19,6 +19,16 @@ module CoreTests {
     expect RankScore(1, 1) > RankScore(2, 2);
     expect !ShouldReplace("same", "same");
     expect ShouldReplace("old", "new");
+    expect IndexedFingerprint("abc", false) == "abc";
+    expect IndexedFingerprint("abc", true) == "abc;clip";
+    expect ContentHash("abc;clip") == "abc";
+    expect ContentHash("abc") == "abc";
+    expect CanSkipUnchanged("1:2", "1:2", "abc", false);
+    expect CanSkipUnchanged("1:2", "1:2", "abc;clip", true);
+    expect !CanSkipUnchanged("", "", "abc", false);
+    expect !CanSkipUnchanged("1:2", "1:3", "abc", false);
+    expect !CanSkipUnchanged("1:2", "1:2", "abc", true);
+    expect !CanSkipUnchanged("1:2", "1:2", "abc;clip", false);
     expect Chunk("", 4, 1) == [];
     expect Chunk("abcdef", 4, 1) == ["abcd", "def"];
     expect Chunk("abc", 4, 0) == ["abc"];
