@@ -23,6 +23,7 @@ func TestScanFailurePreservesConcurrentUploadedIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.Python, a.Worker = "/bin/sh", worker
+	a.modelKeepalive = 0
 	done := make(chan error, 1)
 	go func() { done <- a.Scan(context.Background()) }()
 	deadline := time.Now().Add(2 * time.Second)

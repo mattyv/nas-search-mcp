@@ -34,6 +34,19 @@ func modelKeepaliveFromEnv() (time.Duration, error) {
 	return time.Duration(minutes * float64(time.Minute)), nil
 }
 
+// workerMaxRSSKiB is the resident-set limit above which the session is recycled (default 600 MiB).
+func workerMaxRSSKiB() (int64, error) {
+	value := os.Getenv("NAS_WORKER_MAX_RSS_MIB")
+	if value == "" {
+		return 600 * 1024, nil
+	}
+	mib, err := strconv.ParseFloat(value, 64)
+	if err != nil || math.IsNaN(mib) || math.IsInf(mib, 0) || mib <= 0 || mib >= float64(math.MaxInt64)/1024 {
+		return 0, errors.New("NAS_WORKER_MAX_RSS_MIB must be a finite positive number of MiB")
+	}
+	return int64(mib * 1024), nil
+}
+
 // stopSession requires sessionMu. Wait reaps the child before another worker starts.
 func (a *App) stopSession() {
 	s := a.session
@@ -126,6 +139,12 @@ func (a *App) sessionRequest(ctx context.Context, input []byte) (WorkerResult, e
 			return result, fmt.Errorf("invalid worker response: %w", err)
 		}
 	}
+	// rss_kib is the worker's peak RSS, so one CLIP request marks the process for recycling on the next call.
+	// That is acceptable: the long-lived session pays off for text indexing. The result is returned first.
+	if limit, err := workerMaxRSSKiB(); err == nil && result.RSSKiB > limit {
+		a.stopSession()
+		return result, resultError(result)
+	}
 	s.timer = time.AfterFunc(a.modelKeepalive, func() {
 		a.sessionMu.Lock()
 		defer a.sessionMu.Unlock()
@@ -133,8 +152,12 @@ func (a *App) sessionRequest(ctx context.Context, input []byte) (WorkerResult, e
 			a.stopSession()
 		}
 	})
+	return result, resultError(result)
+}
+
+func resultError(result WorkerResult) error {
 	if result.Error != "" {
-		return result, errors.New("document/model worker reported an error")
+		return errors.New("document/model worker reported an error")
 	}
-	return result, nil
+	return nil
 }

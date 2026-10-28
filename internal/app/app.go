@@ -72,6 +72,7 @@ type WorkerResult struct {
 	Truncated  bool              `json:"truncated"`
 	Vectors    [][]float32       `json:"vectors"`
 	Error      string            `json:"error"`
+	RSSKiB     int64             `json:"rss_kib"`
 }
 type Hit struct {
 	ID       int64  `json:"id"`
@@ -420,7 +421,7 @@ func Protect(token string, next http.Handler) http.Handler {
 	})
 }
 
-// Serialize workers; extraction releases the resident embedding worker before starting.
+// Serialize workers. With keepalive every operation shares one resident process, so extraction keeps the text model loaded; without it each call is a one-shot process.
 func (a *App) worker(ctx context.Context, request map[string]any) (WorkerResult, error) {
 	var result WorkerResult
 	select {
@@ -441,7 +442,7 @@ func (a *App) worker(ctx context.Context, request map[string]any) (WorkerResult,
 		return result, errors.New("app is closed")
 	}
 	operation, _ := request["operation"].(string)
-	if a.modelKeepalive > 0 && (operation == "embed" || operation == "image_query" || operation == "image_embed") {
+	if a.modelKeepalive > 0 && (operation == "embed" || operation == "image_query" || operation == "image_embed" || operation == "extract" || operation == "read_document") {
 		return a.sessionRequest(ctx, input)
 	}
 	a.stopSession()
