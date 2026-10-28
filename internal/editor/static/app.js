@@ -82,7 +82,8 @@
           var current = load(OUTBOX, []);
           if (res.ok) {
             save(OUTBOX, current.filter(function (x) { return x.idempotency_key !== item.idempotency_key; }));
-          } else if (res.status === 400) {
+          } else if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
+            // Refused by the editor (bad input, scope, sign-in): park it instead of retrying forever.
             // The server refused this note; keep it so nothing is lost, but stop retrying it.
             save(OUTBOX, current.map(function (x) {
               if (x.idempotency_key === item.idempotency_key) x.rejected = true;

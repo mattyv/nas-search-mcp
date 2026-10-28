@@ -233,3 +233,32 @@ func TestPasskeyModeDefault(t *testing.T) {
 		t.Fatal("explicit setting must win")
 	}
 }
+
+func TestAssistantDisputeRecordsThroughLiveService(t *testing.T) {
+	live := newLiveMemory(t, []string{"personal"})
+	claude := live.assistant([]string{"personal"})
+	m, err := live.store.ProposeMemory(context.Background(), []string{"personal"}, memoryapi.Memory{Category: "fact", Statement: "The shed is 3 m wide", Scope: "personal", Probability: -1}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, errText := claude("memory_correct", map[string]any{"memory_id": m.ID, "status": "disputed", "statement": "The shed is 2.4 m wide", "reason": "The plan says 2.4 m"})
+	if errText != "" || out["status"] != "disputed" || !strings.Contains(out["reason"].(string), "The shed is 2.4 m wide") {
+		t.Fatal("dispute with suggested wording not recorded", out, errText)
+	}
+	if _, errText := claude("memory_correct", map[string]any{"memory_id": m.ID, "status": "disputed", "reason": strings.Repeat("x", 501)}); errText == "" {
+		t.Fatal("reason longer than the store allows was accepted")
+	}
+}
+
+func TestCheckpointSaveFollowsTheProjectsScope(t *testing.T) {
+	live := newLiveMemory(t, []string{"personal", "work/acme"})
+	both := live.assistant([]string{"personal", "work/acme"})
+	if _, errText := both("checkpoint_save", map[string]any{"project": "site", "scope": "work/acme", "expected_version": 0, "summary": "v1"}); errText != "" {
+		t.Fatal(errText)
+	}
+	// Resuming without naming a scope must continue the project where it lives.
+	out, errText := both("checkpoint_save", map[string]any{"project": "site", "expected_version": 1, "summary": "v2"})
+	if errText != "" || out["scope"] != "work/acme" || out["version"] != float64(2) {
+		t.Fatal("checkpoint did not follow its project's scope", out, errText)
+	}
+}

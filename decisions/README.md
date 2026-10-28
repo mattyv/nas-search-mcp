@@ -613,7 +613,12 @@ failing test and fixed by three parallel agents, with the new rules added to the
 first. Validation after fixes: 93 Dafny obligations and the executable core tests, all Go
 packages with `sqlite_fts5`, the race detector on the memory, socket, consolidation,
 editor and OAuth packages, and 420 Python tests (the bridge test that also fails on main
-excepted).
+excepted). A final review confirmed each finding fixed and found three more,
+fixed test-first where testable: an assistant's dispute with suggested wording was always
+refused (the wording now travels in the reason), saving a checkpoint without a scope used
+the default scope instead of the project's, and the editor's outbox retried refused notes
+forever (now only network failures, timeouts and rate limits retry; this change has no
+browser test). The socket no longer contains forget handlers at all.
 
 Limits: no automatic capture of chats; keyword search only; nothing measured on the NAS;
 the editor's offline behaviour and passkey pages are untested in real browsers.

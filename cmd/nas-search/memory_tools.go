@@ -29,6 +29,7 @@ const (
 	memMaxText       = 1000 // free-text search fields
 	memMaxSummary    = 8000
 	memMaxGoal       = 500
+	memMaxReason     = 500
 	memMaxCPList     = 30
 	memMaxShort      = 200
 	memMaxClient     = 100
@@ -199,8 +200,8 @@ type memorySearchInput struct {
 type memoryCorrectInput struct {
 	MemoryID  string `json:"memory_id"`
 	Status    string `json:"status" jsonschema:"disputed"`
-	Statement string `json:"statement,omitempty" jsonschema:"the wording you think is right, as a suggestion for the owner"`
-	Reason    string `json:"reason" jsonschema:"why this memory looks wrong"`
+	Statement string `json:"statement,omitempty" jsonschema:"the wording you think is right; added to the reason as a suggestion for the owner"`
+	Reason    string `json:"reason" jsonschema:"why this memory looks wrong; reason and suggestion together at most 500 characters"`
 }
 
 type memoryForgetInput struct {
@@ -395,7 +396,14 @@ func registerMemoryTools(server *mcp.Server, store memoryapi.Store, roots []stri
 				return nil, zero, err
 			}
 		}
-		scope, err := writeScope(in.Scope, defaultScope, roots)
+		requested := in.Scope
+		if requested == "" {
+			// Continue an existing project where it lives rather than in the default scope.
+			if latest, err := store.LatestCheckpoint(ctx, roots, in.Project); err == nil && latest != nil {
+				requested = latest.Scope
+			}
+		}
+		scope, err := writeScope(requested, defaultScope, roots)
 		if err != nil {
 			return nil, zero, err
 		}
@@ -460,11 +468,17 @@ func registerMemoryTools(server *mcp.Server, store memoryapi.Store, roots []stri
 		if in.Status == "" {
 			return nil, zero, memInvalid("status is required (assistants may only set disputed)")
 		}
-		if in.Reason == "" || len(in.Reason) > memMaxBody || len(in.Statement) > memMaxBody {
-			return nil, zero, memInvalid("reason is required; reason and statement are limited to %d characters", memMaxBody)
+		// Assistants may only dispute, and a dispute carries no replacement statement, so a
+		// suggested wording travels in the reason for the owner to see in the editor.
+		reason := strings.TrimSpace(in.Reason)
+		if s := strings.TrimSpace(in.Statement); s != "" {
+			reason += " Suggested wording: " + s
+		}
+		if strings.TrimSpace(in.Reason) == "" || memLen(reason) > memMaxReason {
+			return nil, zero, memInvalid("reason is required; reason and suggested wording together are limited to %d characters", memMaxReason)
 		}
 		memory, err := store.CorrectMemory(ctx, roots, memoryapi.Correction{
-			MemoryID: in.MemoryID, Status: in.Status, Statement: in.Statement, Reason: in.Reason, Client: "unknown", Actor: memoryapi.ActorAssistant,
+			MemoryID: in.MemoryID, Status: in.Status, Reason: reason, Client: "unknown", Actor: memoryapi.ActorAssistant,
 		})
 		if err != nil {
 			return nil, zero, memError(err)

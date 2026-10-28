@@ -119,12 +119,8 @@ func methods(s Store) map[string]handlerFunc {
 			p.Correction.Actor = ActorAssistant
 			return s.CorrectMemory(ctx, r, p.Correction)
 		}),
-		"ForgetEvent": method(func(ctx context.Context, r []string, p idParams) (struct{}, error) {
-			return struct{}{}, s.ForgetEvent(ctx, r, p.ID, p.Actor)
-		}),
-		"ForgetMemory": method(func(ctx context.Context, r []string, p idParams) (struct{}, error) {
-			return struct{}{}, s.ForgetMemory(ctx, r, p.ID, p.Actor)
-		}),
+		// No forget handlers: policy.SocketMethodAllowed refuses them, and leaving them out
+		// means no route on the socket can reach the store's forget methods.
 		"Projects": method(func(ctx context.Context, r []string, _ noParams) ([]ProjectSummary, error) { return s.Projects(ctx, r) }),
 		"UnclassifiedEvents": method(func(ctx context.Context, r []string, p limitParams) ([]Event, error) {
 			return s.UnclassifiedEvents(ctx, r, p.Limit)
