@@ -158,6 +158,7 @@ func (s *server) routes() {
 	m.HandleFunc("GET /new", s.newForm)
 	m.HandleFunc("POST /new", s.newSave)
 	m.HandleFunc("GET /memories", s.memories)
+	m.HandleFunc("GET /m/{id}", s.memoryPage)
 	m.HandleFunc("POST /memories/{id}/transition", s.transition)
 	m.HandleFunc("GET /memories/{id}/forget", s.forgetMemoryForm)
 	m.HandleFunc("POST /memories/{id}/forget", s.forgetMemory)
@@ -179,6 +180,12 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Cache-Control", "no-store")
 
+	// The editor is tailnet-only. Funnel puts a service on the public internet, so a request
+	// that arrives through it is refused before any other check.
+	if r.Header.Get("Tailscale-Funnel-Request") != "" {
+		plain(w, http.StatusForbidden, "Forbidden: this editor is not available through Funnel.")
+		return
+	}
 	if !policy.EditorAllowed(r.Header.Get("Tailscale-User-Login"), s.cfg.Owner) {
 		plain(w, http.StatusForbidden, "Forbidden: this editor is private to its owner.")
 		return

@@ -213,19 +213,15 @@ func TestInvalidCategoryFallsBack(t *testing.T) {
 	}
 }
 
-func TestProbabilityClamped(t *testing.T) {
-	s := newStore(ev("1", "decision", memoryapi.ActorAssistant, "personal"), ev("2", "decision", memoryapi.ActorAssistant, "personal"))
-	s.events[1].Title = "Second thing"
-	cl := &fakeClassifier{category: "fact", pm: 5000, model: "m"}
-	Once(context.Background(), s, cfg(cl))
-	if s.proposed[0].Probability != 1000 {
-		t.Fatalf("%d", s.proposed[0].Probability)
-	}
-	cl.pm = -7
-	s2 := newStore(ev("3", "decision", memoryapi.ActorAssistant, "personal"))
-	Once(context.Background(), s2, cfg(cl))
-	if s2.proposed[0].Probability != 0 {
-		t.Fatalf("%d", s2.proposed[0].Probability)
+func TestOutOfRangeScoresReachTheStoreUnclamped(t *testing.T) {
+	// The core routes out-of-range scores to review; the adapter must not rewrite them.
+	for _, pm := range []int{5000, -7} {
+		s := newStore(ev("1", "decision", memoryapi.ActorAssistant, "personal"))
+		cl := &fakeClassifier{category: "fact", pm: pm, model: "m"}
+		Once(context.Background(), s, cfg(cl))
+		if s.proposed[0].Probability != pm {
+			t.Fatalf("score %d became %d", pm, s.proposed[0].Probability)
+		}
 	}
 }
 
@@ -245,6 +241,14 @@ func TestDuplicateSkipped(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("statuses %q lack %s", got, want)
 		}
+	}
+	for _, bad := range []string{"rejected", "superseded", "retracted"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("statuses %q include %s", got, bad)
+		}
+	}
+	if s.lastQuery.Limit != 500 {
+		t.Fatalf("limit %d", s.lastQuery.Limit)
 	}
 	if s.lastQuery.Project != "nas" {
 		t.Fatalf("project %q", s.lastQuery.Project)
@@ -296,6 +300,42 @@ func TestRetryableErrorStopsRound(t *testing.T) {
 	}
 	if n != 0 || cl.calls != 1 || len(s.proposed) != 0 || len(s.classified) != 0 {
 		t.Fatalf("n=%d calls=%d proposed=%d classified=%v", n, cl.calls, len(s.proposed), s.classified)
+	}
+}
+
+func TestClassifierOutageStillProcessesEntriesThatNeedNoClassifier(t *testing.T) {
+	e := func(id, typ, actor, scope, title string) memoryapi.Event {
+		x := ev(id, typ, actor, scope)
+		x.Title = title
+		return x
+	}
+	s := newStore(
+		e("1", "decision", memoryapi.ActorAssistant, "personal", "needs classifier one"),
+		e("2", "checkpoint", memoryapi.ActorAssistant, "personal", "non proposing"),
+		e("3", "decision", memoryapi.ActorUser, "personal", "owner wrote this"),
+		e("4", "decision", memoryapi.ActorAssistant, "work/acme", "private scope"),
+		e("5", "decision", memoryapi.ActorAssistant, "personal", "needs classifier two"),
+	)
+	cl := &fakeClassifier{err: retryableErr(t)}
+	n, err := Once(context.Background(), s, cfg(cl))
+	if err != nil || n != 3 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	if cl.calls != 1 {
+		t.Fatalf("classifier called %d times after it reported an outage", cl.calls)
+	}
+	for _, id := range []string{"2", "3", "4"} {
+		if !s.classified[id] {
+			t.Errorf("event %s should have been processed", id)
+		}
+	}
+	for _, id := range []string{"1", "5"} {
+		if s.classified[id] {
+			t.Errorf("event %s needs the classifier and must wait for the next round", id)
+		}
+	}
+	if len(s.proposed) != 2 {
+		t.Fatalf("proposed %d", len(s.proposed))
 	}
 }
 

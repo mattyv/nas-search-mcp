@@ -46,14 +46,16 @@ func (c Config) interval() time.Duration {
 }
 
 // Once processes one batch of unclassified events, oldest first, and returns how many
-// were fully processed. A retryable classifier failure ends the round early without
-// marking the event, so the next round retries it.
+// were fully processed. After a retryable classifier failure the round stops calling the
+// classifier: entries that need it stay unclassified for the next round, while entries
+// that do not (non-proposing types, owner-written, out-of-scope) are still processed.
 func Once(ctx context.Context, store memoryapi.Store, cfg Config) (int, error) {
 	events, err := store.UnclassifiedEvents(ctx, cfg.Roots, cfg.batch())
 	if err != nil {
 		return 0, err
 	}
 	done := 0
+	classifierDown := false
 	for _, e := range events {
 		if err := ctx.Err(); err != nil {
 			return done, err
@@ -80,17 +82,21 @@ func Once(ctx context.Context, store memoryapi.Store, cfg Config) (int, error) {
 		if !dup {
 			userAttested := e.Actor == memoryapi.ActorUser
 			if policy.ExternalClassificationAllowed(cfg.Classifier != nil, userAttested, e.Scope, cfg.ExternalScopes) {
+				if classifierDown {
+					continue // retry next round
+				}
 				cat, pm, model, cerr := cfg.Classifier.Classify(ctx, e)
 				switch {
 				case cerr == nil:
 					if policy.ValidMemoryCategory(cat) {
 						m.Category = cat
 					}
-					m.Probability = clampPerMille(pm)
+					m.Probability = pm // out-of-range scores are routed to review by the core
 					m.Model = model
 				case jev.IsRetryable(cerr):
 					log.Printf("consolidate: classifier unavailable, will retry (processed %d)", done)
-					return done, nil
+					classifierDown = true
+					continue
 				default:
 					log.Printf("consolidate: classifier rejected an entry; leaving it for owner review")
 				}
@@ -110,7 +116,7 @@ func Once(ctx context.Context, store memoryapi.Store, cfg Config) (int, error) {
 func isDuplicate(ctx context.Context, store memoryapi.Store, roots []string, m memoryapi.Memory) (bool, error) {
 	existing, err := store.SearchMemories(ctx, roots, memoryapi.MemoryQuery{
 		Project:  m.Project,
-		Statuses: []string{"accepted", "candidate", "disputed"},
+		Statuses: policy.MemoryStatuses(func(s string) bool { return policy.IsCurrentMemory(s) || policy.IsUnconfirmedMemory(s) }),
 		Limit:    duplicateScan,
 	})
 	if err != nil {

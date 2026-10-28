@@ -104,7 +104,8 @@ func findAction(to string) (memoryAction, bool) {
 	return memoryAction{}, false
 }
 
-var memoryStatuses = []string{"candidate", "accepted", "disputed", "rejected", "superseded", "retracted"}
+// memoryStatuses lists every status the verified core accepts.
+func memoryStatuses() []string { return policy.MemoryStatuses(policy.ValidMemoryStatus) }
 
 // splitLines turns a textarea into one entry per non-blank line.
 func splitLines(s string) []string {

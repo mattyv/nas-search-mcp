@@ -157,7 +157,12 @@
 </form>
 {{range .Data.Items}}{{$m := .M}}
 {{template "memcard" $m}}
-<div class="card">
+<p class="muted"><a href="/m/{{pe $m.ID}}">Details and evidence</a></p>
+{{template "memactions" .}}
+{{else}}<p class="muted">No memories with this status.</p>{{end}}
+{{template "foot" .}}{{end}}
+
+{{define "memactions"}}{{$m := .M}}<div class="card">
 {{range .Actions}}<details><summary>{{.Label}}</summary>
 <form method="post" action="/memories/{{pe $m.ID}}/transition">
 <input type="hidden" name="to" value="{{.To}}">
@@ -166,8 +171,19 @@
 <button type="submit">{{.Label}}</button>
 </form></details>{{end}}
 <a class="button danger" href="/memories/{{pe $m.ID}}/forget">Forget</a>
-</div>
-{{else}}<p class="muted">No memories with this status.</p>{{end}}
+</div>{{end}}
+
+{{define "memory"}}{{template "head" .}}
+{{with .Data.Item}}{{$m := .M}}
+<h1>Memory</h1>
+{{template "memcard" $m}}
+<p class="muted">Status: {{$m.Status}} · Category: {{$m.Category}} · Scope: {{$m.Scope}} · Confidence: {{pct $m.Probability}}{{if $m.Model}} · model {{$m.Model}}{{end}}</p>
+<p class="muted">Created {{ts $m.CreatedAt}} · Updated {{ts $m.UpdatedAt}}</p>
+{{if $m.ReplacedBy}}<p>Replaced by <a href="/m/{{pe $m.ReplacedBy}}">a newer memory</a>.</p>{{end}}
+{{if $m.Evidence}}<h2>Evidence</h2><div class="card"><ul class="plain">{{range $m.Evidence}}<li><a href="/e/{{pe .}}">{{.}}</a></li>{{end}}</ul></div>{{else}}<p class="muted">No evidence is recorded for this memory.</p>{{end}}
+{{template "memactions" .}}
+{{end}}
+<p><a class="button secondary" href="/memories?status=all">All memories</a></p>
 {{template "foot" .}}{{end}}
 
 {{define "review"}}{{template "head" .}}
@@ -180,6 +196,7 @@
 <p class="muted">Confidence: {{pct .Probability}}{{if .Model}} · model {{.Model}}{{end}}</p>
 {{if .Reason}}<p class="muted">Reason: {{.Reason}}</p>{{end}}
 {{if .Evidence}}<p class="muted">Evidence: {{range .Evidence}}<a href="/e/{{pe .}}">{{.}}</a> {{end}}</p>{{end}}
+<p class="muted"><a href="/m/{{pe .ID}}">Open memory</a></p>
 <form method="post" action="/review/{{pe .ID}}">
 <label>Statement<textarea name="statement" required>{{.Statement}}</textarea></label>
 <label>Reason (optional)<input name="reason" maxlength="500"></label>

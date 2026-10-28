@@ -51,7 +51,7 @@ func newLiveMemory(t *testing.T, allowed []string) *liveMemory {
 // assistant connects one MCP client (one "assistant") to tools backed by the live service.
 func (l *liveMemory) assistant(roots []string) func(name string, args map[string]any) (map[string]any, string) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "nas-search", Version: "test"}, nil)
-	registerMemoryTools(server, l.client, roots, roots[0], nil)
+	registerMemoryTools(server, l.client, roots, roots[0], "https://nas.tail1234.ts.net")
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := server.Connect(context.Background(), st, nil)
 	if err != nil {
@@ -184,18 +184,37 @@ func TestMemoryRoutingHelpers(t *testing.T) {
 	}
 	t.Setenv("NAS_MEMORY_ENABLED", "true")
 	t.Setenv("NAS_MEMORY_SCOPES", "personal,work/acme")
-	if m, err := configuredMemory(); err != nil || m.defaultScope != "personal" || len(m.roots) != 2 {
+	t.Setenv("NAS_EDITOR_ORIGIN", "https://nas.tail1234.ts.net")
+	if m, err := configuredMemory(); err != nil || m.defaultScope != "personal" || len(m.roots) != 2 || m.editorOrigin != "https://nas.tail1234.ts.net" {
 		t.Fatal(m, err)
 	}
 	base := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("base")) })
 	extra := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("extra")) })
-	h := withRoutes(base, map[string]http.Handler{memoryApprovalPath: extra})
-	for path, want := range map[string]string{memoryApprovalPath: "extra", "/mcp": "base", "/": "base"} {
+	h := withRoutes(base, map[string]http.Handler{"/extra": extra})
+	for path, want := range map[string]string{"/extra": "extra", "/mcp": "base", "/": "base"} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
 		if rec.Body.String() != want {
 			t.Fatalf("%s routed to %q", path, rec.Body.String())
 		}
+	}
+}
+
+func TestForgetThroughLiveServiceNeverErases(t *testing.T) {
+	live := newLiveMemory(t, []string{"personal"})
+	claude := live.assistant([]string{"personal"})
+	out, errText := claude("journal_append", map[string]any{"type": "observation", "title": "keep me"})
+	if errText != "" {
+		t.Fatal(errText)
+	}
+	id := out["event"].(map[string]any)["id"].(string)
+	res, errText := claude("memory_forget", map[string]any{"kind": "event", "id": id})
+	if errText != "" || res["state"] != "use_editor" || res["editor_url"] != "https://nas.tail1234.ts.net/e/"+id {
+		t.Fatal(res, errText)
+	}
+	found, _ := claude("journal_search", map[string]any{"text": "keep"})
+	if events, _ := found["events"].([]any); len(events) != 1 {
+		t.Fatal("the entry was erased", found)
 	}
 }
 

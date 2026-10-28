@@ -311,7 +311,7 @@ func (s *server) createNote(ctx context.Context, in noteInput) (memoryapi.Event,
 		when = time.Now().UTC()
 	}
 	return s.store.AppendEvent(ctx, s.roots, memoryapi.Event{
-		IdempotencyKey: in.Key, Type: in.Type, Status: "confirmed", Title: strings.TrimSpace(in.Title), Body: in.Body,
+		IdempotencyKey: in.Key, Type: in.Type, Title: strings.TrimSpace(in.Title), Body: in.Body,
 		Project: strings.TrimSpace(in.Project), Scope: in.Scope, Client: clientName, Actor: memoryapi.ActorUser,
 		OccurredAt: when, NextActions: in.NextActions, Supersedes: in.Supersedes,
 	})
@@ -434,8 +434,8 @@ func (s *server) memories(w http.ResponseWriter, r *http.Request) {
 	}
 	statuses := []string{st}
 	if st == "all" {
-		statuses = memoryStatuses
-	} else if !contains(memoryStatuses, st) {
+		statuses = memoryStatuses()
+	} else if !contains(memoryStatuses(), st) {
 		s.problem(w, r, http.StatusBadRequest, "That status filter is not valid.")
 		return
 	}
@@ -450,8 +450,17 @@ func (s *server) memories(w http.ResponseWriter, r *http.Request) {
 		items[i] = memoryView{M: m, Actions: actionsFor(m.Status)}
 	}
 	s.render(w, r, 200, "memories", page{Title: "Memories", Nav: "", Data: map[string]any{
-		"Status": st, "Project": project, "Items": items, "Statuses": append([]string{"all"}, memoryStatuses...),
+		"Status": st, "Project": project, "Items": items, "Statuses": append([]string{"all"}, memoryStatuses()...),
 	}})
+}
+
+func (s *server) memoryPage(w http.ResponseWriter, r *http.Request) {
+	m, err := s.store.GetMemory(r.Context(), s.roots, r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.render(w, r, 200, "memory", page{Title: "Memory", Nav: "", Data: map[string]any{"Item": memoryView{M: m, Actions: actionsFor(m.Status)}}})
 }
 
 func contains(l []string, v string) bool {
@@ -528,7 +537,7 @@ func (s *server) forgetMemory(w http.ResponseWriter, r *http.Request) {
 // ---- 8. Review ----
 
 func (s *server) review(w http.ResponseWriter, r *http.Request) {
-	ms, err := s.store.SearchMemories(r.Context(), s.roots, memoryapi.MemoryQuery{Statuses: []string{"candidate", "disputed"}, Limit: 100})
+	ms, err := s.store.SearchMemories(r.Context(), s.roots, memoryapi.MemoryQuery{Statuses: policy.MemoryStatuses(policy.IsUnconfirmedMemory), Limit: 100})
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -571,6 +580,7 @@ func (s *server) reviewDecide(w http.ResponseWriter, r *http.Request) {
 		}
 		if _, err = s.store.ProposeMemory(r.Context(), s.roots, memoryapi.Memory{
 			Category: m.Category, Statement: statement, Scope: m.Scope, Project: m.Project, Evidence: m.Evidence,
+			Probability: -1, // unscored: the owner wrote this wording
 		}, true); err == nil {
 			_, err = s.store.CorrectMemory(r.Context(), s.roots, userCorrection(id, "rejected", "replaced by edited version", ""))
 		}

@@ -47,17 +47,6 @@ func perMille(p float64) int {
 	return int(p*1000 + 0.5)
 }
 
-// Keeps classifier scores inside the per-mille range.
-func clampPerMille(pm int) int {
-	if pm < 0 {
-		return 0
-	}
-	if pm > 1000 {
-		return 1000
-	}
-	return pm
-}
-
 func firstRunes(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
