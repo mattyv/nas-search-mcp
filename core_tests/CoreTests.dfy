@@ -191,6 +191,10 @@ module CoreTests {
     expect DefaultMemoryCategory("observation") == "fact";
     expect ValidMemoryCategory("lesson");
     expect !ValidMemoryCategory("rumour");
+    expect ExternalClassificationAllowed(true, false, "personal/x", ["personal"]);
+    expect !ExternalClassificationAllowed(true, true, "personal/x", ["personal"]);
+    expect !ExternalClassificationAllowed(false, false, "personal/x", ["personal"]);
+    expect !ExternalClassificationAllowed(true, false, "work/acme", ["personal"]);
     print "Dafny core executable tests passed\n";
   }
 }

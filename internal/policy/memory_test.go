@@ -67,3 +67,9 @@ func TestMemoryRoutingBridge(t *testing.T) {
 		t.Fatal("categories")
 	}
 }
+
+func TestExternalClassificationBridge(t *testing.T) {
+	if !ExternalClassificationAllowed(true, false, "personal/x", []string{"personal"}) || ExternalClassificationAllowed(true, true, "personal/x", []string{"personal"}) || ExternalClassificationAllowed(true, false, "work/a", []string{"personal"}) || ExternalClassificationAllowed(false, false, "personal", []string{"personal"}) {
+		t.Fatal("external classification gate")
+	}
+}

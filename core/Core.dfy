@@ -486,6 +486,16 @@ module Core {
     ensures !IsCurrentMemory(to)
   {}
 
+  // Entries leave the NAS for an external classifier only when one is configured, the
+  // owner did not write them, and their scope is explicitly allowed out.
+  predicate ExternalClassificationAllowed(configured: bool, userAttested: bool, scope: string, external: seq<string>) {
+    configured && !userAttested && ScopeVisible(scope, external)
+  }
+
+  lemma OwnerEntriesStayLocal(configured: bool, scope: string, external: seq<string>)
+    ensures !ExternalClassificationAllowed(configured, true, scope, external)
+  {}
+
   predicate ValidMemoryCategory(c: string) {
     c in {"fact", "preference", "decision", "constraint", "lesson"}
   }

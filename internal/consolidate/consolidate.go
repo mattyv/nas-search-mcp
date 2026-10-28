@@ -79,7 +79,7 @@ func Once(ctx context.Context, store memoryapi.Store, cfg Config) (int, error) {
 		}
 		if !dup {
 			userAttested := e.Actor == memoryapi.ActorUser
-			if cfg.Classifier != nil && !userAttested && policy.ScopeVisible(e.Scope, cfg.ExternalScopes) {
+			if policy.ExternalClassificationAllowed(cfg.Classifier != nil, userAttested, e.Scope, cfg.ExternalScopes) {
 				cat, pm, model, cerr := cfg.Classifier.Classify(ctx, e)
 				switch {
 				case cerr == nil:

@@ -106,3 +106,13 @@ func ProposesMemory(eventType string) bool {
 func DefaultMemoryCategory(eventType string) string {
 	return dafny.SequenceVerbatimString(core.Companion_Default___.DefaultMemoryCategory(str(eventType)), false)
 }
+
+// ExternalClassificationAllowed lets an entry leave the NAS only when a classifier is
+// configured, the owner did not write it, and its scope is allowed out.
+func ExternalClassificationAllowed(configured, userAttested bool, scope string, external []string) bool {
+	values := make([]interface{}, len(external))
+	for i, root := range external {
+		values[i] = str(root)
+	}
+	return core.Companion_Default___.ExternalClassificationAllowed(configured, userAttested, str(scope), dafny.SeqOf(values...))
+}

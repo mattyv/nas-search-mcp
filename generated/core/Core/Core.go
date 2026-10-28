@@ -306,6 +306,9 @@ func (_static *CompanionStruct_Default___) ValidMemoryTransition(from _dafny.Seq
 func (_static *CompanionStruct_Default___) AssistantMayTransition(from _dafny.Sequence, to _dafny.Sequence) bool {
 	return (Companion_Default___.ValidMemoryTransition(from, to)) && (_dafny.Companion_Sequence_.Equal(to, _dafny.UnicodeSeqOfUtf8Bytes("disputed")))
 }
+func (_static *CompanionStruct_Default___) ExternalClassificationAllowed(configured bool, userAttested bool, scope _dafny.Sequence, external _dafny.Sequence) bool {
+	return ((configured) && (!(userAttested))) && (Companion_Default___.ScopeVisible(scope, external))
+}
 func (_static *CompanionStruct_Default___) ValidMemoryCategory(c _dafny.Sequence) bool {
 	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("fact"), _dafny.UnicodeSeqOfUtf8Bytes("preference"), _dafny.UnicodeSeqOfUtf8Bytes("decision"), _dafny.UnicodeSeqOfUtf8Bytes("constraint"), _dafny.UnicodeSeqOfUtf8Bytes("lesson"))).Contains(c)
 }
