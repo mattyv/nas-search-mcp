@@ -21,7 +21,12 @@ run) [ "${FAIL_LIMITS:-0}" = 0 ];;
 compose) if [ "${CHECK_NAS_ENV:-0}" = 1 ] && [ "${2:-}" != version ]; then
     [ -z "$(env | sed -n '/^NAS_[A-Za-z0-9_]*=/p')" ] || exit 91
 fi
-case "$*" in *"exec -T nas-search"*) [ "${FAIL_HEALTH:-0}" = 0 ];; esac;;
+case "$*" in *"exec -T nas-search"*) [ "${FAIL_HEALTH:-0}" = 0 ] || exit 1
+    if [ -n "${SLOW_START:-}" ]; then
+        n=$(cat "$SLOW_START" 2>/dev/null || echo 0); echo $((n + 1)) > "$SLOW_START"
+        [ "$n" -ge "${SLOW_START_FAILURES:-0}" ]
+    fi;;
+esac;;
 esac
 ''')
     (binaries / 'chown').write_text('#!/bin/sh\nprintf \"%s\\n\" \"$*\" >> \"$CHOWN_LOG\"\n')
@@ -693,3 +698,14 @@ def test_cpu_settings_format_is_validated_before_pull(tmp_path):
     for good in ['NAS_CPUSET=0', 'NAS_CPUSET=1', 'NAS_CPUSET=0-1']:
         secret.write_text(original.replace('NAS_CPUSET=0-1', good))
         assert subprocess.run(args, env=env, capture_output=True).returncode == 0, good
+
+
+def test_slow_first_start_is_not_rolled_back(tmp_path):
+    # A first start that opens a large index or loads models must get time to answer.
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    args[args.index('--image') + 1] = 'ghcr.io/mattyv/nas-search-mcp:def456'
+    env.update(SLOW_START=str(tmp_path / 'health-attempts'), SLOW_START_FAILURES='20')
+    result = subprocess.run(args, env=env, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / 'install' / 'current-image').read_text().strip().endswith(':def456')

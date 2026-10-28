@@ -294,6 +294,7 @@ else
     [ -z "$old_writer" ] || docker stop "$old_writer" >/dev/null || rollback
 fi
 # Check authenticated MCP status inside the container, without exposing tokens in args.
+# A first start can open a large index or load models; allow about two minutes before rolling back.
 check='import json,os,urllib.request,urllib.error
 url="http://127.0.0.1:8080"
 assert urllib.request.urlopen(url+"/healthz",timeout=5).status==200
@@ -317,8 +318,10 @@ if issuer:
         raise AssertionError("Anonymous OAuth MCP must require authentication")
 '
 ready=false
-for attempt in 1 2 3; do
+attempt=0
+while [ "$attempt" -lt 60 ]; do
     if compose exec -T nas-search python3 -c "$check" >/dev/null 2>&1; then ready=true; break; fi
+    attempt=$((attempt + 1))
     sleep 2
 done
 [ "$ready" = true ] || rollback

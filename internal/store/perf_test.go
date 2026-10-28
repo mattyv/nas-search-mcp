@@ -1,10 +1,8 @@
 package store
 
 import (
-	"database/sql"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -37,41 +35,6 @@ func TestListPrefixRange(t *testing.T) {
 	}
 	if got, _ = s.List("a/", 1); len(got) != 1 {
 		t.Fatal("limit", got)
-	}
-}
-
-func TestLegacyWordsTableMigrates(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "index.db")
-	db, e := sql.Open("sqlite3", path)
-	if e != nil {
-		t.Fatal(e)
-	}
-	_, e = db.Exec(`CREATE TABLE chunks(id INTEGER PRIMARY KEY AUTOINCREMENT,path TEXT NOT NULL,location TEXT NOT NULL,text TEXT NOT NULL);
- CREATE VIRTUAL TABLE words USING fts5(text);
- INSERT INTO chunks(id,path,location,text) VALUES(1,'old/a.txt','l1','legacy zebra text');
- INSERT INTO words(rowid,text) VALUES(1,'legacy zebra text');`)
-	db.Close()
-	if e != nil {
-		t.Fatal(e)
-	}
-	s, e := New(path, "")
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer s.Close()
-	c, e := s.Candidates("zebra", "", false, nil, 10)
-	if e != nil || len(c) != 1 || c[0].Path != "old/a.txt" {
-		t.Fatal(c, e)
-	}
-	var def string
-	if e = s.db.QueryRow("SELECT sql FROM sqlite_master WHERE name='words'").Scan(&def); e != nil || !strings.Contains(def, "content=") {
-		t.Fatal(def, e)
-	}
-	if e = s.Remove("old/a.txt"); e != nil {
-		t.Fatal(e)
-	}
-	if c, e = s.Candidates("zebra", "", false, nil, 10); e != nil || len(c) != 0 {
-		t.Fatal(c, e)
 	}
 }
 

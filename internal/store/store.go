@@ -34,7 +34,10 @@ type Stats struct {
 type Store struct {
 	db      *sql.DB
 	vectors bool
-	l2      map[string]bool // vector tables created without distance_metric=cosine (legacy)
+	// externalWords is false for keyword indexes created by earlier releases; they are
+	// left in place because rebuilding them on startup outlasts the installer's health wait.
+	externalWords bool
+	l2            map[string]bool // vector tables created without distance_metric=cosine (legacy)
 }
 
 var driverID atomic.Uint64
@@ -57,16 +60,13 @@ func New(path, extension string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,kind TEXT NOT NULL,metadata TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS chunks(id INTEGER PRIMARY KEY AUTOINCREMENT,path TEXT NOT NULL,location TEXT NOT NULL,text TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS chunk_path ON chunks(path);
- CREATE TABLE IF NOT EXISTS errors(path TEXT PRIMARY KEY,message TEXT NOT NULL);`
+ CREATE TABLE IF NOT EXISTS errors(path TEXT PRIMARY KEY,message TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS stamps(path TEXT PRIMARY KEY,stamp TEXT NOT NULL);`
 	if _, e = db.Exec(schema); e != nil {
 		db.Close()
 		return nil, e
 	}
-	if e = migrateWords(db); e != nil {
-		db.Close()
-		return nil, e
-	}
-	if e = s.migrateStamp(); e != nil {
+	if s.externalWords, e = ensureWords(db); e != nil {
 		db.Close()
 		return nil, e
 	}
@@ -88,65 +88,23 @@ func New(path, extension string) (*Store, error) {
 	return s, nil
 }
 
-// migrateWords creates the external-content FTS table, replacing the old content-storing one.
-func migrateWords(db *sql.DB) error {
+// Rollback restores the previous program but never the database, so schema changes here
+// must stay readable and writable by the previous release: add tables, never columns, and
+// never rewrite an existing table on startup.
+
+// ensureWords creates the keyword index for a new database as external content, which
+// stores chunk text once. An existing index keeps its format; both behave identically.
+func ensureWords(db *sql.DB) (bool, error) {
 	var def string
 	err := db.QueryRow("SELECT sql FROM sqlite_master WHERE name='words'").Scan(&def)
-	if err != nil && err != sql.ErrNoRows {
-		return err
+	if err == nil {
+		return strings.Contains(def, "content="), nil
 	}
-	legacy := err == nil && !strings.Contains(def, "content=")
-	if err == nil && !legacy {
-		return nil
+	if err != sql.ErrNoRows {
+		return false, err
 	}
-	tx, e := db.Begin()
-	if e != nil {
-		return e
-	}
-	defer tx.Rollback()
-	if legacy {
-		if _, e = tx.Exec("DROP TABLE words"); e != nil {
-			return e
-		}
-	}
-	if _, e = tx.Exec("CREATE VIRTUAL TABLE words USING fts5(text, content='chunks', content_rowid='id')"); e != nil {
-		return e
-	}
-	if legacy {
-		if _, e = tx.Exec("INSERT INTO words(words) VALUES('rebuild')"); e != nil {
-			return e
-		}
-	}
-	return tx.Commit()
-}
-
-// migrateStamp adds the stamp column to databases created before stamps existed.
-func (s *Store) migrateStamp() error {
-	rows, e := s.db.Query("PRAGMA table_info(files)")
-	if e != nil {
-		return e
-	}
-	found := false
-	for rows.Next() {
-		var cid, notnull, pk int
-		var name, typ string
-		var dflt sql.NullString
-		if e = rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); e != nil {
-			rows.Close()
-			return e
-		}
-		found = found || name == "stamp"
-	}
-	if e = rows.Err(); e != nil {
-		rows.Close()
-		return e
-	}
-	rows.Close()
-	if found {
-		return nil
-	}
-	_, e = s.db.Exec("ALTER TABLE files ADD COLUMN stamp TEXT NOT NULL DEFAULT ''")
-	return e
+	_, err = db.Exec("CREATE VIRTUAL TABLE words USING fts5(text, content='chunks', content_rowid='id')")
+	return err == nil, err
 }
 
 // prefixRange returns bounds lo <= path < hi that match exactly the paths starting with prefix
@@ -173,7 +131,11 @@ func validate(v []float32, n int) error {
 }
 func (s *Store) clear(tx *sql.Tx, path string) error {
 	// External-content FTS needs the old text to remove its index entries.
-	if _, e := tx.Exec("INSERT INTO words(words,rowid,text) SELECT 'delete',id,text FROM chunks WHERE path=?", path); e != nil {
+	deleteWords := "INSERT INTO words(words,rowid,text) SELECT 'delete',id,text FROM chunks WHERE path=?"
+	if !s.externalWords {
+		deleteWords = "DELETE FROM words WHERE rowid IN (SELECT id FROM chunks WHERE path=?)"
+	}
+	if _, e := tx.Exec(deleteWords, path); e != nil {
 		return e
 	}
 	for _, table := range []string{"text_vectors", "photo_vectors"} {
@@ -213,8 +175,16 @@ func (s *Store) Replace(f File, chunks []Chunk, vectors [][]float32) error {
 	if e = s.clear(tx, f.Path); e != nil {
 		return e
 	}
-	if _, e = tx.Exec("INSERT OR REPLACE INTO files(path,fingerprint,stamp,kind,metadata) VALUES(?,?,?,?,?)", f.Path, f.Fingerprint, f.Stamp, f.Kind, f.Metadata); e != nil {
+	if _, e = tx.Exec("INSERT OR REPLACE INTO files(path,fingerprint,kind,metadata) VALUES(?,?,?,?)", f.Path, f.Fingerprint, f.Kind, f.Metadata); e != nil {
 		return e
+	}
+	if _, e = tx.Exec("DELETE FROM stamps WHERE path=?", f.Path); e != nil {
+		return e
+	}
+	if f.Stamp != "" {
+		if _, e = tx.Exec("INSERT INTO stamps VALUES(?,?)", f.Path, f.Stamp); e != nil {
+			return e
+		}
 	}
 	for i, c := range chunks {
 		r, e := tx.Exec("INSERT INTO chunks(path,location,text) VALUES(?,?,?)", f.Path, c.Location, c.Text)
@@ -248,8 +218,10 @@ func (s *Store) Remove(path string) error {
 	if e = s.clear(tx, path); e != nil {
 		return e
 	}
-	if _, e = tx.Exec("DELETE FROM files WHERE path=?", path); e != nil {
-		return e
+	for _, q := range []string{"DELETE FROM files WHERE path=?", "DELETE FROM stamps WHERE path=?"} {
+		if _, e = tx.Exec(q, path); e != nil {
+			return e
+		}
 	}
 	if _, e = tx.Exec("DELETE FROM errors WHERE path=?", path); e != nil {
 		return e
@@ -270,7 +242,7 @@ func (s *Store) Fingerprints() (map[string]string, error) {
 
 // Indexed returns every indexed file without metadata, to keep scans light.
 func (s *Store) Indexed() (map[string]File, error) {
-	rows, e := s.db.Query("SELECT path,fingerprint,stamp,kind FROM files")
+	rows, e := s.db.Query("SELECT f.path,f.fingerprint,coalesce(t.stamp,''),f.kind FROM files f LEFT JOIN stamps t ON t.path=f.path")
 	if e != nil {
 		return nil, e
 	}
@@ -288,12 +260,12 @@ func (s *Store) Indexed() (map[string]File, error) {
 
 // UpdateStamp records a new cheap stamp for an already indexed, unchanged file.
 func (s *Store) UpdateStamp(path, stamp string) error {
-	_, e := s.db.Exec("UPDATE files SET stamp=? WHERE path=?", stamp, path)
+	_, e := s.db.Exec("INSERT OR REPLACE INTO stamps SELECT path,? FROM files WHERE path=?", stamp, path)
 	return e
 }
 func (s *Store) List(prefix string, limit int) ([]File, error) {
 	lo, hi := prefixRange(prefix)
-	rows, e := s.db.Query("SELECT path,fingerprint,stamp,kind,metadata FROM files WHERE path>=? AND path<? ORDER BY path LIMIT ?", lo, hi, limit)
+	rows, e := s.db.Query("SELECT f.path,f.fingerprint,coalesce(t.stamp,''),f.kind,f.metadata FROM files f LEFT JOIN stamps t ON t.path=f.path WHERE f.path>=? AND f.path<? ORDER BY f.path LIMIT ?", lo, hi, limit)
 	if e != nil {
 		return nil, e
 	}

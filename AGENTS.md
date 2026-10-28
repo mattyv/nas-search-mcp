@@ -20,6 +20,7 @@
 - Provide MCP access for Claude Desktop, Claude CLI, and Codex CLI. Document actual ChatGPT connectivity requirements and limitations.
 - Preserve the user's work Tailscale connection. Do not switch accounts or exit nodes without authorization. Local LAN access is enabled and should remain enabled. Remote access through a free personal Tailscale setup is acceptable.
 - Keep original files read-only, authenticate MCP requests, confine file access to mounted roots, and keep secrets out of source control.
+- Keep the index database usable by the previous release, because a failed upgrade rolls back the program but not the database. Add tables rather than columns, and never rebuild or rewrite existing tables during startup.
 
 ## Communication
 

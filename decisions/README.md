@@ -436,10 +436,10 @@ not the algorithm. D004 stands.
 
 Decisions:
 
-- **Skip unchanged files by size and modification time.** The `files` table gains
-  a `stamp` column. A file whose stamp and photo flavour match the stored row is
-  skipped without a copy or hash; otherwise the SHA-256 path runs as before and
-  the stamp is refreshed. An existing database gains the column in place; rows
+- **Skip unchanged files by size and modification time.** Stamps live in their own
+  `stamps` table (superseded: a `stamp` column on `files`, see D047). A file whose
+  stamp and photo flavour match the stored row is skipped without a copy or hash;
+  otherwise the SHA-256 path runs as before and the stamp is refreshed. Files
   without a stamp are hashed once. This trusts size plus mtime as a change
   signal, which a same-size, same-mtime rewrite would defeat; `NAS_SCAN_FILE_DELAY_SECONDS`
   stays at its default until scan contention is measured again. The skip rule and
@@ -458,8 +458,9 @@ Decisions:
   metric; older tables keep L2 and the store converts the distance, which is
   identical for normalised embeddings. A narrow prefix in a large index can
   return fewer than the requested semantic hits. Prefix filters use index ranges,
-  the FTS5 table is external-content, and search checks file existence only for
-  the ranked page. Old databases are migrated in place on open.
+  new FTS5 tables are external-content, and search checks file existence only for
+  the ranked page. Existing keyword tables keep their format (superseded: an
+  on-open rebuild, see D047).
 - **Use both cores with low CPU shares.** Compose defaults to `NAS_CPUSET=0-1`
   and `NAS_CPU_SHARES=512`; DSM keeps priority under contention. `NAS_CPUSET=0`
   restores single-core pinning. Existing `.env` files keep their value.
@@ -470,3 +471,39 @@ ordering and legacy migrations, new installer and compose tests, and query plans
 showing the `files` primary key and chunk rowid lookups in use. Nothing here has
 been timed on the NAS; measure scan duration, search latency and DSM
 responsiveness before treating the gains as real.
+
+## D047 — Keep the index usable by the previous release
+
+Status: accepted.
+
+The first NAS upgrade to the D046 build failed and rolled back. The installer log is
+discarded by design, so the cause is inferred, not observed. On open, that build
+rebuilt the whole keyword index and added a `stamp` column before the HTTP listener
+started. The installer allowed about fifteen seconds for health before rolling back.
+A rebuild of 100,000 passages took 1.5 seconds on a fast development server. A
+J4025 with spinning disks and a larger index can plausibly exceed the window.
+
+The rollback exposed a second defect. The installer restores the previous program
+but not the database. The previous release writes file rows without naming columns,
+so an added column makes every one of its re-index writes fail. A test reproduced
+this before the fix.
+
+Decisions:
+
+- **Schema changes stay readable and writable by the previous release.** Add tables,
+  never columns, and never rewrite an existing table on startup. Stamps move to a
+  separate `stamps` table, which the previous release ignores. Existing keyword tables
+  keep their format. Only new databases get the external-content table. Both formats
+  work for both releases.
+- **The installer waits about two minutes for the new service to answer** before
+  rolling back, instead of three short tries.
+
+Consequences: existing installs keep the larger keyword table until the index is
+rebuilt in a new data directory. A database left half-migrated by the failed upgrade
+still works with this release.
+
+Evidence: new store tests run the previous release's own writes against fresh,
+previous-release and half-migrated databases. The first failed before the fix with
+"table files has 5 columns but 4 values were supplied". A new installer test shows a
+start that answers on the twenty-first health check now succeeds. It failed before
+the wait was extended. Go, Python and Dafny checks pass.
