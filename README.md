@@ -27,6 +27,8 @@ sudo sh scripts/install-nas.sh \
 
 Use a published commit whose CI passed; `latest` is deliberately rejected. Configure authorized source mounts, private data storage, and the listener address in the private `.env`, after verifying the physical paths on your NAS. Existing NAS settings take precedence. See [deployment guidance](docs/deployment.md).
 
+Optional [shared memory](docs/memory.md) lets your assistants keep and reuse notes about your projects. It is off by default.
+
 ## Use it
 
 Ask your assistant to check `index_status`, then search for a topic. Results include source paths, page or section locations, and passages. Ask it to read the source before relying on a result; ranking scores are not confidence probabilities.

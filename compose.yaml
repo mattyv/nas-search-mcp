@@ -26,6 +26,10 @@ services:
       NAS_UPLOAD_ENABLED: "${NAS_UPLOAD_ENABLED:-false}"
       NAS_UPLOAD_INDEXED_DESTINATIONS: "${NAS_UPLOAD_INDEXED_DESTINATIONS:-false}"
       NAS_UPLOAD_WRITER_SOCKET: /data/upload-ipc/upload.sock
+      NAS_MEMORY_ENABLED: "${NAS_MEMORY_ENABLED:-false}"
+      NAS_MEMORY_SOCKET: /data/memory-ipc/memory.sock
+      NAS_MEMORY_SCOPES: "${NAS_MEMORY_SCOPES:-personal}"
+      NAS_OAUTH_PASSKEYS: "${NAS_OAUTH_PASSKEYS:-enroll}"
       NAS_UPGRADE_DIR: "${NAS_UPGRADE_DIR:-}"
       # The installer adds a read-only socket-directory bind only when configured.
       NAS_SYNOLOGY_PHOTOS_SOCKET: "${NAS_SYNOLOGY_PHOTOS_SOCKET:-}"
@@ -99,6 +103,50 @@ services:
       - /tmp:size=8m,mode=1777
     healthcheck:
       test: [CMD, /app/nas-search, upload-writer-health]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Optional shared memory (profile "memory"). The editor port is localhost only;
+  # expose it privately with `tailscale serve`. It keeps the default network because
+  # the optional Jev classifier needs outbound HTTPS.
+  nas-memory:
+    profiles: [memory]
+    image: nas-search-mcp:local
+    command: [memory-service]
+    restart: unless-stopped
+    init: true
+    user: "${NAS_UID:-1000}:${NAS_GID:-1000}"
+    ports:
+      - "127.0.0.1:${NAS_EDITOR_PORT:-8083}:8083"
+    environment:
+      NAS_MEMORY_DB: /memory/memory.sqlite3
+      NAS_MEMORY_LISTEN_SOCKET: /ipc/memory.sock
+      NAS_MEMORY_SCOPES: "${NAS_MEMORY_SCOPES:-personal}"
+      NAS_EDITOR_LISTEN: ":8083"
+      NAS_EDITOR_OWNER: "${NAS_EDITOR_OWNER:-}"
+      NAS_EDITOR_ORIGIN: "${NAS_EDITOR_ORIGIN:-}"
+      NAS_JEV_API_KEY: "${NAS_JEV_API_KEY:-}"
+      NAS_JEV_URL: "${NAS_JEV_URL:-https://api.typesafe.ai}"
+      NAS_JEV_MODEL: "${NAS_JEV_MODEL:-jev-latest}"
+      NAS_JEV_SCOPES: "${NAS_JEV_SCOPES:-personal}"
+      NAS_MEMORY_ACCEPT_AT: "${NAS_MEMORY_ACCEPT_AT:-900}"
+      NAS_MEMORY_REJECT_AT: "${NAS_MEMORY_REJECT_AT:-100}"
+    volumes:
+      - "${NAS_MEMORY_PATH:-/volume1/app-data/nas-search/memory}:/memory:rw"
+      - "${NAS_INDEX_PATH:-/volume1/app-data/nas-search/index}/memory-ipc:/ipc:rw"
+    mem_limit: 128m
+    memswap_limit: 128m
+    # Same CPU policy as nas-search; see the comment there.
+    cpuset: "${NAS_CPUSET:-0-1}"
+    cpu_shares: ${NAS_CPU_SHARES:-512}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    healthcheck:
+      test: [CMD, /app/nas-search, memory-health]
       interval: 30s
       timeout: 5s
       retries: 3

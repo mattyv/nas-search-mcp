@@ -96,3 +96,60 @@ def test_services_use_both_cores_with_low_cpu_shares(service):
 def test_main_service_keeps_single_threaded_workers():
     text = COMPOSE.read_text()
     assert 'GOMAXPROCS: "1"' in text and 'OMP_THREAD_LIMIT: "1"' in text
+
+
+def memory_block():
+    return COMPOSE.read_text().split('\n  nas-memory:\n', 1)[1].split('\n  nas-', 1)[0]
+
+
+def test_memory_service_is_private_bounded_and_opt_in():
+    block = memory_block()
+    for line in ['profiles: [memory]', 'image: nas-search-mcp:local', 'command: [memory-service]',
+                 'restart: unless-stopped', 'init: true', 'user: "${NAS_UID:-1000}:${NAS_GID:-1000}"',
+                 'read_only: true', 'cap_drop: [ALL]', 'security_opt: [no-new-privileges:true]',
+                 '- /tmp:size=8m,mode=1777', 'mem_limit: 128m', 'memswap_limit: 128m',
+                 'cpuset: "${NAS_CPUSET:-0-1}"', 'cpu_shares: ${NAS_CPU_SHARES:-512}',
+                 '"127.0.0.1:${NAS_EDITOR_PORT:-8083}:8083"',
+                 '"${NAS_MEMORY_PATH:-/volume1/app-data/nas-search/memory}:/memory:rw"',
+                 '"${NAS_INDEX_PATH:-/volume1/app-data/nas-search/index}/memory-ipc:/ipc:rw"',
+                 'test: [CMD, /app/nas-search, memory-health]']:
+        assert line in block, line
+    assert 'network_mode' not in block
+    assert block.count('127.0.0.1:') == 1 and '0.0.0.0' not in block
+
+
+def test_memory_service_environment_names():
+    block = memory_block()
+    for name in ['NAS_MEMORY_DB: /memory/memory.sqlite3', 'NAS_MEMORY_LISTEN_SOCKET: /ipc/memory.sock',
+                 'NAS_MEMORY_SCOPES: "${NAS_MEMORY_SCOPES:-personal}"', 'NAS_EDITOR_LISTEN: ":8083"',
+                 'NAS_EDITOR_OWNER: "${NAS_EDITOR_OWNER:-}"', 'NAS_EDITOR_ORIGIN: "${NAS_EDITOR_ORIGIN:-}"',
+                 'NAS_JEV_API_KEY: "${NAS_JEV_API_KEY:-}"', 'NAS_JEV_URL: "${NAS_JEV_URL:-https://api.typesafe.ai}"',
+                 'NAS_JEV_MODEL: "${NAS_JEV_MODEL:-jev-latest}"', 'NAS_JEV_SCOPES: "${NAS_JEV_SCOPES:-personal}"',
+                 'NAS_MEMORY_ACCEPT_AT: "${NAS_MEMORY_ACCEPT_AT:-900}"', 'NAS_MEMORY_REJECT_AT: "${NAS_MEMORY_REJECT_AT:-100}"']:
+        assert name in block, name
+
+
+def test_main_service_gains_memory_settings_that_default_to_off():
+    block = COMPOSE.read_text().split('\n  nas-search:\n', 1)[1].split('\n  nas-', 1)[0]
+    for name in ['NAS_MEMORY_ENABLED: "${NAS_MEMORY_ENABLED:-false}"', 'NAS_MEMORY_SOCKET: /data/memory-ipc/memory.sock',
+                 'NAS_MEMORY_SCOPES: "${NAS_MEMORY_SCOPES:-personal}"', 'NAS_OAUTH_PASSKEYS: "${NAS_OAUTH_PASSKEYS:-enroll}"']:
+        assert name in block, name
+    assert 'JEV' not in block and '/memory:' not in block
+
+
+@needs_docker
+def test_memory_service_exists_only_with_its_profile():
+    clean_env = {key: value for key, value in os.environ.items() if not key.startswith('NAS_')}
+    base = [DOCKER, 'compose', '-f', str(COMPOSE), '--env-file', os.devnull]
+    env = dict(clean_env, NAS_TOKEN='x' * 32)
+    off = json.loads(subprocess.run(base + ['config', '--format', 'json'], env=env, capture_output=True, text=True, check=True).stdout)['services']
+    assert 'nas-memory' not in off
+    assert off['nas-search']['environment']['NAS_MEMORY_ENABLED'] == 'false'
+    on = json.loads(subprocess.run(base + ['--profile', 'memory', 'config', '--format', 'json'], env=env, capture_output=True, text=True, check=True).stdout)['services']
+    memory = on['nas-memory']
+    assert memory['mem_limit'] == str(128 * 1024 * 1024) or memory['mem_limit'] == 134217728
+    ports = memory['ports']
+    assert [(p['host_ip'], p['target'], int(p['published'])) for p in ports] == [('127.0.0.1', 8083, 8083)]
+    assert memory['read_only'] is True
+    assert {v['target'] for v in memory['volumes']} == {'/memory', '/ipc'}
+    assert memory['healthcheck']['test'] == ['CMD', '/app/nas-search', 'memory-health']
