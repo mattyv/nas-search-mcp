@@ -13,7 +13,7 @@ import (
 	"unicode"
 )
 
-type File struct{ Path, Fingerprint, Kind, Metadata string }
+type File struct{ Path, Fingerprint, Stamp, Kind, Metadata string }
 type Chunk struct{ Location, Text string }
 type Candidate struct {
 	ID                        int64
@@ -66,6 +66,10 @@ func New(path, extension string) (*Store, error) {
 		db.Close()
 		return nil, e
 	}
+	if e = s.migrateStamp(); e != nil {
+		db.Close()
+		return nil, e
+	}
 	if s.vectors {
 		if _, e = db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS text_vectors USING vec0(embedding float[384] distance_metric=cosine); CREATE VIRTUAL TABLE IF NOT EXISTS photo_vectors USING vec0(embedding float[512] distance_metric=cosine);`); e != nil {
 			db.Close()
@@ -114,6 +118,35 @@ func migrateWords(db *sql.DB) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// migrateStamp adds the stamp column to databases created before stamps existed.
+func (s *Store) migrateStamp() error {
+	rows, e := s.db.Query("PRAGMA table_info(files)")
+	if e != nil {
+		return e
+	}
+	found := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if e = rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); e != nil {
+			rows.Close()
+			return e
+		}
+		found = found || name == "stamp"
+	}
+	if e = rows.Err(); e != nil {
+		rows.Close()
+		return e
+	}
+	rows.Close()
+	if found {
+		return nil
+	}
+	_, e = s.db.Exec("ALTER TABLE files ADD COLUMN stamp TEXT NOT NULL DEFAULT ''")
+	return e
 }
 
 // prefixRange returns bounds lo <= path < hi that match exactly the paths starting with prefix
@@ -180,7 +213,7 @@ func (s *Store) Replace(f File, chunks []Chunk, vectors [][]float32) error {
 	if e = s.clear(tx, f.Path); e != nil {
 		return e
 	}
-	if _, e = tx.Exec("INSERT OR REPLACE INTO files VALUES(?,?,?,?)", f.Path, f.Fingerprint, f.Kind, f.Metadata); e != nil {
+	if _, e = tx.Exec("INSERT OR REPLACE INTO files(path,fingerprint,stamp,kind,metadata) VALUES(?,?,?,?,?)", f.Path, f.Fingerprint, f.Stamp, f.Kind, f.Metadata); e != nil {
 		return e
 	}
 	for i, c := range chunks {
@@ -224,24 +257,43 @@ func (s *Store) Remove(path string) error {
 	return tx.Commit()
 }
 func (s *Store) Fingerprints() (map[string]string, error) {
-	rows, e := s.db.Query("SELECT path,fingerprint FROM files")
+	m, e := s.Indexed()
+	if e != nil {
+		return nil, e
+	}
+	out := make(map[string]string, len(m))
+	for p, f := range m {
+		out[p] = f.Fingerprint
+	}
+	return out, nil
+}
+
+// Indexed returns every indexed file without metadata, to keep scans light.
+func (s *Store) Indexed() (map[string]File, error) {
+	rows, e := s.db.Query("SELECT path,fingerprint,stamp,kind FROM files")
 	if e != nil {
 		return nil, e
 	}
 	defer rows.Close()
-	m := map[string]string{}
+	m := map[string]File{}
 	for rows.Next() {
-		var p, f string
-		if e = rows.Scan(&p, &f); e != nil {
+		var f File
+		if e = rows.Scan(&f.Path, &f.Fingerprint, &f.Stamp, &f.Kind); e != nil {
 			return nil, e
 		}
-		m[p] = f
+		m[f.Path] = f
 	}
 	return m, rows.Err()
 }
+
+// UpdateStamp records a new cheap stamp for an already indexed, unchanged file.
+func (s *Store) UpdateStamp(path, stamp string) error {
+	_, e := s.db.Exec("UPDATE files SET stamp=? WHERE path=?", stamp, path)
+	return e
+}
 func (s *Store) List(prefix string, limit int) ([]File, error) {
 	lo, hi := prefixRange(prefix)
-	rows, e := s.db.Query("SELECT path,fingerprint,kind,metadata FROM files WHERE path>=? AND path<? ORDER BY path LIMIT ?", lo, hi, limit)
+	rows, e := s.db.Query("SELECT path,fingerprint,stamp,kind,metadata FROM files WHERE path>=? AND path<? ORDER BY path LIMIT ?", lo, hi, limit)
 	if e != nil {
 		return nil, e
 	}
@@ -249,7 +301,7 @@ func (s *Store) List(prefix string, limit int) ([]File, error) {
 	out := []File{}
 	for rows.Next() {
 		var f File
-		if e = rows.Scan(&f.Path, &f.Fingerprint, &f.Kind, &f.Metadata); e != nil {
+		if e = rows.Scan(&f.Path, &f.Fingerprint, &f.Stamp, &f.Kind, &f.Metadata); e != nil {
 			return nil, e
 		}
 		out = append(out, f)
