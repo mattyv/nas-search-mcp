@@ -116,3 +116,19 @@ func TestExtractCancellationAndOversizedReplyRestart(t *testing.T) {
 		t.Fatal("reported error restarted the worker")
 	}
 }
+func TestHighRSSPhotoEmbedKeepsResidentModel(t *testing.T) {
+	t.Setenv("NAS_WORKER_MAX_RSS_MIB", "100")
+	a := fakeExtractApp(t, time.Minute)
+	// CLIP peaks far above the text limit; photo runs must not reload it per photo.
+	first := callPID(t, a, map[string]any{"operation": "image_embed", "rss": 700 * 1024})
+	if callPID(t, a, map[string]any{"operation": "image_embed", "rss": 700 * 1024}) != first {
+		t.Fatal("photo embedding recycled the resident model")
+	}
+	// The first extraction afterwards recycles once, so text indexing starts from a small process.
+	if callPID(t, a, map[string]any{"operation": "extract", "rss": 700 * 1024}) != first {
+		t.Fatal("extract reply itself should still be served by the old process")
+	}
+	if callPID(t, a, map[string]any{"operation": "extract"}) == first {
+		t.Fatal("oversized process survived an extraction")
+	}
+}

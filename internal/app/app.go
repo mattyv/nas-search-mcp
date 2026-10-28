@@ -92,6 +92,9 @@ func New(root, data, python, worker, extension string, semantic, photos bool) (*
 	if err != nil {
 		return nil, err
 	}
+	if _, err = workerMaxRSSKiB(); err != nil {
+		return nil, err
+	}
 	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil, err
@@ -443,7 +446,7 @@ func (a *App) worker(ctx context.Context, request map[string]any) (WorkerResult,
 	}
 	operation, _ := request["operation"].(string)
 	if a.modelKeepalive > 0 && (operation == "embed" || operation == "image_query" || operation == "image_embed" || operation == "extract" || operation == "read_document") {
-		return a.sessionRequest(ctx, input)
+		return a.sessionRequest(ctx, input, operation == "extract" || operation == "read_document")
 	}
 	a.stopSession()
 	cmd := exec.CommandContext(ctx, a.Python, a.Worker)
