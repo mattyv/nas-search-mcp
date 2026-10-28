@@ -3,6 +3,7 @@
 import contextlib
 import json
 import os
+import resource
 from pathlib import Path
 import sys
 import subprocess
@@ -338,7 +339,7 @@ def handle(request, model_cache=None):
     model_name = {'embed': 'BAAI/bge-small-en-v1.5', 'image_embed': 'Qdrant/clip-ViT-B-32-vision', 'image_query': 'Qdrant/clip-ViT-B-32-text'}[operation]
     cls = ImageEmbedding if operation == 'image_embed' else TextEmbedding
     model = (model_cache if model_cache is not None else ModelCache()).get(cls, model_name)
-    vectors = [vector.tolist() if hasattr(vector, 'tolist') else list(vector) for vector in model.embed(values, batch_size=1)]
+    vectors = [vector.tolist() if hasattr(vector, 'tolist') else list(vector) for vector in model.embed(values, batch_size=min(len(values), 16))]
     dimension = 384 if operation == 'embed' else 512
     if len(vectors) != len(values) or any(len(vector) != dimension for vector in vectors):
         raise ValueError('unexpected embedding dimensions')
@@ -355,9 +356,11 @@ def serve():
         try:
             with contextlib.redirect_stdout(sys.stderr):
                 result = handle(json.loads(line), cache)
+                # ru_maxrss is a high-water mark (KiB on Linux); Go recycles the process above its limit.
+                result['rss_kib'] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
                 response = json.dumps(result, allow_nan=False)
         except Exception as error:
-            response = json.dumps({'error': str(error)})
+            response = json.dumps({'error': str(error), 'rss_kib': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss})
         print(response, flush=True)
     return 0
 
