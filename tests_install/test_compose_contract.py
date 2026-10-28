@@ -115,6 +115,7 @@ def test_memory_service_is_private_bounded_and_opt_in():
                  'test: [CMD, /app/nas-search, memory-health]']:
         assert line in block, line
     assert 'network_mode' not in block
+    assert 'networks: [memory]' in block
     assert block.count('127.0.0.1:') == 1 and '0.0.0.0' not in block
 
 
@@ -132,8 +133,10 @@ def test_memory_service_environment_names():
 def test_main_service_gains_memory_settings_that_default_to_off():
     block = COMPOSE.read_text().split('\n  nas-search:\n', 1)[1].split('\n  nas-', 1)[0]
     for name in ['NAS_MEMORY_ENABLED: "${NAS_MEMORY_ENABLED:-false}"', 'NAS_MEMORY_SOCKET: /data/memory-ipc/memory.sock',
-                 'NAS_MEMORY_SCOPES: "${NAS_MEMORY_SCOPES:-personal}"', 'NAS_OAUTH_PASSKEYS: "${NAS_OAUTH_PASSKEYS:-enroll}"']:
+                 'NAS_MEMORY_SCOPES: "${NAS_MEMORY_SCOPES:-personal}"', 'NAS_OAUTH_PASSKEYS: "${NAS_OAUTH_PASSKEYS:-}"',
+                 'NAS_EDITOR_ORIGIN: "${NAS_EDITOR_ORIGIN:-}"']:
         assert name in block, name
+    assert 'networks' not in block
     assert 'JEV' not in block and '/memory:' not in block
 
 
@@ -153,3 +156,9 @@ def test_memory_service_exists_only_with_its_profile():
     assert memory['read_only'] is True
     assert {v['target'] for v in memory['volumes']} == {'/memory', '/ipc'}
     assert memory['healthcheck']['test'] == ['CMD', '/app/nas-search', 'memory-health']
+    assert list(memory['networks']) == ['memory']
+    assert 'memory' not in on['nas-search'].get('networks', {})
+
+
+def test_memory_network_is_declared_at_top_level():
+    assert '\nnetworks:\n  memory: {}' in COMPOSE.read_text()

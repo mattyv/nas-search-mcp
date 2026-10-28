@@ -837,6 +837,18 @@ def test_memory_settings_are_validated_before_pull_and_change_nothing(tmp_path, 
     assert SECRET_KEY not in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize('overrides', [
+    {'NAS_JEV_SCOPES': 'none', 'NAS_JEV_API_KEY': None},
+    {'NAS_JEV_SCOPES': 'none'},
+    {'NAS_MEMORY_REJECT_AT': '0'},
+])
+def test_memory_accepts_jev_none_and_reject_zero(tmp_path, overrides):
+    args, env, log, secret, memory = memory_config(tmp_path, **overrides)
+    result = run_memory(args, env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '--profile memory' in log.read_text()
+
+
 def test_memory_path_may_not_overlap_upgrade_queue(tmp_path):
     queue = tmp_path / 'queue'
     queue.mkdir()

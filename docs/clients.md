@@ -24,7 +24,7 @@ Start a new CLI session or fully restart the desktop app. Config installation an
 
 ## Shared memory
 
-When [shared memory](memory.md) is on, Claude, Codex, and other clients also get `context_open` and `journal_append`. The guide shows the one line to add to Claude's preferences so it uses them.
+When [shared memory](memory.md) is on, Claude, Codex, and other clients also get `context_open`, `journal_append`, and related tools. See [shared memory](memory.md) for the full set. The guide shows the one line to add to Claude's preferences so it uses them.
 
 ## Open originals in your browser
 

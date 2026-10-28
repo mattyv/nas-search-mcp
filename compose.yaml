@@ -29,7 +29,9 @@ services:
       NAS_MEMORY_ENABLED: "${NAS_MEMORY_ENABLED:-false}"
       NAS_MEMORY_SOCKET: /data/memory-ipc/memory.sock
       NAS_MEMORY_SCOPES: "${NAS_MEMORY_SCOPES:-personal}"
-      NAS_OAUTH_PASSKEYS: "${NAS_OAUTH_PASSKEYS:-enroll}"
+      # No default here: the service picks enroll, or off for an IP-address issuer.
+      NAS_OAUTH_PASSKEYS: "${NAS_OAUTH_PASSKEYS:-}"
+      NAS_EDITOR_ORIGIN: "${NAS_EDITOR_ORIGIN:-}"
       NAS_UPGRADE_DIR: "${NAS_UPGRADE_DIR:-}"
       # The installer adds a read-only socket-directory bind only when configured.
       NAS_SYNOLOGY_PHOTOS_SOCKET: "${NAS_SYNOLOGY_PHOTOS_SOCKET:-}"
@@ -108,14 +110,16 @@ services:
       retries: 3
 
   # Optional shared memory (profile "memory"). The editor port is localhost only;
-  # expose it privately with `tailscale serve`. It keeps the default network because
-  # the optional Jev classifier needs outbound HTTPS.
+  # expose it privately with `tailscale serve`. It sits on its own network so the
+  # search container cannot reach the editor port, and keeps outbound HTTPS for the
+  # optional Jev classifier.
   nas-memory:
     profiles: [memory]
     image: nas-search-mcp:local
     command: [memory-service]
     restart: unless-stopped
     init: true
+    networks: [memory]
     user: "${NAS_UID:-1000}:${NAS_GID:-1000}"
     ports:
       - "127.0.0.1:${NAS_EDITOR_PORT:-8083}:8083"
@@ -150,3 +154,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+networks:
+  memory: {}
