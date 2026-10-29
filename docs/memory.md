@@ -69,7 +69,7 @@ Anything under `work/...` is work material. Keep it out of `NAS_JEV_SCOPES` so i
 
 Passkeys protect the sign-in page that connects an assistant to your NAS and approves actions in your browser. Set `NAS_OAUTH_PASSKEYS` in `.env`:
 
-- `enroll`: password works, and you can add a passkey. This is the default.
+- `enroll`: the default. Sign-in offers to add a passkey until you have one, then always asks for it.
 - `required`: every sign-in needs a passkey.
 - `off`: password only. This is the default when `NAS_OAUTH_ISSUER` is an IP address, because browsers do not offer passkeys for IP addresses.
 
@@ -83,6 +83,10 @@ Register a passkey:
 - Ubuntu: use Chrome, a hardware security key, or scan the QR code with your phone.
 
 Manage passkeys at the same address.
+
+Check that a new passkey works: open `<issuer>/passkeys` in a private window, enter your password and use the passkey. Its "Last used" time updates. Registering alone shows "never".
+
+Add a second passkey that does not depend on the first. A Mac passkey syncs through iCloud Keychain to your iPhone, so losing your Apple account loses both. Add one from Chrome on another computer, or a hardware security key, so you cannot lock yourself out.
 
 If you lose every passkey, run this on the NAS to clear them:
 
@@ -118,7 +122,13 @@ The memory database is the only copy of your journal, checkpoints and decisions;
    docker exec nas-search-nas-memory-1 /app/nas-search memory-backup
    ```
 
-Each run writes a copy to the `backups` folder inside your memory folder (for example `/volume1/docker/nas-search/memory/backups`) and keeps the newest 7. Point your offsite backup, such as Glacier Backup, at that `backups` folder. To keep a different number of copies, add `-e NAS_MEMORY_BACKUP_KEEP=14` after `docker exec` (1 to 90).
+Test it once by hand over SSH; it prints the new copy's path inside the container:
+
+```sh
+sudo docker exec nas-search-nas-memory-1 /app/nas-search memory-backup
+```
+
+The scheduled task runs as `root`, so it needs no `sudo`. Each run writes a copy to the `backups` folder inside your memory folder (for example `/volume1/docker/nas-search/memory/backups`) and keeps the newest 7. Point your offsite backup, such as Glacier Backup, at that `backups` folder; it appears after the first run. To keep a different number of copies, add `-e NAS_MEMORY_BACKUP_KEEP=14` after `docker exec` (1 to 90).
 
 To restore, stop the memory container, replace `memory.sqlite3` with a backup copy, delete any `memory.sqlite3-wal` and `memory.sqlite3-shm` files beside it, and start the container again.
 
