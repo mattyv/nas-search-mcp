@@ -242,6 +242,12 @@ module CoreTests {
     expect DefaultPasskeyMode(false) == "enroll";
     expect ScopeWideContextCategory("preference");
     expect !ScopeWideContextCategory("fact");
+    expect KeepBackup(0, 7);
+    expect KeepBackup(6, 7);
+    expect !KeepBackup(7, 7);
+    expect !KeepBackup(0, 0);
+    expect ValidBackupRetention(1) && ValidBackupRetention(90);
+    expect !ValidBackupRetention(0) && !ValidBackupRetention(91);
     print "Dafny core executable tests passed\n";
   }
 }

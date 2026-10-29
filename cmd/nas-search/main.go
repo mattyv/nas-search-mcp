@@ -120,6 +120,14 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "memory-backup" {
+		path, err := runMemoryBackup()
+		if err != nil {
+			log.Fatalf("memory backup failed: %v", err)
+		}
+		fmt.Println(path)
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "memory-health" {
 		if err := memoryHealth(); err != nil {
 			os.Exit(1)

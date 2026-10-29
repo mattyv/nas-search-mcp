@@ -106,6 +106,22 @@ Two thresholds, scored from 0 to 1000, control the result. A score at or above `
 
 Other settings: `NAS_JEV_URL` (default `https://api.typesafe.ai`), `NAS_JEV_MODEL` (default `jev-latest`), `NAS_EDITOR_PORT` (default 8083, range 1024 to 65535).
 
+## Back up your memory
+
+The memory database is the only copy of your journal, checkpoints and decisions; unlike the search index, it cannot be rebuilt from your files. Back up a consistent copy, not the live file, which a sync can catch mid-write.
+
+1. In DSM, open Control Panel → Task Scheduler → Create → Scheduled Task → User-defined script.
+2. Run it as `root`, daily, at least an hour before your offsite backup.
+3. Use this script:
+
+   ```sh
+   docker exec nas-search-nas-memory-1 /app/nas-search memory-backup
+   ```
+
+Each run writes a copy to the `backups` folder inside your memory folder (for example `/volume1/docker/nas-search/memory/backups`) and keeps the newest 7. Point your offsite backup, such as Glacier Backup, at that `backups` folder. To keep a different number of copies, add `-e NAS_MEMORY_BACKUP_KEEP=14` after `docker exec` (1 to 90).
+
+To restore, stop the memory container, replace `memory.sqlite3` with a backup copy, delete any `memory.sqlite3-wal` and `memory.sqlite3-shm` files beside it, and start the container again.
+
 ## Limits
 
 - Claude does not capture your chats on its own. It writes a note only when you ask.
