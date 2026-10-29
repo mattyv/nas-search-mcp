@@ -1,0 +1,215 @@
+{{define "projects"}}{{template "head" .}}
+<h1>Projects</h1>
+{{range .Data.Projects}}<a class="card" href="/p/{{pe .Project}}">
+<h3>{{.Project}}</h3>
+<div class="muted">Last activity {{ts .LastActivity}}</div>
+<span class="tag">checkpoint v{{.CheckpointVersion}}</span>{{if .OpenCandidates}}<span class="tag warn">{{.OpenCandidates}} to review</span>{{end}}
+</a>
+{{else}}<p class="muted">No projects yet. Add a note to start one.</p>{{end}}
+<p><a class="button secondary" href="/memories">Browse memories</a></p>
+{{template "foot" .}}{{end}}
+
+{{define "project"}}{{template "head" .}}
+{{with .Data.Ctx}}
+<h1>{{$.Data.Project}}</h1>
+<p class="row">
+<a class="button" href="/p/{{pe $.Data.Project}}/checkpoint">Edit checkpoint</a>
+<a class="button secondary" href="/timeline?project={{$.Data.Project}}">Timeline</a>
+<a class="button secondary" href="/memories?status=all&amp;project={{$.Data.Project}}">Memories</a>
+</p>
+{{if .Checkpoint}}
+<h2>Checkpoint v{{.Checkpoint.Version}}</h2>
+<div class="card">
+<pre>{{.Checkpoint.Summary}}</pre>
+{{if .Checkpoint.Goal}}<p><strong>Goal:</strong> {{.Checkpoint.Goal}}</p>{{end}}
+<div class="muted">Updated {{ts .Checkpoint.UpdatedAt}} by {{.Checkpoint.Actor}} via {{.Checkpoint.Client}}</div>
+</div>
+{{if .Checkpoint.Done}}<h2>Done</h2><div class="card"><ul class="plain">{{range .Checkpoint.Done}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+{{if .Checkpoint.Decisions}}<h2>Decided in this checkpoint</h2><div class="card"><ul class="plain">{{range .Checkpoint.Decisions}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+{{if .Checkpoint.Blockers}}<h2>Blockers</h2><div class="card"><ul class="plain">{{range .Checkpoint.Blockers}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+{{if .Checkpoint.Next}}<h2>Next</h2><div class="card"><ul class="plain">{{range .Checkpoint.Next}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+{{else}}<p class="notice">No checkpoint saved yet.</p>{{end}}
+{{if .Decisions}}<h2>Decisions</h2>{{range .Decisions}}{{template "memcard" .}}{{end}}{{end}}
+{{if .Memories}}<h2>Memories</h2>{{range .Memories}}{{template "memcard" .}}{{end}}{{end}}
+{{if .Unconfirmed}}<h2>Not confirmed</h2>
+<p class="muted">These suggestions are not confirmed yet. <a href="/review">Review them</a>.</p>
+{{range .Unconfirmed}}{{template "memcard" .}}{{end}}{{end}}
+{{if .Recent}}<h2>Recent events</h2>{{range .Recent}}{{template "eventrow" .}}{{end}}{{end}}
+{{range .Notes}}<p class="muted">{{.}}</p>{{end}}
+{{if .Omitted}}<p class="muted">{{.Omitted}} more items did not fit.</p>{{end}}
+{{end}}
+{{template "foot" .}}{{end}}
+
+{{define "checkpoint"}}{{template "head" .}}
+<h1>Checkpoint: {{.Data.Project}}</h1>
+{{if .Data.Newer}}<details open><summary>Newer version {{.Data.Newer.Version}} saved elsewhere</summary>
+<div class="card"><pre>{{.Data.Newer.Summary}}</pre>{{if .Data.Newer.Goal}}<p>Goal: {{.Data.Newer.Goal}}</p>{{end}}</div></details>{{end}}
+<form method="post" action="/p/{{pe .Data.Project}}/checkpoint">
+<input type="hidden" name="expected_version" value="{{.Data.Version}}">
+<label for="summary">Summary</label>
+<textarea id="summary" name="summary" required>{{.Data.Form.Summary}}</textarea>
+<label for="goal">Goal</label>
+<input id="goal" name="goal" value="{{.Data.Form.Goal}}">
+<label for="done">Done (one per line)</label>
+<textarea id="done" name="done">{{.Data.Form.Done}}</textarea>
+<label for="decisions">Decisions (one per line)</label>
+<textarea id="decisions" name="decisions">{{.Data.Form.Decisions}}</textarea>
+<label for="blockers">Blockers (one per line)</label>
+<textarea id="blockers" name="blockers">{{.Data.Form.Blockers}}</textarea>
+<label for="next">Next (one per line)</label>
+<textarea id="next" name="next">{{.Data.Form.Next}}</textarea>
+<label for="branch">Branch</label>
+<input id="branch" name="branch" value="{{.Data.Form.Branch}}">
+<label for="commit">Commit</label>
+<input id="commit" name="commit" value="{{.Data.Form.Commit}}">
+<p><button type="submit">Save checkpoint</button> <a class="button secondary" href="/p/{{pe .Data.Project}}">Cancel</a></p>
+</form>
+{{template "foot" .}}{{end}}
+
+{{define "timeline"}}{{template "head" .}}
+<h1>Timeline</h1>
+<form class="filter" method="get" action="/timeline">
+<input type="date" name="day" value="{{.Data.Day}}" aria-label="Day">
+<input name="project" value="{{.Data.Project}}" placeholder="Project" aria-label="Project">
+<button type="submit">Go</button>
+</form>
+<p class="pager">
+<a class="button secondary" href="/timeline?day={{.Data.Prev}}{{if .Data.Project}}&amp;project={{.Data.Project}}{{end}}">&larr; {{.Data.Prev}}</a>
+<a class="button secondary" href="/timeline?day={{.Data.Next}}{{if .Data.Project}}&amp;project={{.Data.Project}}{{end}}">{{.Data.Next}} &rarr;</a>
+</p>
+{{range .Data.Groups}}<h2>{{.Day}}</h2>{{range .Events}}{{template "eventrow" .}}{{end}}
+{{else}}<p class="muted">Nothing recorded on {{.Data.Day}}.</p>{{end}}
+{{template "foot" .}}{{end}}
+
+{{define "event"}}{{template "head" .}}
+{{with .Data.E}}
+<h1>{{.Title}}</h1>
+<p><span class="tag">{{.Type}}</span><span class="tag">{{.Status}}</span>{{if .Project}}<span class="tag">{{.Project}}</span>{{end}}<span class="tag">{{.Scope}}</span></p>
+<p class="muted">{{ts .OccurredAt}} · {{.Actor}} via {{.Client}}</p>
+{{if .Body}}<div class="card"><pre>{{.Body}}</pre></div>{{end}}
+{{if .Supersedes}}<p>Corrects <a href="/e/{{pe .Supersedes}}">an earlier event</a>.</p>{{end}}
+{{if .NextActions}}<h2>Next actions</h2><div class="card"><ul class="plain">{{range .NextActions}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+{{if .Sources}}<h2>Sources</h2>{{range .Sources}}<div class="card"><span class="tag">{{.Kind}}</span>{{if not .Available}}<span class="tag warn">no longer available</span>{{end}}
+<p>{{.Locator}}</p>{{if .Excerpt}}<pre class="muted">{{.Excerpt}}</pre>{{end}}</div>{{end}}{{end}}
+{{if .Related}}<h2>Related</h2><div class="card"><ul class="plain">{{range .Related}}<li><a href="/e/{{pe .}}">{{.}}</a></li>{{end}}</ul></div>{{end}}
+<p class="row">
+<a class="button" href="/e/{{pe .ID}}/correct">Correct</a>
+<a class="button danger" href="/e/{{pe .ID}}/forget">Forget</a>
+</p>
+{{end}}
+{{template "foot" .}}{{end}}
+
+{{define "correct"}}{{template "head" .}}
+<h1>Correct this event</h1>
+<p class="muted">Your correction is added as a new entry. The original stays, marked as corrected.</p>
+<form method="post" action="/e/{{pe .Data.ID}}/correct">
+<input type="hidden" name="idempotency_key" value="{{.Data.Key}}">
+<label for="title">Title</label>
+<input id="title" name="title" value="{{.Data.Form.Title}}" required maxlength="200">
+<label for="body">Details</label>
+<textarea id="body" name="body">{{.Data.Form.Body}}</textarea>
+<label for="next_actions">Next actions (one per line)</label>
+<textarea id="next_actions" name="next_actions">{{.Data.Form.NextActions}}</textarea>
+<p><button type="submit">Save correction</button> <a class="button secondary" href="/e/{{pe .Data.ID}}">Cancel</a></p>
+</form>
+{{template "foot" .}}{{end}}
+
+{{define "forget"}}{{template "head" .}}
+<h1>Confirm: forget this {{.Data.What}}?</h1>
+<div class="card"><p>{{.Data.Detail}}</p></div>
+<p>This erases the content and cannot be undone. Only a record that something was forgotten remains.</p>
+<form method="post" action="{{.Data.Action}}">
+<input type="hidden" name="confirm" value="yes">
+<button type="submit" class="danger">Yes, forget it</button>
+<a class="button secondary" href="{{.Data.Back}}">Keep it</a>
+</form>
+{{template "foot" .}}{{end}}
+
+{{define "new"}}{{template "head" .}}
+<h1>New note</h1>
+<p id="note-message" class="notice" role="status" hidden></p>
+<p id="outbox-status" class="notice" role="status" hidden></p>
+<form id="note-form" method="post" action="/new">
+<input type="hidden" name="idempotency_key" value="{{.Data.Form.Key}}">
+<label for="type">Type</label>
+<select id="type" name="type">{{range .Data.Types}}<option value="{{.}}"{{if eq . $.Data.Form.Type}} selected{{end}}>{{.}}</option>{{end}}</select>
+<label for="project">Project</label>
+<input id="project" name="project" value="{{.Data.Form.Project}}" list="projects" autocomplete="off">
+<datalist id="projects">{{range .Data.ProjectNames}}<option value="{{.}}">{{end}}</datalist>
+<label for="scope">Scope</label>
+<select id="scope" name="scope">{{range .Data.Roots}}<option value="{{.}}"{{if eq . $.Data.Form.Scope}} selected{{end}}>{{.}}</option>{{end}}</select>
+<label for="title">Title</label>
+<input id="title" name="title" value="{{.Data.Form.Title}}" required maxlength="200">
+<label for="body">Details</label>
+<textarea id="body" name="body">{{.Data.Form.Body}}</textarea>
+<label for="next_actions">Next actions (one per line)</label>
+<textarea id="next_actions" name="next_actions">{{.Data.Form.NextActions}}</textarea>
+<p><button type="submit">Save note</button></p>
+</form>
+{{template "foot" .}}{{end}}
+
+{{define "memories"}}{{template "head" .}}
+<h1>Memories</h1>
+<form class="filter" method="get" action="/memories">
+<select name="status" aria-label="Status">{{range .Data.Statuses}}<option value="{{.}}"{{if eq . $.Data.Status}} selected{{end}}>{{.}}</option>{{end}}</select>
+<input name="project" value="{{.Data.Project}}" placeholder="Project" aria-label="Project">
+<button type="submit">Filter</button>
+</form>
+{{range .Data.Items}}{{$m := .M}}
+{{template "memcard" $m}}
+<p class="muted"><a href="/m/{{pe $m.ID}}">Details and evidence</a></p>
+{{template "memactions" .}}
+{{else}}<p class="muted">No memories with this status.</p>{{end}}
+{{template "foot" .}}{{end}}
+
+{{define "memactions"}}{{$m := .M}}<div class="card">
+{{range .Actions}}<details><summary>{{.Label}}</summary>
+<form method="post" action="/memories/{{pe $m.ID}}/transition">
+<input type="hidden" name="to" value="{{.To}}">
+{{if .NeedsStatement}}<label>New statement<textarea name="statement" required></textarea></label>{{end}}
+<label>Reason<input name="reason" required maxlength="500"></label>
+<button type="submit">{{.Label}}</button>
+</form></details>{{end}}
+<a class="button danger" href="/memories/{{pe $m.ID}}/forget">Forget</a>
+</div>{{end}}
+
+{{define "memory"}}{{template "head" .}}
+{{with .Data.Item}}{{$m := .M}}
+<h1>Memory</h1>
+{{template "memcard" $m}}
+<p class="muted">Status: {{$m.Status}} · Category: {{$m.Category}} · Scope: {{$m.Scope}} · Confidence: {{pct $m.Probability}}{{if $m.Model}} · model {{$m.Model}}{{end}}</p>
+<p class="muted">Created {{ts $m.CreatedAt}} · Updated {{ts $m.UpdatedAt}}</p>
+{{if $m.ReplacedBy}}<p>Replaced by <a href="/m/{{pe $m.ReplacedBy}}">a newer memory</a>.</p>{{end}}
+{{if $m.Evidence}}<h2>Evidence</h2><div class="card"><ul class="plain">{{range $m.Evidence}}<li><a href="/e/{{pe .}}">{{.}}</a></li>{{end}}</ul></div>{{else}}<p class="muted">No evidence is recorded for this memory.</p>{{end}}
+{{template "memactions" .}}
+{{end}}
+<p><a class="button secondary" href="/memories?status=all">All memories</a></p>
+{{template "foot" .}}{{end}}
+
+{{define "review"}}{{template "head" .}}
+<h1>Review</h1>
+<p class="muted">Suggestions that need your decision. Accepted ones become part of what assistants remember. <a href="/memories">Browse all memories</a>.</p>
+{{range .Data.Items}}
+<div class="card unconfirmed">
+<span class="tag warn">{{if eq .Status "disputed"}}disputed{{else}}not confirmed{{end}}</span>
+<span class="tag">{{.Category}}</span>{{if .Project}}<span class="tag">{{.Project}}</span>{{end}}
+<p class="muted">Confidence: {{pct .Probability}}{{if .Model}} · model {{.Model}}{{end}}</p>
+{{if .Reason}}<p class="muted">Reason: {{.Reason}}</p>{{end}}
+{{if .Evidence}}<p class="muted">Evidence: {{range .Evidence}}<a href="/e/{{pe .}}">{{.}}</a> {{end}}</p>{{end}}
+<p class="muted"><a href="/m/{{pe .ID}}">Open memory</a></p>
+<form method="post" action="/review/{{pe .ID}}">
+<label>Statement<textarea name="statement" required>{{.Statement}}</textarea></label>
+<label>Reason (optional)<input name="reason" maxlength="500"></label>
+<button type="submit" name="action" value="accept">Accept</button>
+<button type="submit" name="action" value="reject" class="danger">Reject</button>
+<button type="submit" name="action" value="edit" class="secondary">Edit &amp; accept</button>
+</form>
+</div>
+{{else}}<p class="notice">Nothing to review. You are all caught up.</p>{{end}}
+{{template "foot" .}}{{end}}
+
+{{define "error"}}{{template "head" .}}
+<h1>{{.Title}}</h1>
+<p>{{.Data.Message}}</p>
+<p><a class="button" href="/">Back to projects</a></p>
+{{template "foot" .}}{{end}}

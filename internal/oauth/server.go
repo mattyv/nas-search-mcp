@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/go-webauthn/webauthn/webauthn"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/mattyv/nas-search-mcp/internal/policy"
 	"golang.org/x/crypto/bcrypt"
@@ -44,6 +45,8 @@ type Config struct {
 	Issuer, DatabasePath, PasswordHash, ClientID, ClientSecretHash string
 	RedirectURIs                                                   []string
 	ChatGPTRedirectURI                                             string
+	// PasskeyMode is "off", "enroll" or "required"; empty means "off".
+	PasskeyMode string
 }
 type Server struct {
 	cfg                 Config
@@ -53,6 +56,7 @@ type Server struct {
 	registrationLimiter *rate.Limiter
 	validationGate      chan struct{}
 	validationWaiters   chan struct{}
+	wa                  *webauthn.WebAuthn // nil when passkeys are off
 }
 
 func New(c Config) (*Server, error) {
@@ -70,6 +74,18 @@ func New(c Config) (*Server, error) {
 	if c.ClientSecretHash != "" {
 		if cost, e = bcrypt.Cost([]byte(c.ClientSecretHash)); e != nil || cost < 10 {
 			return nil, errors.New("invalid client secret hash")
+		}
+	}
+	if c.PasskeyMode == "" {
+		c.PasskeyMode = "off"
+	}
+	if !validPasskeyMode(c.PasskeyMode) {
+		return nil, errors.New(`OAuth passkey mode must be "off", "enroll" or "required"`)
+	}
+	var wa *webauthn.WebAuthn
+	if c.PasskeyMode != "off" {
+		if wa, e = newRelyingParty(c); e != nil {
+			return nil, e
 		}
 	}
 	c.RedirectURIs = append([]string{"https://claude.ai/api/mcp/auth_callback"}, c.RedirectURIs...)
@@ -106,7 +122,11 @@ func New(c Config) (*Server, error) {
 		db.Close()
 		return nil, e
 	}
-	return &Server{cfg: c, db: db, limiter: rate.NewLimiter(rate.Every(time.Second), 10), registrationLimiter: rate.NewLimiter(rate.Every(10*time.Second), 4), validationGate: make(chan struct{}, 2), validationWaiters: make(chan struct{}, 60)}, nil
+	if _, e = db.Exec(passkeySchema); e != nil {
+		db.Close()
+		return nil, e
+	}
+	return &Server{wa: wa, cfg: c, db: db, limiter: rate.NewLimiter(rate.Every(time.Second), 10), registrationLimiter: rate.NewLimiter(rate.Every(10*time.Second), 4), validationGate: make(chan struct{}, 2), validationWaiters: make(chan struct{}, 60)}, nil
 }
 
 func validChatGPTRedirect(redirect string) bool {
@@ -180,6 +200,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", metadata)
 	mux.HandleFunc("GET /authorize", s.authorize)
 	mux.HandleFunc("POST /authorize", s.consent)
+	mux.HandleFunc("GET /authorize/passkey.js", s.passkeyScript)
+	mux.HandleFunc("POST /authorize/passkey/options", s.passkeyOptions)
+	mux.HandleFunc("POST /authorize/passkey/finish", s.passkeyFinish)
 	mux.HandleFunc("POST /token", s.token)
 	mux.HandleFunc("POST /register", s.register)
 	mux.HandleFunc("GET "+browserCallbackPath, s.browserCallback)
@@ -195,6 +218,7 @@ func (s *Server) Handler() http.Handler {
 				oauthError(w, 500, "server_error")
 				return
 			}
+			s.db.Exec("DELETE FROM oauth_passkey_flows WHERE expires <= ?", time.Now().Unix())
 		}
 		mux.ServeHTTP(w, r)
 	})
@@ -314,12 +338,24 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 403, "access_denied")
 		return
 	}
+	if s.beginPasskeyStep(w, tx, session) {
+		return
+	}
+	s.issueCode(w, r, tx, session, v)
+}
+
+// issueCode ends a successful sign-in: it spends the login session, stores the
+// authorization code and redirects. The caller has verified every factor.
+func (s *Server) issueCode(w http.ResponseWriter, r *http.Request, tx *sql.Tx, session string, v url.Values) {
 	code, e := randomToken()
 	if e != nil {
 		oauthError(w, 500, "server_error")
 		return
 	}
 	_, e = tx.Exec("DELETE FROM oauth_grants WHERE hash=?", hash(session))
+	if e == nil {
+		_, e = tx.Exec("DELETE FROM oauth_passkey_flows WHERE session_hash=?", hash(session))
+	}
 	if e == nil {
 		_, e = tx.Exec("INSERT INTO oauth_grants(hash,kind,client,redirect,challenge,resource,family,expires) VALUES(?, 'code', ?, ?, ?, ?, ?, ?)", hash(code), v.Get("client_id"), v.Get("redirect_uri"), v.Get("code_challenge"), v.Get("resource"), hash(code), time.Now().Add(time.Minute).Unix())
 	}

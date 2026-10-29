@@ -399,6 +399,362 @@ module Core {
     }
   }
 
+  // ---- Shared memory and journal ----
+
+  predicate ScopeChar(c: char) {
+    ('a' <= c <= 'z') || ('0' <= c <= '9') || c == '-' || c == '_'
+  }
+
+  // Scopes are slash-separated lowercase segments such as "personal" or "work/acme".
+  predicate ValidScope(s: string) {
+    0 < |s| <= 128 && s[0] != '/' && s[|s|-1] != '/' &&
+    (forall i | 0 <= i < |s| :: ScopeChar(s[i]) || s[i] == '/') &&
+    (forall i | 0 <= i < |s| - 1 :: !(s[i] == '/' && s[i+1] == '/'))
+  }
+
+  // A scope lies within a root only at a segment boundary: "personal2" is not within "personal".
+  predicate ScopeWithin(scope: string, root: string) {
+    scope == root || (|root| < |scope| && scope[..|root|] == root && scope[|root|] == '/')
+  }
+
+  lemma ScopeWithinBoundary(scope: string, root: string)
+    requires ScopeWithin(scope, root) && scope != root
+    ensures |root| < |scope| && scope[|root|] == '/'
+  {}
+
+  lemma ScopeWithinTransitive(a: string, b: string, c: string)
+    requires ScopeWithin(a, b) && ScopeWithin(b, c)
+    ensures ScopeWithin(a, c)
+  {
+    if a != b && b != c {
+      assert a[..|b|] == b;
+      assert a[..|c|] == a[..|b|][..|c|];
+      assert a[|c|] == a[..|b|][|c|] == b[|c|];
+    }
+  }
+
+  // Retrieval is denied unless the entry's scope lies within one of the caller's roots.
+  predicate ScopeVisible(scope: string, roots: seq<string>) {
+    exists i | 0 <= i < |roots| :: ScopeWithin(scope, roots[i])
+  }
+
+  lemma NoRootsSeeNothing(scope: string)
+    ensures !ScopeVisible(scope, [])
+  {}
+
+  predicate ValidMemoryStatus(status: string) {
+    status in {"candidate", "accepted", "disputed", "rejected", "superseded", "retracted"}
+  }
+
+  predicate IsCurrentMemory(status: string) {
+    status == "accepted"
+  }
+
+  predicate TerminalMemory(status: string) {
+    status == "rejected" || status == "superseded" || status == "retracted"
+  }
+
+  predicate ValidMemoryTransition(from: string, to: string) {
+    (from == "candidate" && (to == "accepted" || to == "rejected" || to == "disputed")) ||
+    (from == "accepted" && (to == "superseded" || to == "retracted" || to == "disputed")) ||
+    (from == "disputed" && (to == "accepted" || to == "rejected" || to == "retracted"))
+  }
+
+  lemma TerminalHasNoTransition(from: string, to: string)
+    requires TerminalMemory(from)
+    ensures !ValidMemoryTransition(from, to)
+  {}
+
+  ghost predicate ValidMemoryHistory(h: seq<string>) {
+    forall i | 0 <= i < |h| - 1 :: ValidMemoryTransition(h[i], h[i+1])
+  }
+
+  // A retracted, superseded or rejected memory is the end of its history, so it can
+  // never again be returned as current.
+  lemma TerminalMemoryIsFinal(h: seq<string>, i: int)
+    requires ValidMemoryHistory(h) && 0 <= i < |h| && TerminalMemory(h[i])
+    ensures i == |h| - 1 && !IsCurrentMemory(h[|h| - 1])
+  {
+    if i < |h| - 1 {
+      TerminalHasNoTransition(h[i], h[i+1]);
+    }
+  }
+
+  // Assistants may only raise a dispute; accepting, rejecting and retracting are the owner's.
+  predicate AssistantMayTransition(from: string, to: string) {
+    ValidMemoryTransition(from, to) && to == "disputed"
+  }
+
+  lemma AssistantCannotMakeCurrent(from: string, to: string)
+    requires AssistantMayTransition(from, to)
+    ensures !IsCurrentMemory(to)
+  {}
+
+  // Entries leave the NAS for an external classifier only when one is configured, the
+  // owner did not write them, and their scope is explicitly allowed out.
+  predicate ExternalClassificationAllowed(configured: bool, userAttested: bool, scope: string, external: seq<string>) {
+    configured && !userAttested && ScopeVisible(scope, external)
+  }
+
+  lemma OwnerEntriesStayLocal(configured: bool, scope: string, external: seq<string>)
+    ensures !ExternalClassificationAllowed(configured, true, scope, external)
+  {}
+
+  predicate ValidMemoryCategory(c: string) {
+    c in {"fact", "preference", "decision", "constraint", "lesson"}
+  }
+
+  // Only events that state something durable become memory candidates.
+  predicate ProposesMemory(eventType: string) {
+    eventType in {"decision", "observation", "correction", "manual_note"}
+  }
+
+  function DefaultMemoryCategory(eventType: string): string
+    ensures ValidMemoryCategory(DefaultMemoryCategory(eventType))
+  {
+    if eventType == "decision" then "decision" else "fact"
+  }
+
+  predicate ValidEventType(t: string) {
+    t in {"observation", "discussion", "exploration", "decision", "action",
+          "result", "correction", "checkpoint", "manual_note"}
+  }
+
+  predicate ValidEventStatus(s: string) {
+    s in {"proposed", "confirmed", "unverified", "superseded"}
+  }
+
+  // Assistants may record any journal type except checkpoints, which only the
+  // checkpoint operation writes.
+  predicate AssistantMayAppendType(t: string) {
+    ValidEventType(t) && t != "checkpoint"
+  }
+
+  // Superseding marks the older event "superseded". An assistant may not do that to an
+  // entry the owner confirmed; the link is kept but the owner's status stands.
+  predicate MaySupersede(newActorIsUser: bool, oldStatus: string) {
+    newActorIsUser || oldStatus != "confirmed"
+  }
+
+  lemma AssistantsKeepOwnerConfirmations(oldStatus: string)
+    requires oldStatus == "confirmed"
+    ensures !MaySupersede(false, oldStatus)
+  {}
+
+  // Callers of the private socket are never the owner, so it never forgets.
+  predicate SocketMethodAllowed(name: string) {
+    name != "ForgetEvent" && name != "ForgetMemory"
+  }
+
+  // A correction carries a replacement statement only when it supersedes.
+  predicate CorrectionMayCarryStatement(to: string) {
+    to == "superseded"
+  }
+
+  // Project-less memories that apply across a scope in every context package.
+  predicate ScopeWideContextCategory(category: string) {
+    category == "preference" || category == "constraint"
+  }
+
+  // The status an event gets when its writer leaves it empty.
+  function DefaultEventStatus(actorIsUser: bool, eventType: string): string
+    ensures ValidEventStatus(DefaultEventStatus(actorIsUser, eventType))
+    ensures !actorIsUser ==> DefaultEventStatus(actorIsUser, eventType) != "confirmed"
+  {
+    if actorIsUser then "confirmed" else if eventType == "exploration" then "proposed" else "unverified"
+  }
+
+  // Only the owner may confirm; assistants may write any other valid status.
+  predicate EventStatusAllowed(actorIsUser: bool, status: string) {
+    ValidEventStatus(status) && (actorIsUser || status != "confirmed")
+  }
+
+  // Whatever an assistant writes, explicitly or by default, is never confirmed.
+  lemma AssistantNeverConfirms(eventType: string, explicit: string)
+    ensures DefaultEventStatus(false, eventType) != "confirmed"
+    ensures EventStatusAllowed(false, explicit) ==> explicit != "confirmed"
+  {}
+
+  predicate IsUnconfirmedMemory(status: string) {
+    status == "candidate" || status == "disputed"
+  }
+
+  lemma UnconfirmedIsNeverCurrent(status: string)
+    requires IsUnconfirmedMemory(status)
+    ensures !IsCurrentMemory(status)
+  {}
+
+  function ContextBudget(requested: int): int
+    ensures 200 <= ContextBudget(requested) <= 8000
+  {
+    if requested <= 0 then 1500 else if requested < 200 then 200 else if requested > 8000 then 8000 else requested
+  }
+
+  // A memory is erased with a forgotten event only when that event was its sole evidence.
+  predicate OrphanedAfterForget(evidence: seq<string>, forgotten: string) {
+    |evidence| > 0 && forall i | 0 <= i < |evidence| :: evidence[i] == forgotten
+  }
+
+  lemma OtherEvidenceKeepsMemory(evidence: seq<string>, forgotten: string, i: int)
+    requires 0 <= i < |evidence| && evidence[i] != forgotten
+    ensures !OrphanedAfterForget(evidence, forgotten)
+  {}
+
+  // Optimistic concurrency: a checkpoint write succeeds only against the version it read.
+  function CheckpointWrite(current: nat, expected: int): (bool, nat)
+    ensures CheckpointWrite(current, expected).0 <==> expected == current
+    ensures CheckpointWrite(current, expected).0 ==> CheckpointWrite(current, expected).1 == current + 1
+    ensures !CheckpointWrite(current, expected).0 ==> CheckpointWrite(current, expected).1 == current
+  {
+    if expected == current then (true, current + 1) else (false, current)
+  }
+
+  function SumCosts(costs: seq<nat>, idx: seq<nat>): nat
+    requires forall k | 0 <= k < |idx| :: idx[k] < |costs|
+  {
+    if |idx| == 0 then 0 else costs[idx[0]] + SumCosts(costs, idx[1..])
+  }
+
+  function TotalFrom(costs: seq<nat>, start: nat): nat
+    requires start <= |costs|
+    decreases |costs| - start
+  {
+    if start == |costs| then 0 else costs[start] + TotalFrom(costs, start + 1)
+  }
+
+  function PackFrom(costs: seq<nat>, remaining: nat, start: nat): seq<nat>
+    requires start <= |costs|
+    ensures forall k | 0 <= k < |PackFrom(costs, remaining, start)| ::
+      start <= PackFrom(costs, remaining, start)[k] < |costs|
+    ensures forall a, b | 0 <= a < b < |PackFrom(costs, remaining, start)| ::
+      PackFrom(costs, remaining, start)[a] < PackFrom(costs, remaining, start)[b]
+    ensures SumCosts(costs, PackFrom(costs, remaining, start)) <= remaining
+    ensures TotalFrom(costs, start) <= remaining ==> |PackFrom(costs, remaining, start)| == |costs| - start
+    ensures start < |costs| && costs[start] <= remaining ==>
+      |PackFrom(costs, remaining, start)| > 0 && PackFrom(costs, remaining, start)[0] == start
+    ensures start < |costs| && costs[start] > remaining ==>
+      PackFrom(costs, remaining, start) == PackFrom(costs, remaining, start + 1)
+    decreases |costs| - start
+  {
+    if start == |costs| then []
+    else if costs[start] <= remaining then
+      var rest := PackFrom(costs, remaining - costs[start], start + 1);
+      assert ([start] + rest)[1..] == rest;
+      [start] + rest
+    else PackFrom(costs, remaining, start + 1)
+  }
+
+  // Context packages keep items in priority order, skip any item that does not fit,
+  // never exceed the budget, and include everything when everything fits.
+  function PackBudget(costs: seq<nat>, budget: nat): seq<nat>
+    ensures forall k | 0 <= k < |PackBudget(costs, budget)| :: PackBudget(costs, budget)[k] < |costs|
+    ensures forall a, b | 0 <= a < b < |PackBudget(costs, budget)| ::
+      PackBudget(costs, budget)[a] < PackBudget(costs, budget)[b]
+    ensures SumCosts(costs, PackBudget(costs, budget)) <= budget
+    ensures TotalFrom(costs, 0) <= budget ==> |PackBudget(costs, budget)| == |costs|
+    // The highest-priority item (the checkpoint) is always kept when it fits on its own.
+    ensures |costs| > 0 && costs[0] <= budget ==> |PackBudget(costs, budget)| > 0 && PackBudget(costs, budget)[0] == 0
+  {
+    PackFrom(costs, budget, 0)
+  }
+
+  predicate ValidThresholds(acceptAt: int, rejectAt: int) {
+    0 <= rejectAt < acceptAt <= 1000
+  }
+
+  // Probabilities are per-mille. A missing score or invalid thresholds go to human review.
+  function RouteCandidate(p: int, acceptAt: int, rejectAt: int): string
+    ensures RouteCandidate(p, acceptAt, rejectAt) in {"accept", "reject", "review"}
+    ensures RouteCandidate(p, acceptAt, rejectAt) != "review" ==> 0 <= p <= 1000
+    ensures RouteCandidate(p, acceptAt, rejectAt) == "accept" ==> ValidThresholds(acceptAt, rejectAt) && p >= acceptAt
+    ensures RouteCandidate(p, acceptAt, rejectAt) == "reject" ==> ValidThresholds(acceptAt, rejectAt) && p <= rejectAt
+  {
+    if !ValidThresholds(acceptAt, rejectAt) || p < 0 || p > 1000 then "review"
+    else if p >= acceptAt then "accept"
+    else if p <= rejectAt then "reject"
+    else "review"
+  }
+
+  lemma RouteCandidateMonotonic(p1: int, p2: int, acceptAt: int, rejectAt: int)
+    requires 0 <= p1 <= p2 <= 1000
+    ensures RouteCandidate(p1, acceptAt, rejectAt) == "accept" ==> RouteCandidate(p2, acceptAt, rejectAt) == "accept"
+    ensures RouteCandidate(p2, acceptAt, rejectAt) == "reject" ==> RouteCandidate(p1, acceptAt, rejectAt) == "reject"
+  {}
+
+  // What a person writes or confirms is accepted; a model's proposal is accepted only
+  // above the configured threshold.
+  function InitialMemoryStatus(userAttested: bool, p: int, acceptAt: int, rejectAt: int): string
+    ensures InitialMemoryStatus(userAttested, p, acceptAt, rejectAt) in {"accepted", "rejected", "candidate"}
+    ensures !userAttested && InitialMemoryStatus(userAttested, p, acceptAt, rejectAt) == "accepted" ==>
+      ValidThresholds(acceptAt, rejectAt) && p >= acceptAt
+  {
+    if userAttested then "accepted"
+    else
+      var route := RouteCandidate(p, acceptAt, rejectAt);
+      if route == "accept" then "accepted" else if route == "reject" then "rejected" else "candidate"
+  }
+
+  // Fail closed: any mode other than "off", or "enroll" before the first passkey, requires one.
+  predicate PasskeyRequired(mode: string, registered: int) {
+    !(mode == "off" || (mode == "enroll" && registered <= 0))
+  }
+
+  lemma PasskeyEnrollmentIsOneWay(registered: int, later: int)
+    requires registered <= later && PasskeyRequired("enroll", registered)
+    ensures PasskeyRequired("enroll", later)
+  {}
+
+  // Passkeys need a host name, so an IP-address issuer defaults to off.
+  function DefaultPasskeyMode(issuerHostIsIP: bool): string
+    ensures ValidPasskeyMode(DefaultPasskeyMode(issuerHostIsIP))
+  {
+    if issuerHostIsIP then "off" else "enroll"
+  }
+
+  predicate ValidPasskeyMode(mode: string) {
+    mode in {"off", "enroll", "required"}
+  }
+
+  // What follows a correct password: finish, prove a registered passkey, or enroll one.
+  function PasskeyStep(mode: string, registered: int): string
+    ensures PasskeyStep(mode, registered) in {"complete", "assert", "enroll_optional", "enroll_required"}
+    ensures PasskeyStep(mode, registered) in {"complete", "enroll_optional"} <==> !PasskeyRequired(mode, registered)
+    ensures PasskeyRequired(mode, registered) && registered > 0 ==> PasskeyStep(mode, registered) == "assert"
+  {
+    if !PasskeyRequired(mode, registered) then (if mode == "enroll" then "enroll_optional" else "complete")
+    else if registered <= 0 then "enroll_required"
+    else "assert"
+  }
+
+  // Once a passkey exists in enroll or required mode, a password alone never completes sign-in.
+  lemma RegisteredPasskeyIsAlwaysAsked(mode: string, registered: int)
+    requires mode != "off" && registered > 0
+    ensures PasskeyStep(mode, registered) == "assert"
+  {}
+
+  // Required mode never removes its own last passkey.
+  predicate PasskeyRemovalAllowed(mode: string, registered: int) {
+    registered >= 1 && !(mode == "required" && registered <= 1)
+  }
+
+  lemma RequiredModeKeepsOnePasskey(registered: int)
+    requires PasskeyRemovalAllowed("required", registered)
+    ensures registered - 1 >= 1
+  {}
+
+  predicate CanRegisterPasskey(registered: int, capacity: int) {
+    registered >= 0 && 1 <= capacity <= 32 && registered < capacity
+  }
+
+  // WebAuthn clone detection: a counter must increase unless the authenticator never counts.
+  predicate PasskeySignCountValid(stored: int, received: int) {
+    stored >= 0 && received >= 0 && ((stored == 0 && received == 0) || received > stored)
+  }
+
+  predicate EditorAllowed(login: string, owner: string) {
+    owner != "" && login == owner
+  }
+
   lemma ReplacePreservesOthers<K, V>(state: map<K,V>, key: K, value: V, other: K)
     requires other in state && other != key
     ensures state[key := value][other] == state[other]

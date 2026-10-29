@@ -270,6 +270,239 @@ TAIL_CALL_START:
 		goto TAIL_CALL_START
 	}
 }
+func (_static *CompanionStruct_Default___) ScopeChar(c _dafny.CodePoint) bool {
+	return (((((_dafny.CodePoint('a')) <= (c)) && ((c) <= (_dafny.CodePoint('z')))) || (((_dafny.CodePoint('0')) <= (c)) && ((c) <= (_dafny.CodePoint('9'))))) || ((c) == (_dafny.CodePoint('-')))) || ((c) == (_dafny.CodePoint('_')))
+}
+func (_static *CompanionStruct_Default___) ValidScope(s _dafny.Sequence) bool {
+	return ((((((_dafny.IntOfUint32((s).Cardinality())).Sign() == 1) && ((_dafny.IntOfUint32((s).Cardinality())).Cmp(_dafny.IntOfInt64(128)) <= 0)) && (((s).Select(0).(_dafny.CodePoint)) != (_dafny.CodePoint('/')) /* dircomp */)) && (((s).Select(((_dafny.IntOfUint32((s).Cardinality())).Minus(_dafny.One)).Uint32()).(_dafny.CodePoint)) != (_dafny.CodePoint('/')) /* dircomp */)) && (_dafny.Quantifier(_dafny.IntegerRange(_dafny.Zero, _dafny.IntOfUint32((s).Cardinality())), true, func(_forall_var_0 _dafny.Int) bool {
+		var _0_i _dafny.Int
+		_0_i = interface{}(_forall_var_0).(_dafny.Int)
+		return !(((_0_i).Sign() != -1) && ((_0_i).Cmp(_dafny.IntOfUint32((s).Cardinality())) < 0)) || ((Companion_Default___.ScopeChar((s).Select((_0_i).Uint32()).(_dafny.CodePoint))) || (((s).Select((_0_i).Uint32()).(_dafny.CodePoint)) == (_dafny.CodePoint('/'))))
+	}))) && (_dafny.Quantifier(_dafny.IntegerRange(_dafny.Zero, (_dafny.IntOfUint32((s).Cardinality())).Minus(_dafny.One)), true, func(_forall_var_1 _dafny.Int) bool {
+		var _1_i _dafny.Int
+		_1_i = interface{}(_forall_var_1).(_dafny.Int)
+		return !(((_1_i).Sign() != -1) && ((_1_i).Cmp((_dafny.IntOfUint32((s).Cardinality())).Minus(_dafny.One)) < 0)) || (!((((s).Select((_1_i).Uint32()).(_dafny.CodePoint)) == (_dafny.CodePoint('/'))) && (((s).Select(((_1_i).Plus(_dafny.One)).Uint32()).(_dafny.CodePoint)) == (_dafny.CodePoint('/')))))
+	}))
+}
+func (_static *CompanionStruct_Default___) ScopeWithin(scope _dafny.Sequence, root _dafny.Sequence) bool {
+	return (_dafny.Companion_Sequence_.Equal(scope, root)) || ((((_dafny.IntOfUint32((root).Cardinality())).Cmp(_dafny.IntOfUint32((scope).Cardinality())) < 0) && (_dafny.Companion_Sequence_.Equal((scope).Take((_dafny.IntOfUint32((root).Cardinality())).Uint32()), root))) && (((scope).Select((_dafny.IntOfUint32((root).Cardinality())).Uint32()).(_dafny.CodePoint)) == (_dafny.CodePoint('/'))))
+}
+func (_static *CompanionStruct_Default___) ScopeVisible(scope _dafny.Sequence, roots _dafny.Sequence) bool {
+	return _dafny.Quantifier(_dafny.IntegerRange(_dafny.Zero, _dafny.IntOfUint32((roots).Cardinality())), false, func(_exists_var_0 _dafny.Int) bool {
+		var _0_i _dafny.Int
+		_0_i = interface{}(_exists_var_0).(_dafny.Int)
+		return (((_0_i).Sign() != -1) && ((_0_i).Cmp(_dafny.IntOfUint32((roots).Cardinality())) < 0)) && (Companion_Default___.ScopeWithin(scope, (roots).Select((_0_i).Uint32()).(_dafny.Sequence)))
+	})
+}
+func (_static *CompanionStruct_Default___) ValidMemoryStatus(status _dafny.Sequence) bool {
+	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("candidate"), _dafny.UnicodeSeqOfUtf8Bytes("accepted"), _dafny.UnicodeSeqOfUtf8Bytes("disputed"), _dafny.UnicodeSeqOfUtf8Bytes("rejected"), _dafny.UnicodeSeqOfUtf8Bytes("superseded"), _dafny.UnicodeSeqOfUtf8Bytes("retracted"))).Contains(status)
+}
+func (_static *CompanionStruct_Default___) IsCurrentMemory(status _dafny.Sequence) bool {
+	return _dafny.Companion_Sequence_.Equal(status, _dafny.UnicodeSeqOfUtf8Bytes("accepted"))
+}
+func (_static *CompanionStruct_Default___) TerminalMemory(status _dafny.Sequence) bool {
+	return ((_dafny.Companion_Sequence_.Equal(status, _dafny.UnicodeSeqOfUtf8Bytes("rejected"))) || (_dafny.Companion_Sequence_.Equal(status, _dafny.UnicodeSeqOfUtf8Bytes("superseded")))) || (_dafny.Companion_Sequence_.Equal(status, _dafny.UnicodeSeqOfUtf8Bytes("retracted")))
+}
+func (_static *CompanionStruct_Default___) ValidMemoryTransition(from _dafny.Sequence, to _dafny.Sequence) bool {
+	return (((_dafny.Companion_Sequence_.Equal(from, _dafny.UnicodeSeqOfUtf8Bytes("candidate"))) && (((_dafny.Companion_Sequence_.Equal(to, _dafny.UnicodeSeqOfUtf8Bytes("accepted"))) || (_dafny.Companion_Sequence_.Equal(to, _dafny.UnicodeSeqOfUtf8Bytes("rejected")))) || (_dafny.Companion_Sequence_.Equal(to, _dafny.UnicodeSeqOfUtf8Bytes("disputed"))))) || ((_dafny.Companion_Sequence_.Equal(from, _dafny.UnicodeSeqOfUtf8Bytes("accepted"))) && (((_dafny.Companion_Sequence_.Equal(to, _dafny.UnicodeSeqOfUtf8Bytes("superseded"))) || (_dafny.Companion_Sequence_.Equal(to, _dafny.UnicodeSeqOfUtf8Bytes("retracted")))) || (_dafny.Companion_Sequence_.Equal(to, _dafny.UnicodeSeqOfUtf8Bytes("disputed")))))) || ((_dafny.Companion_Sequence_.Equal(from, _dafny.UnicodeSeqOfUtf8Bytes("disputed"))) && (((_dafny.Companion_Sequence_.Equal(to, _dafny.UnicodeSeqOfUtf8Bytes("accepted"))) || (_dafny.Companion_Sequence_.Equal(to, _dafny.UnicodeSeqOfUtf8Bytes("rejected")))) || (_dafny.Companion_Sequence_.Equal(to, _dafny.UnicodeSeqOfUtf8Bytes("retracted")))))
+}
+func (_static *CompanionStruct_Default___) AssistantMayTransition(from _dafny.Sequence, to _dafny.Sequence) bool {
+	return (Companion_Default___.ValidMemoryTransition(from, to)) && (_dafny.Companion_Sequence_.Equal(to, _dafny.UnicodeSeqOfUtf8Bytes("disputed")))
+}
+func (_static *CompanionStruct_Default___) ExternalClassificationAllowed(configured bool, userAttested bool, scope _dafny.Sequence, external _dafny.Sequence) bool {
+	return ((configured) && (!(userAttested))) && (Companion_Default___.ScopeVisible(scope, external))
+}
+func (_static *CompanionStruct_Default___) ValidMemoryCategory(c _dafny.Sequence) bool {
+	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("fact"), _dafny.UnicodeSeqOfUtf8Bytes("preference"), _dafny.UnicodeSeqOfUtf8Bytes("decision"), _dafny.UnicodeSeqOfUtf8Bytes("constraint"), _dafny.UnicodeSeqOfUtf8Bytes("lesson"))).Contains(c)
+}
+func (_static *CompanionStruct_Default___) ProposesMemory(eventType _dafny.Sequence) bool {
+	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("decision"), _dafny.UnicodeSeqOfUtf8Bytes("observation"), _dafny.UnicodeSeqOfUtf8Bytes("correction"), _dafny.UnicodeSeqOfUtf8Bytes("manual_note"))).Contains(eventType)
+}
+func (_static *CompanionStruct_Default___) DefaultMemoryCategory(eventType _dafny.Sequence) _dafny.Sequence {
+	if _dafny.Companion_Sequence_.Equal(eventType, _dafny.UnicodeSeqOfUtf8Bytes("decision")) {
+		return _dafny.UnicodeSeqOfUtf8Bytes("decision")
+	} else {
+		return _dafny.UnicodeSeqOfUtf8Bytes("fact")
+	}
+}
+func (_static *CompanionStruct_Default___) ValidEventType(t _dafny.Sequence) bool {
+	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("observation"), _dafny.UnicodeSeqOfUtf8Bytes("discussion"), _dafny.UnicodeSeqOfUtf8Bytes("exploration"), _dafny.UnicodeSeqOfUtf8Bytes("decision"), _dafny.UnicodeSeqOfUtf8Bytes("action"), _dafny.UnicodeSeqOfUtf8Bytes("result"), _dafny.UnicodeSeqOfUtf8Bytes("correction"), _dafny.UnicodeSeqOfUtf8Bytes("checkpoint"), _dafny.UnicodeSeqOfUtf8Bytes("manual_note"))).Contains(t)
+}
+func (_static *CompanionStruct_Default___) ValidEventStatus(s _dafny.Sequence) bool {
+	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("proposed"), _dafny.UnicodeSeqOfUtf8Bytes("confirmed"), _dafny.UnicodeSeqOfUtf8Bytes("unverified"), _dafny.UnicodeSeqOfUtf8Bytes("superseded"))).Contains(s)
+}
+func (_static *CompanionStruct_Default___) AssistantMayAppendType(t _dafny.Sequence) bool {
+	return (Companion_Default___.ValidEventType(t)) && (!_dafny.Companion_Sequence_.Equal(t, _dafny.UnicodeSeqOfUtf8Bytes("checkpoint")))
+}
+func (_static *CompanionStruct_Default___) MaySupersede(newActorIsUser bool, oldStatus _dafny.Sequence) bool {
+	return (newActorIsUser) || (!_dafny.Companion_Sequence_.Equal(oldStatus, _dafny.UnicodeSeqOfUtf8Bytes("confirmed")))
+}
+func (_static *CompanionStruct_Default___) SocketMethodAllowed(name _dafny.Sequence) bool {
+	return (!_dafny.Companion_Sequence_.Equal(name, _dafny.UnicodeSeqOfUtf8Bytes("ForgetEvent"))) && (!_dafny.Companion_Sequence_.Equal(name, _dafny.UnicodeSeqOfUtf8Bytes("ForgetMemory")))
+}
+func (_static *CompanionStruct_Default___) CorrectionMayCarryStatement(to _dafny.Sequence) bool {
+	return _dafny.Companion_Sequence_.Equal(to, _dafny.UnicodeSeqOfUtf8Bytes("superseded"))
+}
+func (_static *CompanionStruct_Default___) ScopeWideContextCategory(category _dafny.Sequence) bool {
+	return (_dafny.Companion_Sequence_.Equal(category, _dafny.UnicodeSeqOfUtf8Bytes("preference"))) || (_dafny.Companion_Sequence_.Equal(category, _dafny.UnicodeSeqOfUtf8Bytes("constraint")))
+}
+func (_static *CompanionStruct_Default___) DefaultEventStatus(actorIsUser bool, eventType _dafny.Sequence) _dafny.Sequence {
+	if actorIsUser {
+		return _dafny.UnicodeSeqOfUtf8Bytes("confirmed")
+	} else if _dafny.Companion_Sequence_.Equal(eventType, _dafny.UnicodeSeqOfUtf8Bytes("exploration")) {
+		return _dafny.UnicodeSeqOfUtf8Bytes("proposed")
+	} else {
+		return _dafny.UnicodeSeqOfUtf8Bytes("unverified")
+	}
+}
+func (_static *CompanionStruct_Default___) EventStatusAllowed(actorIsUser bool, status _dafny.Sequence) bool {
+	return (Companion_Default___.ValidEventStatus(status)) && ((actorIsUser) || (!_dafny.Companion_Sequence_.Equal(status, _dafny.UnicodeSeqOfUtf8Bytes("confirmed"))))
+}
+func (_static *CompanionStruct_Default___) IsUnconfirmedMemory(status _dafny.Sequence) bool {
+	return (_dafny.Companion_Sequence_.Equal(status, _dafny.UnicodeSeqOfUtf8Bytes("candidate"))) || (_dafny.Companion_Sequence_.Equal(status, _dafny.UnicodeSeqOfUtf8Bytes("disputed")))
+}
+func (_static *CompanionStruct_Default___) ContextBudget(requested _dafny.Int) _dafny.Int {
+	if (requested).Sign() != 1 {
+		return _dafny.IntOfInt64(1500)
+	} else if (requested).Cmp(_dafny.IntOfInt64(200)) < 0 {
+		return _dafny.IntOfInt64(200)
+	} else if (requested).Cmp(_dafny.IntOfInt64(8000)) > 0 {
+		return _dafny.IntOfInt64(8000)
+	} else {
+		return requested
+	}
+}
+func (_static *CompanionStruct_Default___) OrphanedAfterForget(evidence _dafny.Sequence, forgotten _dafny.Sequence) bool {
+	return ((_dafny.IntOfUint32((evidence).Cardinality())).Sign() == 1) && (_dafny.Quantifier(_dafny.IntegerRange(_dafny.Zero, _dafny.IntOfUint32((evidence).Cardinality())), true, func(_forall_var_0 _dafny.Int) bool {
+		var _0_i _dafny.Int
+		_0_i = interface{}(_forall_var_0).(_dafny.Int)
+		return !(((_0_i).Sign() != -1) && ((_0_i).Cmp(_dafny.IntOfUint32((evidence).Cardinality())) < 0)) || (_dafny.Companion_Sequence_.Equal((evidence).Select((_0_i).Uint32()).(_dafny.Sequence), forgotten))
+	}))
+}
+func (_static *CompanionStruct_Default___) CheckpointWrite(current _dafny.Int, expected _dafny.Int) _dafny.Tuple {
+	if (expected).Cmp(current) == 0 {
+		return _dafny.TupleOf(true, (current).Plus(_dafny.One))
+	} else {
+		return _dafny.TupleOf(false, current)
+	}
+}
+func (_static *CompanionStruct_Default___) SumCosts(costs _dafny.Sequence, idx _dafny.Sequence) _dafny.Int {
+	var _0___accumulator _dafny.Int = _dafny.Zero
+	_ = _0___accumulator
+	goto TAIL_CALL_START
+TAIL_CALL_START:
+	if (_dafny.IntOfUint32((idx).Cardinality())).Sign() == 0 {
+		return (_dafny.Zero).Plus(_0___accumulator)
+	} else {
+		_0___accumulator = (_0___accumulator).Plus((costs).Select(((idx).Select(0).(_dafny.Int)).Uint32()).(_dafny.Int))
+		var _in0 _dafny.Sequence = costs
+		_ = _in0
+		var _in1 _dafny.Sequence = (idx).Drop(1)
+		_ = _in1
+		costs = _in0
+		idx = _in1
+		goto TAIL_CALL_START
+	}
+}
+func (_static *CompanionStruct_Default___) TotalFrom(costs _dafny.Sequence, start _dafny.Int) _dafny.Int {
+	var _0___accumulator _dafny.Int = _dafny.Zero
+	_ = _0___accumulator
+	goto TAIL_CALL_START
+TAIL_CALL_START:
+	if (start).Cmp(_dafny.IntOfUint32((costs).Cardinality())) == 0 {
+		return (_dafny.Zero).Plus(_0___accumulator)
+	} else {
+		_0___accumulator = (_0___accumulator).Plus((costs).Select((start).Uint32()).(_dafny.Int))
+		var _in0 _dafny.Sequence = costs
+		_ = _in0
+		var _in1 _dafny.Int = (start).Plus(_dafny.One)
+		_ = _in1
+		costs = _in0
+		start = _in1
+		goto TAIL_CALL_START
+	}
+}
+func (_static *CompanionStruct_Default___) PackFrom(costs _dafny.Sequence, remaining _dafny.Int, start _dafny.Int) _dafny.Sequence {
+	if (start).Cmp(_dafny.IntOfUint32((costs).Cardinality())) == 0 {
+		return _dafny.SeqOf()
+	} else if ((costs).Select((start).Uint32()).(_dafny.Int)).Cmp(remaining) <= 0 {
+		var _0_rest _dafny.Sequence = Companion_Default___.PackFrom(costs, (remaining).Minus((costs).Select((start).Uint32()).(_dafny.Int)), (start).Plus(_dafny.One))
+		_ = _0_rest
+		return _dafny.Companion_Sequence_.Concatenate(_dafny.SeqOf(start), _0_rest)
+	} else {
+		return Companion_Default___.PackFrom(costs, remaining, (start).Plus(_dafny.One))
+	}
+}
+func (_static *CompanionStruct_Default___) PackBudget(costs _dafny.Sequence, budget _dafny.Int) _dafny.Sequence {
+	return Companion_Default___.PackFrom(costs, budget, _dafny.Zero)
+}
+func (_static *CompanionStruct_Default___) ValidThresholds(acceptAt _dafny.Int, rejectAt _dafny.Int) bool {
+	return (((rejectAt).Sign() != -1) && ((rejectAt).Cmp(acceptAt) < 0)) && ((acceptAt).Cmp(_dafny.IntOfInt64(1000)) <= 0)
+}
+func (_static *CompanionStruct_Default___) RouteCandidate(p _dafny.Int, acceptAt _dafny.Int, rejectAt _dafny.Int) _dafny.Sequence {
+	if ((!(Companion_Default___.ValidThresholds(acceptAt, rejectAt))) || ((p).Sign() == -1)) || ((p).Cmp(_dafny.IntOfInt64(1000)) > 0) {
+		return _dafny.UnicodeSeqOfUtf8Bytes("review")
+	} else if (p).Cmp(acceptAt) >= 0 {
+		return _dafny.UnicodeSeqOfUtf8Bytes("accept")
+	} else if (p).Cmp(rejectAt) <= 0 {
+		return _dafny.UnicodeSeqOfUtf8Bytes("reject")
+	} else {
+		return _dafny.UnicodeSeqOfUtf8Bytes("review")
+	}
+}
+func (_static *CompanionStruct_Default___) InitialMemoryStatus(userAttested bool, p _dafny.Int, acceptAt _dafny.Int, rejectAt _dafny.Int) _dafny.Sequence {
+	if userAttested {
+		return _dafny.UnicodeSeqOfUtf8Bytes("accepted")
+	} else {
+		var _0_route _dafny.Sequence = Companion_Default___.RouteCandidate(p, acceptAt, rejectAt)
+		_ = _0_route
+		if _dafny.Companion_Sequence_.Equal(_0_route, _dafny.UnicodeSeqOfUtf8Bytes("accept")) {
+			return _dafny.UnicodeSeqOfUtf8Bytes("accepted")
+		} else if _dafny.Companion_Sequence_.Equal(_0_route, _dafny.UnicodeSeqOfUtf8Bytes("reject")) {
+			return _dafny.UnicodeSeqOfUtf8Bytes("rejected")
+		} else {
+			return _dafny.UnicodeSeqOfUtf8Bytes("candidate")
+		}
+	}
+}
+func (_static *CompanionStruct_Default___) PasskeyRequired(mode _dafny.Sequence, registered _dafny.Int) bool {
+	return !((_dafny.Companion_Sequence_.Equal(mode, _dafny.UnicodeSeqOfUtf8Bytes("off"))) || ((_dafny.Companion_Sequence_.Equal(mode, _dafny.UnicodeSeqOfUtf8Bytes("enroll"))) && ((registered).Sign() != 1)))
+}
+func (_static *CompanionStruct_Default___) DefaultPasskeyMode(issuerHostIsIP bool) _dafny.Sequence {
+	if issuerHostIsIP {
+		return _dafny.UnicodeSeqOfUtf8Bytes("off")
+	} else {
+		return _dafny.UnicodeSeqOfUtf8Bytes("enroll")
+	}
+}
+func (_static *CompanionStruct_Default___) ValidPasskeyMode(mode _dafny.Sequence) bool {
+	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("off"), _dafny.UnicodeSeqOfUtf8Bytes("enroll"), _dafny.UnicodeSeqOfUtf8Bytes("required"))).Contains(mode)
+}
+func (_static *CompanionStruct_Default___) PasskeyStep(mode _dafny.Sequence, registered _dafny.Int) _dafny.Sequence {
+	if !(Companion_Default___.PasskeyRequired(mode, registered)) {
+		if _dafny.Companion_Sequence_.Equal(mode, _dafny.UnicodeSeqOfUtf8Bytes("enroll")) {
+			return _dafny.UnicodeSeqOfUtf8Bytes("enroll_optional")
+		} else {
+			return _dafny.UnicodeSeqOfUtf8Bytes("complete")
+		}
+	} else if (registered).Sign() != 1 {
+		return _dafny.UnicodeSeqOfUtf8Bytes("enroll_required")
+	} else {
+		return _dafny.UnicodeSeqOfUtf8Bytes("assert")
+	}
+}
+func (_static *CompanionStruct_Default___) PasskeyRemovalAllowed(mode _dafny.Sequence, registered _dafny.Int) bool {
+	return ((registered).Cmp(_dafny.One) >= 0) && (!((_dafny.Companion_Sequence_.Equal(mode, _dafny.UnicodeSeqOfUtf8Bytes("required"))) && ((registered).Cmp(_dafny.One) <= 0)))
+}
+func (_static *CompanionStruct_Default___) CanRegisterPasskey(registered _dafny.Int, capacity _dafny.Int) bool {
+	return (((registered).Sign() != -1) && (((_dafny.One).Cmp(capacity) <= 0) && ((capacity).Cmp(_dafny.IntOfInt64(32)) <= 0))) && ((registered).Cmp(capacity) < 0)
+}
+func (_static *CompanionStruct_Default___) PasskeySignCountValid(stored _dafny.Int, received _dafny.Int) bool {
+	return (((stored).Sign() != -1) && ((received).Sign() != -1)) && ((((stored).Sign() == 0) && ((received).Sign() == 0)) || ((received).Cmp(stored) > 0))
+}
+func (_static *CompanionStruct_Default___) EditorAllowed(login _dafny.Sequence, owner _dafny.Sequence) bool {
+	return (!_dafny.Companion_Sequence_.Equal(owner, _dafny.UnicodeSeqOfUtf8Bytes(""))) && (_dafny.Companion_Sequence_.Equal(login, owner))
+}
 func (_static *CompanionStruct_Default___) InlineTypes() _dafny.Set {
 	return _dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("application/pdf"), _dafny.UnicodeSeqOfUtf8Bytes("image/jpeg"), _dafny.UnicodeSeqOfUtf8Bytes("image/png"), _dafny.UnicodeSeqOfUtf8Bytes("image/gif"), _dafny.UnicodeSeqOfUtf8Bytes("image/webp"), _dafny.UnicodeSeqOfUtf8Bytes("text/plain"))
 }

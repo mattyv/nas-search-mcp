@@ -20,6 +20,14 @@ Replace placeholders with your repository and published commit. The installer re
 
 Keep original sources read-only and disjoint from writable index and upgrade-queue directories. Keep secrets out of source control. English PDF OCR is enabled by default; it uses Poppler and Tesseract. Other OCR languages and photo OCR are not implemented. Unsupported formats are listed in the [coverage table](../README.md#coverage-and-limits).
 
+## Shared memory
+
+Shared memory is off by default. To turn it on, set `NAS_MEMORY_ENABLED=true` and its folder and editor settings in the private `.env`, then upgrade. The installer validates the settings first, adds a 128 MB `nas-memory` container, and rolls back if it does not become healthy. See [shared memory](memory.md).
+
+## Passkey step after upgrading
+
+By default, upgrading to this release adds a passkey step to OAuth sign-in (`NAS_OAUTH_PASSKEYS=enroll`). Until you register one, each sign-in shows an "Add a passkey (recommended)" page with a Skip button; after that, every sign-in asks for the passkey. Register yours right after the upgrade at `<NAS_OAUTH_ISSUER>/passkeys`, because anyone with the password can register one first. To keep password-only sign-in, set `NAS_OAUTH_PASSKEYS=off` in `.env`. If you lose your passkeys, clear them with `sudo docker exec nas-search-nas-search-1 /app/nas-search reset-passkeys`. Details are in [shared memory](memory.md#passkeys).
+
 ## Upgrade through MCP
 
 After one-time setup, a private bearer client can call `upgrade_from_main` to queue an upgrade. A public OAuth client receives a short-lived approval link; the owner must complete fresh browser sign-in and click Approve before the upgrade is queued. Call `upgrade_status` after reconnecting. The host worker resolves the current `main` commit, requires successful verification and image publication for that exact commit, and installs its pinned image. If verification has not passed, the request fails rather than selecting an older commit.

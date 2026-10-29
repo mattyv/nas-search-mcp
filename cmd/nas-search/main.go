@@ -108,6 +108,24 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "reset-passkeys" {
+		if err := oauth.ResetPasskeys(env("NAS_OAUTH_DB", env("NAS_DATA", "/data")+"/oauth.sqlite3")); err != nil {
+			log.Fatal("passkey reset failed")
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "memory-service" {
+		if err := runMemoryService(); err != nil {
+			log.Fatalf("memory service unavailable: %v", err)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "memory-health" {
+		if err := memoryHealth(); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "upload-writer" {
 		if err := uploadwriter.Run(env("NAS_UPLOAD_WRITER_SOCKET", "/ipc/upload.sock"), env("NAS_ROOT", "/write"), folderList(os.Getenv("NAS_ALLOWED_FOLDERS")), folderList(os.Getenv("NAS_DENIED_FOLDERS"))); err != nil {
 			log.Fatal("upload writer unavailable")
@@ -163,10 +181,17 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	mem, err := configuredMemory()
+	if err != nil {
+		log.Fatalf("memory configuration invalid: %v", err)
+	}
 	server := buildMCPServer(a, nil)
+	if mem != nil {
+		registerMemoryTools(server, mem.client, mem.roots, mem.defaultScope, mem.editorOrigin)
+	}
 	var publicServer *http.Server
 	if issuer := os.Getenv("NAS_OAUTH_ISSUER"); issuer != "" && !stdio {
-		auth, authErr := oauth.New(oauth.Config{ServiceUpgrades: os.Getenv("NAS_UPGRADE_DIR") != "", Issuer: issuer, DatabasePath: env("NAS_OAUTH_DB", a.Data+"/oauth.sqlite3"), PasswordHash: os.Getenv("NAS_OAUTH_PASSWORD_HASH"), ClientID: os.Getenv("NAS_OAUTH_CLIENT_ID"), ClientSecretHash: os.Getenv("NAS_OAUTH_CLIENT_SECRET_HASH"), RedirectURIs: folderList(os.Getenv("NAS_OAUTH_LOCAL_REDIRECTS")), ChatGPTRedirectURI: os.Getenv("NAS_OAUTH_CHATGPT_REDIRECT")})
+		auth, authErr := oauth.New(oauth.Config{ServiceUpgrades: os.Getenv("NAS_UPGRADE_DIR") != "", Issuer: issuer, DatabasePath: env("NAS_OAUTH_DB", a.Data+"/oauth.sqlite3"), PasswordHash: os.Getenv("NAS_OAUTH_PASSWORD_HASH"), ClientID: os.Getenv("NAS_OAUTH_CLIENT_ID"), ClientSecretHash: os.Getenv("NAS_OAUTH_CLIENT_SECRET_HASH"), RedirectURIs: folderList(os.Getenv("NAS_OAUTH_LOCAL_REDIRECTS")), ChatGPTRedirectURI: os.Getenv("NAS_OAUTH_CHATGPT_REDIRECT"), PasskeyMode: passkeyMode(issuer)})
 		if authErr != nil {
 			log.Fatal("OAuth configuration invalid; refusing to start")
 		}
@@ -218,7 +243,12 @@ func main() {
 			}()
 			readTimeout = 120 * time.Second
 		}
-		publicServer = &http.Server{Addr: env("NAS_OAUTH_LISTEN", "127.0.0.1:8082"), Handler: buildPublicHandler(buildMCPServer(a, approval, uploads), auth, a, approval, uploads), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: readTimeout, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+		publicMCP := buildMCPServer(a, approval, uploads)
+		extraRoutes := map[string]http.Handler{}
+		if mem != nil {
+			registerMemoryTools(publicMCP, mem.client, mem.roots, mem.defaultScope, mem.editorOrigin)
+		}
+		publicServer = &http.Server{Addr: env("NAS_OAUTH_LISTEN", "127.0.0.1:8082"), Handler: withRoutes(buildPublicHandler(publicMCP, auth, a, approval, uploads), extraRoutes), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: readTimeout, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 		go func() {
 			if e := publicServer.ListenAndServe(); e != nil && !errors.Is(e, http.ErrServerClosed) {
 				log.Fatal("OAuth listener failed")

@@ -507,3 +507,118 @@ previous-release and half-migrated databases. The first failed before the fix wi
 "table files has 5 columns but 4 values were supplied". A new installer test shows a
 start that answers on the twenty-first health check now succeeds. It failed before
 the wait was extended. Go, Python and Dafny checks pass.
+
+## D048 — Add shared memory, a private editor, passkeys and Jev review
+
+Status: provisional; built and tested in development, not yet tried on the NAS, in a
+real browser, with a real passkey, or against the live Jev API.
+
+Claude web, desktop and mobile, ChatGPT and local CLIs should share project context:
+what happened, where work stands, and what the owner has decided. The design is in
+[shared-memory design](../docs/shared-memory-design.md); its section 0 lists the
+choices below.
+
+Decisions:
+
+- **Journal first.** Journal entries are append-only history. Checkpoints are versioned
+  snapshots of where a project stands. Memories are curated statements derived from
+  entries. A memory is current only when accepted.
+- **Chat-first capture.** The assistant writes when asked, and opens context at the start
+  of a conversation because the owner's Claude instructions say so. No client hooks.
+- **Separate container.** `nas-memory` owns `memory.sqlite3` on its own mount and has no
+  access to searchable folders. The search process reaches it through a private socket
+  in `<index>/memory-ipc`, as the upload writer does. Memory is off by default.
+- **Assistants never confirm.** Anything an assistant writes is unverified, proposed or a
+  candidate. Assistants may only dispute a memory, may not supersede an entry the owner
+  confirmed, and may not write checkpoint entries through the journal. Accepting,
+  rejecting, retracting and forgetting happen only in the editor. The `memory_forget`
+  tool returns a link to the item in the editor and erases nothing. (Superseded during
+  review: forgetting from a chat through a browser approval page on the public connector
+  and directly on the LAN connector. Injected text could have driven both, so they were
+  removed.)
+- **The socket never trusts its caller.** The search container also runs document
+  extractors, so a compromised extractor could reach the memory socket. The socket treats
+  every caller as an assistant, ignores claims to be the owner, and refuses to forget.
+  The editor reaches the store in-process, inside the memory container.
+- **Private editor.** The editor is served only on the tailnet through `tailscale serve`,
+  bound to `127.0.0.1` on the NAS, and the memory container sits on its own Compose
+  network so the search container cannot reach it. Tailscale's login header identifies
+  the owner, so there is no editor password; requests that arrive through Funnel are
+  refused. Any process on the NAS host that can reach `127.0.0.1:8083` could present the
+  header, so the host itself is trusted. POSTs need an exact Origin match. It installs to
+  a phone's home screen, keeps unsent notes on the device, and keeps at most 30 recently
+  viewed pages for offline reading, for up to 7 days.
+- **Passkeys on the public side.** The public OAuth sign-in asks for a passkey after the
+  password. `NAS_OAUTH_PASSKEYS` defaults to `enroll`: sign-in offers enrollment until the
+  first passkey exists, then always asks for one. `required` forces enrollment; `off`
+  disables passkeys. An IP-address issuer defaults to `off` because passkeys need a host
+  name. Recovery is the host-only `reset-passkeys` command. Until the first passkey is
+  registered, anyone with the password can register one, so register promptly. After a
+  rollback to an earlier release, sign-in returns to password only, because that release
+  ignores the passkey tables.
+- **Jev gates, it does not extract.** TypeSafe's Jev scores whether an entry records
+  something the owner decided or confirmed, and suggests a category. Scores at or above
+  `NAS_MEMORY_ACCEPT_AT` are accepted, at or below `NAS_MEMORY_REJECT_AT` rejected, and
+  the rest wait for review. Unscored candidates always wait. Only entries in
+  `NAS_JEV_SCOPES` are sent (`none` sends nothing), and the owner's own entries never
+  are. While Jev is unavailable, entries that need it wait and everything else proceeds.
+- **No embeddings yet.** Memory and journal search are full-text. Vector search is
+  deferred until measured need.
+
+Verified core: scope visibility and boundaries, the memory status set and lifecycle
+(terminal states are final), assistant limits (dispute only, no confirming, no
+superseding the owner's confirmations, no checkpoint entries), socket methods (never
+forget), checkpoint versions, context packing (bounded, ordered, everything kept when it
+fits, the first item kept whenever it fits) and budget bounds, which project-less
+memories join a context, review routing (unscored goes to review), the
+external-classification gate (the owner's entries never leave), forget orphaning,
+corrections, passkey modes, defaults, steps and removal (a registered passkey is always
+asked for outside `off`; `required` keeps one), passkey sign counts and capacity, and
+editor access. Packing does not prove the greedy choice is optimal beyond those
+properties.
+
+Accepted adapter-level rules, recorded rather than proved: the priority order of a
+context package and its 14-day window for recent entries are written in the store's
+queries; the editor's "edit and accept" proposes the edited memory and then rejects the
+original in two steps, so a failure between them leaves both visible for the owner to
+resolve; secret redaction is a pattern list that keeps commit SHAs, digests, URLs and
+paths but can miss unusual secrets. Unverified adapters: SQLite storage and FTS,
+the socket client and server, MCP tool handling, the editor's HTTP and JavaScript, the
+WebAuthn library and ceremonies, the Jev HTTP client, secret redaction, input-format
+checks, Compose and the installer.
+
+Schema: `memory.sqlite3` is new; every table has an `extra` JSON column so later fields
+need no new columns. Checkpoints are keyed by scope, project and version, and retry keys
+are unique per scope, so one scope cannot detect or block another's entries. `oauth.sqlite3` gains two tables only (`oauth_passkeys`,
+`oauth_passkey_flows`); the previous release ignores them.
+
+Dependency: `github.com/go-webauthn/webauthn` v0.18.0, pinned because later releases
+need Go 1.26 and the image builds with Go 1.25.
+
+Delivery: the verified rules and the shared contract were written first; six parallel
+agents built the store and socket, the MCP tools and forget approval, the editor,
+passkeys, the Jev client and consolidation, and deployment, each test-first within its
+own files. Decision rules the agents left inline were moved into the core during
+integration. Integration wiring was written before its tests: end-to-end tests run two
+assistants against the real store over the real socket.
+
+Review: three independent reviews checked security, correctness and these project rules.
+They found an assistant could un-confirm the owner's entries; the socket trusted callers'
+claims to be the owner; forgetting from a chat could be driven by injected text; small
+cross-scope leaks through checkpoints, retry keys and forgetting; redaction erased commit
+SHAs, URLs and paths; a reject threshold of 0 was silently ignored; tool limits disagreed
+with the store; consolidation stalled while Jev was down; the IP-issuer passkey default
+never ran under Compose; and several decisions were inline. Each was reproduced with a
+failing test and fixed by three parallel agents, with the new rules added to the core
+first. Validation after fixes: 93 Dafny obligations and the executable core tests, all Go
+packages with `sqlite_fts5`, the race detector on the memory, socket, consolidation,
+editor and OAuth packages, and 420 Python tests (the bridge test that also fails on main
+excepted). A final review confirmed each finding fixed and found three more,
+fixed test-first where testable: an assistant's dispute with suggested wording was always
+refused (the wording now travels in the reason), saving a checkpoint without a scope used
+the default scope instead of the project's, and the editor's outbox retried refused notes
+forever (now only network failures, timeouts and rate limits retry; this change has no
+browser test). The socket no longer contains forget handlers at all.
+
+Limits: no automatic capture of chats; keyword search only; nothing measured on the NAS;
+the editor's offline behaviour and passkey pages are untested in real browsers.

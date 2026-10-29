@@ -22,6 +22,10 @@ The installer checks the MCP handshake and tools before writing settings. It cop
 
 Start a new CLI session or fully restart the desktop app. Config installation and SDK tool calls have passed; conversations inside the client GUIs still need testing. The installed bridge supports this project's stateless HTTP server; it is not a general bridge for server-initiated requests or resumable event streams. You do not need Node.js or a shell-exported token with this installer. Manual native HTTP alternatives follow.
 
+## Shared memory
+
+When [shared memory](memory.md) is on, Claude, Codex, and other clients also get `context_open`, `journal_append`, and related tools. See [shared memory](memory.md) for the full set. The guide shows the one line to add to Claude's preferences so it uses them.
+
 ## Open originals in your browser
 
 Ask: **“Give me a link to example.pdf.”** Claude replies with a link; tap it and complete a fresh browser OAuth sign-in to open the original. Never enter the NAS password in Claude chat. PDFs, JPEG/PNG/GIF/WebP photos, and plain text display directly. Word, Excel, HTML, SVG, and other formats download instead, so they cannot run anything on the NAS's web address.
