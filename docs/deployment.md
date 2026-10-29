@@ -62,6 +62,14 @@ In DSM Task Scheduler, create a root **Triggered Task → User-defined script** 
   >> PROTECTED_DIR/upgrade-host.log 2>&1
 ```
 
+If browser sign-in is broken, so an approval link cannot be completed, queue the upgrade from SSH instead. It writes the same request the approval page would:
+
+```sh
+sudo sh -c 'cd PROTECTED_DIR/upgrades && printf "{\"action\":\"upgrade_main\"}\n" > .request.tmp && mv .request.tmp request.json'
+```
+
+Then follow it with `upgrade_status`. Expect a brief "Bad Gateway" while the service restarts.
+
 The worker serializes upgrades with a host lock. Requests remain queued if it is stopped. `upgrade_status` reports `queued`, `running`, `succeeded`, or `failed`; after failure, inspect the host's private current-image record to identify the running image. A stuck installer can remain running; inspect the host and Docker before intervening.
 
 ## Photo search
