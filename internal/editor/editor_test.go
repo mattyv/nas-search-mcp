@@ -693,3 +693,14 @@ func TestStoreErrorsMapToStatus(t *testing.T) {
 	status(t, do(h, "GET", "/e/missing/correct", ""), 404)
 	status(t, do(h, "GET", "/nope", ""), 404)
 }
+
+// A home-screen app has no browser reload, so every page carries its own Refresh control.
+func TestEveryPageHasRefresh(t *testing.T) {
+	h, _ := seeded(t)
+	for _, p := range []string{"/", "/p/alpha", "/timeline", "/e/ev1", "/new", "/review", "/memories?status=all"} {
+		mustContain(t, do(h, "GET", p, ""), `id="refresh"`, ">Refresh<")
+	}
+	js := do(h, "GET", "/static/app.js", "")
+	status(t, js, 200)
+	mustContain(t, js, `getElementById("refresh")`, "location.reload")
+}

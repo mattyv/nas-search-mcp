@@ -162,7 +162,19 @@
     });
   }
 
+  // Installed apps have no reload button: send waiting notes, then fetch a fresh copy.
+  function refreshButton() {
+    var el = document.getElementById("refresh");
+    if (!el) return;
+    el.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      el.textContent = "Refreshing…";
+      flush().then(function () { window.location.reload(); });
+    });
+  }
+
   function init() {
+    refreshButton();
     localTimes();
     offlineBanner();
     noteForm();
