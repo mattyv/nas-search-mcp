@@ -177,7 +177,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Content-Security-Policy", contentSecurityPolicy)
 	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Referrer-Policy", "no-referrer")
+	// "same-origin", not "no-referrer": under "no-referrer" a browser submits forms with
+	// Origin "null", which the Origin check below refuses. Other sites still get nothing.
+	h.Set("Referrer-Policy", "same-origin")
 	h.Set("Cache-Control", "no-store")
 
 	// The editor is tailnet-only. Funnel puts a service on the public internet, so a request

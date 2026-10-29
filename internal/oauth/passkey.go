@@ -177,6 +177,9 @@ var passkeyPage = template.Must(template.New("passkey").Parse(`<!doctype html><h
 func renderPasskeyStep(w http.ResponseWriter, status int, session, step, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", passkeyCSP)
+	// Pages with forms must let the browser send their origin on same-site requests:
+	// under "no-referrer" a form submission carries Origin "null" and is refused.
+	w.Header().Set("Referrer-Policy", "same-origin")
 	w.WriteHeader(status)
 	passkeyPage.Execute(w, struct{ Session, Step, Message string }{session, step, message})
 }
@@ -242,13 +245,13 @@ func (s *Server) openLogin(w http.ResponseWriter, r *http.Request) *loginState {
 		return nil
 	}
 	if r.ParseForm() != nil {
-		oauthError(w, 400, "invalid_request")
+		passkeyRequestError(w)
 		return nil
 	}
 	session := r.PostForm.Get("session")
 	cookie, err := r.Cookie(loginCookieName(session))
 	if err != nil || len(session) != 43 || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(session)) != 1 || (r.Header.Get("Origin") != "" && r.Header.Get("Origin") != s.cfg.Issuer) {
-		oauthError(w, 400, "invalid_request")
+		passkeyRequestError(w)
 		return nil
 	}
 	s.mu.Lock()
@@ -263,7 +266,7 @@ func (s *Server) openLogin(w http.ResponseWriter, r *http.Request) *loginState {
 	var raw string
 	if err = tx.QueryRow("SELECT redirect,used FROM oauth_grants WHERE hash=? AND kind='login' AND expires>?", hash(session), now).Scan(&raw, &l.failures); err != nil {
 		l.close()
-		oauthError(w, 400, "invalid_request")
+		passkeyRequestError(w)
 		return nil
 	}
 	if !policy.LoginAttemptAllowed(l.failures) {
@@ -273,12 +276,12 @@ func (s *Server) openLogin(w http.ResponseWriter, r *http.Request) *loginState {
 	}
 	if l.values, err = url.ParseQuery(raw); err != nil || !s.validAuthorizeWith(l.values, tx) {
 		l.close()
-		oauthError(w, 400, "invalid_request")
+		passkeyRequestError(w)
 		return nil
 	}
 	if err = tx.QueryRow("SELECT purpose,session_data,challenge_expires FROM oauth_passkey_flows WHERE session_hash=? AND expires>?", hash(session), now).Scan(&l.purpose, &l.data, &l.challenge); err != nil {
 		l.close()
-		oauthError(w, 400, "invalid_request")
+		passkeyRequestError(w)
 		return nil
 	}
 	return l
@@ -361,7 +364,7 @@ func (s *Server) passkeyFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	step := passkeyStep(s.cfg.PasskeyMode, len(keys))
 	if step == stepComplete {
-		oauthError(w, 400, "invalid_request")
+		passkeyRequestError(w)
 		return
 	}
 	if r.PostForm.Get("skip") == "1" {
@@ -451,4 +454,15 @@ func (s *Server) verifyEnrollment(tx dbQuerier, keys []storedPasskey, session we
 		return failed
 	}
 	return ""
+}
+
+var passkeyErrorPage = template.Must(template.New("passkey-error").Parse(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign-in expired</title></head><body><h1>This sign-in has expired</h1><p>The NAS could not match this step to a sign-in in progress. Sign-ins last 5 minutes. Close this tab and start again from Claude, ChatGPT or the NAS page you were opening.</p></body></html>`))
+
+// passkeyRequestError answers a browser that posted a passkey step the NAS cannot match
+// to a live sign-in. People see these pages, so the answer is a page, not JSON.
+func passkeyRequestError(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", passkeyCSP)
+	w.WriteHeader(http.StatusBadRequest)
+	passkeyErrorPage.Execute(w, nil)
 }
