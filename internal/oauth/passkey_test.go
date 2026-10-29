@@ -146,6 +146,19 @@ type pkFixture struct {
 	s   *Server
 	h   http.Handler
 	jar http.CookieJar
+	// pagePolicy is the Referrer-Policy of the last HTML page, which governs the Origin
+	// header a browser sends when a form on that page is submitted.
+	pagePolicy string
+}
+
+// browserOrigin follows the Fetch standard: script requests (fetch, mode "cors") always
+// carry the page's origin; a form submission (mode "navigate") from a page whose policy
+// is "no-referrer" carries the literal origin "null".
+func (f *pkFixture) browserOrigin(target string) string {
+	if strings.HasSuffix(target, "/options") || f.pagePolicy != "no-referrer" {
+		return f.s.cfg.Issuer
+	}
+	return "null"
 }
 
 func newPasskeyServerAt(t *testing.T, mode, issuer string) (*Server, error) {
@@ -190,7 +203,7 @@ func (f *pkFixture) do(method, target string, form url.Values) *httptest.Respons
 		r = httptest.NewRequest(method, target, nil)
 	}
 	if method == "POST" {
-		r.Header.Set("Origin", f.s.cfg.Issuer)
+		r.Header.Set("Origin", f.browserOrigin(r.URL.Path))
 	}
 	for _, c := range f.jar.Cookies(r.URL) {
 		r.AddCookie(c)
@@ -198,6 +211,10 @@ func (f *pkFixture) do(method, target string, form url.Values) *httptest.Respons
 	w := httptest.NewRecorder()
 	f.h.ServeHTTP(w, r)
 	f.jar.SetCookies(r.URL, w.Result().Cookies())
+	// Only a page the browser displays sets the policy for its forms; redirects do not.
+	if w.Code < 300 && strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") {
+		f.pagePolicy = w.Header().Get("Referrer-Policy")
+	}
 	return w
 }
 
@@ -764,6 +781,9 @@ func (f *pkFixture) signInBrowser(target string, key *softKey) {
 
 func (f *pkFixture) addViaManager(key *softKey, name string) *httptest.ResponseRecorder {
 	f.t.Helper()
+	if page := f.do("GET", "/passkeys", nil); page.Code != 200 {
+		return page
+	}
 	opts := f.do("POST", "/passkeys/options", url.Values{})
 	if opts.Code != 200 {
 		return opts
@@ -957,3 +977,22 @@ func TestResetPasskeysRemovesEverything(t *testing.T) {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+func TestPasskeyFailuresShowAReadablePage(t *testing.T) {
+	f := newPasskeyFixture(t, "enroll")
+	session := f.begin()
+	f.password(session)
+	// A finish without a valid login session (for example, after it expired) is a person's page view.
+	w := f.do("POST", "/authorize/passkey/finish", url.Values{"session": {strings.Repeat("x", 43)}, "credential": {"{}"}})
+	if w.Code != 400 || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") || !strings.Contains(w.Body.String(), "start again") {
+		t.Fatalf("expected a readable page, got %d %q %s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
+	}
+	f.signInBrowser("/passkeys", nil)
+	if page := f.do("GET", "/passkeys", nil); page.Code != 200 {
+		t.Fatal(page.Code)
+	}
+	r := f.do("POST", "/passkeys/add", url.Values{"credential": {"{}"}})
+	if r.Code == 200 || !strings.HasPrefix(r.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("manager failure should be a readable page: %d %q", r.Code, r.Header().Get("Content-Type"))
+	}
+}

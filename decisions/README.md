@@ -623,6 +623,28 @@ browser test). The socket no longer contains forget handlers at all.
 Limits: no automatic capture of chats; keyword search only; nothing measured on the NAS;
 the editor's offline behaviour and passkey pages are untested in real browsers.
 
+## D049 — Let browsers send the origin on same-site form posts
+
+Status: accepted; fixes a defect found on the NAS.
+
+Registering the first passkey failed after the fingerprint step with `invalid_request`.
+The passkey pages and the notes app told browsers `Referrer-Policy: no-referrer`. Under
+the Fetch standard a form submission from such a page carries `Origin: null`, and these
+pages require the real origin to stop cross-site posts. Script requests are unaffected,
+which is why fetching passkey options worked and the final form post did not. Every form
+in the notes app had the same fault. Tests set the Origin header themselves, so they did
+not behave like a browser.
+
+Decision: pages that host forms send `Referrer-Policy: same-origin`, which gives no
+referrer to other sites and lets same-site form posts carry the real origin. The Origin
+checks are unchanged, so `null` and other origins are still refused. A passkey step the
+NAS cannot match to a live sign-in now shows a short page that says to start again,
+instead of JSON.
+
+Evidence: the passkey test fixture now sends the Origin a browser would, based on the
+hosting page's policy; with the old header 17 passkey tests failed, and with the fix all
+pass. A notes-app test submits forms with the browser-accurate origin and failed before
+the fix; another confirms `null`, foreign and missing origins are still refused.
 ## D050 — Back up memory with a consistent copy
 
 Status: accepted; untested on the NAS until the first scheduled run.

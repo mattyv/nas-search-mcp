@@ -63,12 +63,18 @@ func (s *Server) renderManager(w http.ResponseWriter, status int, message string
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", passkeyCSP)
+	// Pages with forms must let the browser send their origin on same-site requests:
+	// under "no-referrer" a form submission carries Origin "null" and is refused.
+	w.Header().Set("Referrer-Policy", "same-origin")
 	w.WriteHeader(status)
 	managerPage.Execute(w, managerView{Mode: s.cfg.PasskeyMode, Message: message, Keys: keys, CanAdd: policy.CanRegisterPasskey(len(keys), passkeyCapacity), Confirm: confirm})
 }
 
 func (s *Server) managePasskeys(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", passkeyCSP)
+	// Pages with forms must let the browser send their origin on same-site requests:
+	// under "no-referrer" a form submission carries Origin "null" and is refused.
+	w.Header().Set("Referrer-Policy", "same-origin")
 	posts := map[string]func(http.ResponseWriter, *http.Request){
 		"/passkeys/options": s.managerOptions, "/passkeys/add": s.managerAdd,
 		"/passkeys/rename": s.managerRename, "/passkeys/remove": s.managerRemove,
@@ -96,7 +102,7 @@ func (s *Server) managePasskeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Header.Get("Origin") != s.cfg.Issuer || r.ParseForm() != nil {
-		oauthError(w, 400, "invalid_request")
+		passkeyRequestError(w)
 		return
 	}
 	s.mu.Lock()
