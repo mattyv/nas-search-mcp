@@ -142,3 +142,12 @@ func TestMemoryStatusNamesAreValid(t *testing.T) {
 		t.Fatal("every enumerated status must be valid in the core", got)
 	}
 }
+
+func TestBackupRetentionBridge(t *testing.T) {
+	if !KeepBackup(0, 7) || !KeepBackup(6, 7) || KeepBackup(7, 7) || KeepBackup(0, 0) {
+		t.Fatal("keep backup")
+	}
+	if !ValidBackupRetention(7) || ValidBackupRetention(0) || ValidBackupRetention(91) {
+		t.Fatal("retention bounds")
+	}
+}

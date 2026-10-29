@@ -500,6 +500,12 @@ func (_static *CompanionStruct_Default___) CanRegisterPasskey(registered _dafny.
 func (_static *CompanionStruct_Default___) PasskeySignCountValid(stored _dafny.Int, received _dafny.Int) bool {
 	return (((stored).Sign() != -1) && ((received).Sign() != -1)) && ((((stored).Sign() == 0) && ((received).Sign() == 0)) || ((received).Cmp(stored) > 0))
 }
+func (_static *CompanionStruct_Default___) ValidBackupRetention(keep _dafny.Int) bool {
+	return ((_dafny.One).Cmp(keep) <= 0) && ((keep).Cmp(_dafny.IntOfInt64(90)) <= 0)
+}
+func (_static *CompanionStruct_Default___) KeepBackup(rankNewestFirst _dafny.Int, keep _dafny.Int) bool {
+	return (Companion_Default___.ValidBackupRetention(keep)) && (((rankNewestFirst).Sign() != -1) && ((rankNewestFirst).Cmp(keep) < 0))
+}
 func (_static *CompanionStruct_Default___) EditorAllowed(login _dafny.Sequence, owner _dafny.Sequence) bool {
 	return (!_dafny.Companion_Sequence_.Equal(owner, _dafny.UnicodeSeqOfUtf8Bytes(""))) && (_dafny.Companion_Sequence_.Equal(login, owner))
 }

@@ -751,6 +751,27 @@ module Core {
     stored >= 0 && received >= 0 && ((stored == 0 && received == 0) || received > stored)
   }
 
+  // Memory backups: keep between 1 and 90 copies.
+  predicate ValidBackupRetention(keep: int) {
+    1 <= keep <= 90
+  }
+
+  // A backup is kept when it is among the newest `keep` copies (rank 0 is the newest).
+  predicate KeepBackup(rankNewestFirst: int, keep: int) {
+    ValidBackupRetention(keep) && 0 <= rankNewestFirst < keep
+  }
+
+  // Pruning never removes the newest copy, so a successful backup always survives.
+  lemma NewestBackupIsKept(keep: int)
+    requires ValidBackupRetention(keep)
+    ensures KeepBackup(0, keep)
+  {}
+
+  lemma OlderBackupsGoFirst(newer: int, older: int, keep: int)
+    requires 0 <= newer <= older && KeepBackup(older, keep)
+    ensures KeepBackup(newer, keep)
+  {}
+
   predicate EditorAllowed(login: string, owner: string) {
     owner != "" && login == owner
   }

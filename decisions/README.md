@@ -645,3 +645,20 @@ Evidence: the passkey test fixture now sends the Origin a browser would, based o
 hosting page's policy; with the old header 17 passkey tests failed, and with the fix all
 pass. A notes-app test submits forms with the browser-accurate origin and failed before
 the fix; another confirms `null`, foreign and missing origins are still refused.
+## D050 — Back up memory with a consistent copy
+
+Status: accepted; untested on the NAS until the first scheduled run.
+
+The memory database is the only copy of the owner's journal and decisions, and the
+owner's offsite backup copies files nightly. Copying a live SQLite database can capture a
+torn write. The `memory-backup` command writes a copy with SQLite's `VACUUM INTO`, which
+reads one consistent snapshot while the service runs, writes it under a temporary name,
+makes it private and renames it into a `backups` folder beside the database. It keeps
+the newest copies, 7 by default and 1 to 90 by `NAS_MEMORY_BACKUP_KEEP`; which copies to
+keep is a verified rule that proves the newest copy always survives. Pruning only touches
+files named like backups. The owner schedules the command in DSM before the offsite
+backup and points that backup at the `backups` folder.
+
+Evidence: a store test makes nine daily copies and checks that the newest seven remain,
+the copy opens with the data, no temporary file is left, the file is private and other
+files are untouched; a command test covers the folder and retention setting.

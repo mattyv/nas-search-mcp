@@ -209,3 +209,13 @@ func MemoryStatuses(selected func(string) bool) []string {
 	}
 	return out
 }
+
+// ValidBackupRetention bounds how many memory backups are kept (1 to 90).
+func ValidBackupRetention(keep int) bool {
+	return core.Companion_Default___.ValidBackupRetention(dafny.IntOf(keep))
+}
+
+// KeepBackup keeps a backup when it is among the newest keep copies (rank 0 is newest).
+func KeepBackup(rankNewestFirst, keep int) bool {
+	return core.Companion_Default___.KeepBackup(dafny.IntOf(rankNewestFirst), dafny.IntOf(keep))
+}

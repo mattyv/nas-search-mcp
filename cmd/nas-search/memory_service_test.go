@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestMemoryThresholds(t *testing.T) {
 	for name, c := range map[string]struct {
@@ -45,5 +48,27 @@ func TestExternalClassificationScopes(t *testing.T) {
 		if _, err := externalScopes(bad); err == nil {
 			t.Errorf("accepted %q", bad)
 		}
+	}
+}
+
+func TestMemoryBackupCommand(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "memory.sqlite3")
+	t.Setenv("NAS_MEMORY_DB", db)
+	t.Setenv("NAS_MEMORY_BACKUP_KEEP", "")
+	path, err := runMemoryBackup()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(path) != filepath.Join(dir, "backups") {
+		t.Fatalf("backup written to %s", path)
+	}
+	t.Setenv("NAS_MEMORY_BACKUP_KEEP", "0")
+	if _, err := runMemoryBackup(); err == nil {
+		t.Fatal("keep 0 must be refused")
+	}
+	t.Setenv("NAS_MEMORY_BACKUP_KEEP", "seven")
+	if _, err := runMemoryBackup(); err == nil {
+		t.Fatal("a non-number must be refused")
 	}
 }

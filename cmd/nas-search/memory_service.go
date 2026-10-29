@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -199,4 +200,21 @@ func passkeyMode(issuer string) string {
 		log.Printf("passkey mode %q by default: the OAuth issuer is an IP address", mode)
 	}
 	return mode
+}
+
+// runMemoryBackup writes a consistent copy of the memory database into a "backups"
+// folder next to it and keeps the newest NAS_MEMORY_BACKUP_KEEP copies (default 7).
+// Run it inside the memory container, for example nightly before an offsite sync.
+func runMemoryBackup() (string, error) {
+	keep, err := strconv.Atoi(env("NAS_MEMORY_BACKUP_KEEP", "7"))
+	if err != nil {
+		return "", errors.New("NAS_MEMORY_BACKUP_KEEP must be a number from 1 to 90")
+	}
+	path := env("NAS_MEMORY_DB", "/memory/memory.sqlite3")
+	store, err := memory.Open(memory.Config{Path: path})
+	if err != nil {
+		return "", err
+	}
+	defer store.Close()
+	return store.Backup(filepath.Join(filepath.Dir(path), "backups"), keep)
 }
