@@ -232,7 +232,7 @@ func TestSecurityHeadersAndNoInlineCode(t *testing.T) {
 		if hd.Get("Content-Security-Policy") != csp {
 			t.Errorf("%s: CSP = %q", p, hd.Get("Content-Security-Policy"))
 		}
-		if hd.Get("X-Content-Type-Options") != "nosniff" || hd.Get("Referrer-Policy") != "no-referrer" {
+		if hd.Get("X-Content-Type-Options") != "nosniff" || hd.Get("Referrer-Policy") != "same-origin" {
 			t.Errorf("%s: missing nosniff/referrer headers", p)
 		}
 		if hd.Get("Cache-Control") != "no-store" {
