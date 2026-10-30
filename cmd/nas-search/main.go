@@ -114,6 +114,14 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "passkey-invite" {
+		code, err := oauth.CreatePasskeyInvite(env("NAS_OAUTH_DB", env("NAS_DATA", "/data")+"/oauth.sqlite3"), 15)
+		if err != nil {
+			log.Fatal("passkey invite failed")
+		}
+		fmt.Printf("Invite code: %s\nIt works once, for 15 minutes, and replaces any earlier invite.\nOn the new device, open %s/passkeys, sign in with your password,\nchoose \"New device without a passkey?\", enter the code, then register the passkey.\n", code, os.Getenv("NAS_OAUTH_ISSUER"))
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "memory-service" {
 		if err := runMemoryService(); err != nil {
 			log.Fatalf("memory service unavailable: %v", err)

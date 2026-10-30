@@ -662,3 +662,30 @@ backup and points that backup at the `backups` folder.
 Evidence: a store test makes nine daily copies and checks that the newest seven remain,
 the copy opens with the data, no temporary file is left, the file is private and other
 files are untouched; a command test covers the folder and retention setting.
+
+## D051 — Add another passkey with an invite made on the NAS
+
+Status: accepted; untested on the NAS until the owner adds a device.
+
+Adding a passkey needed a sign-in with an existing passkey, so a new device (a Linux
+laptop, a hardware key) could only be added from the Mac that holds the first one. The
+`passkey-invite` command, run over SSH on the NAS, now prints a one-time code that lasts
+15 minutes and replaces any earlier code. At the passkey step of a sign-in, after the
+password, the code turns that sign-in into registering a new passkey. Shell access to
+the NAS is the owner check, the same one `reset-passkeys` already relies on. A
+shared one-time code was preferred over an authenticator app or recovery codes. Those
+would add a second, weaker way to sign in. This adds only another passkey.
+
+Verified rules: what step an invite unlocks (it turns "prove a passkey" into "register
+one" and is proved never to complete a sign-in by itself or offer Skip), when an invite
+is usable (unused and unexpired), and its 1 to 60 minute lifetime. Codes are 100 random
+bits and stored only as hashes. A wrong, used or expired code counts against the sign-in
+attempt limit. Invites live in a new `oauth_passkey_invites` table; no existing table
+changes, and `reset-passkeys` clears invites too. After a rollback the previous release
+ignores the table.
+
+Evidence: tests first failed to build, then pass. They show that an invite adds a
+second passkey without the first and both then sign in, that Skip is refused after an
+invite, that a replaced or spent invite fails, that an expired or wrong code fails and
+counts as an attempt, that codes are stored hashed and reset clears them, and that typed
+codes ignore case and spacing.

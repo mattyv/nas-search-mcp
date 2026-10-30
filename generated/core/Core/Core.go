@@ -494,6 +494,19 @@ func (_static *CompanionStruct_Default___) PasskeyStep(mode _dafny.Sequence, reg
 func (_static *CompanionStruct_Default___) PasskeyRemovalAllowed(mode _dafny.Sequence, registered _dafny.Int) bool {
 	return ((registered).Cmp(_dafny.One) >= 0) && (!((_dafny.Companion_Sequence_.Equal(mode, _dafny.UnicodeSeqOfUtf8Bytes("required"))) && ((registered).Cmp(_dafny.One) <= 0)))
 }
+func (_static *CompanionStruct_Default___) PasskeyStepInvited(mode _dafny.Sequence, registered _dafny.Int, invited bool) _dafny.Sequence {
+	if (invited) && (_dafny.Companion_Sequence_.Equal(Companion_Default___.PasskeyStep(mode, registered), _dafny.UnicodeSeqOfUtf8Bytes("assert"))) {
+		return _dafny.UnicodeSeqOfUtf8Bytes("enroll_required")
+	} else {
+		return Companion_Default___.PasskeyStep(mode, registered)
+	}
+}
+func (_static *CompanionStruct_Default___) PasskeyInviteUsable(used bool, now _dafny.Int, expires _dafny.Int) bool {
+	return (!(used)) && ((now).Cmp(expires) < 0)
+}
+func (_static *CompanionStruct_Default___) ValidPasskeyInviteMinutes(minutes _dafny.Int) bool {
+	return ((_dafny.One).Cmp(minutes) <= 0) && ((minutes).Cmp(_dafny.IntOfInt64(60)) <= 0)
+}
 func (_static *CompanionStruct_Default___) CanRegisterPasskey(registered _dafny.Int, capacity _dafny.Int) bool {
 	return (((registered).Sign() != -1) && (((_dafny.One).Cmp(capacity) <= 0) && ((capacity).Cmp(_dafny.IntOfInt64(32)) <= 0))) && ((registered).Cmp(capacity) < 0)
 }

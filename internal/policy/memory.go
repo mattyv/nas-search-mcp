@@ -219,3 +219,19 @@ func ValidBackupRetention(keep int) bool {
 func KeepBackup(rankNewestFirst, keep int) bool {
 	return core.Companion_Default___.KeepBackup(dafny.IntOf(rankNewestFirst), dafny.IntOf(keep))
 }
+
+// PasskeyStepInvited is PasskeyStep after an owner invite was redeemed: the
+// passkey check becomes registration of a new passkey, never a plain sign-in.
+func PasskeyStepInvited(mode string, registered int, invited bool) string {
+	return dafny.SequenceVerbatimString(core.Companion_Default___.PasskeyStepInvited(str(mode), dafny.IntOf(registered), invited), false)
+}
+
+// PasskeyInviteUsable: unused and not yet expired (Unix seconds).
+func PasskeyInviteUsable(used bool, now, expires int64) bool {
+	return core.Companion_Default___.PasskeyInviteUsable(used, dafny.IntOf(int(now)), dafny.IntOf(int(expires)))
+}
+
+// ValidPasskeyInviteMinutes bounds an invite's lifetime to 1-60 minutes.
+func ValidPasskeyInviteMinutes(minutes int) bool {
+	return core.Companion_Default___.ValidPasskeyInviteMinutes(dafny.IntOf(minutes))
+}
