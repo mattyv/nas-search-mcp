@@ -151,3 +151,18 @@ func TestBackupRetentionBridge(t *testing.T) {
 		t.Fatal("retention bounds")
 	}
 }
+
+func TestPasskeyInviteBridge(t *testing.T) {
+	if PasskeyStepInvited("required", 1, true) != "enroll_required" || PasskeyStepInvited("enroll", 2, true) != "enroll_required" {
+		t.Fatal("an invite turns the passkey check into enrollment")
+	}
+	if PasskeyStepInvited("enroll", 1, false) != "assert" || PasskeyStepInvited("off", 1, true) != "complete" || PasskeyStepInvited("enroll", 0, true) != "enroll_optional" {
+		t.Fatal("an invite changes nothing else")
+	}
+	if !PasskeyInviteUsable(false, 100, 101) || PasskeyInviteUsable(true, 100, 101) || PasskeyInviteUsable(false, 101, 101) {
+		t.Fatal("usable")
+	}
+	if !ValidPasskeyInviteMinutes(15) || ValidPasskeyInviteMinutes(0) || ValidPasskeyInviteMinutes(61) {
+		t.Fatal("minutes")
+	}
+}

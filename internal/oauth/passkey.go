@@ -30,7 +30,9 @@ const passkeySchema = `CREATE TABLE IF NOT EXISTS oauth_passkeys(
  credential TEXT NOT NULL, sign_count INTEGER NOT NULL, created INTEGER NOT NULL, last_used INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS oauth_passkey_flows(
  session_hash TEXT PRIMARY KEY, purpose TEXT NOT NULL, session_data TEXT NOT NULL,
- challenge_expires INTEGER NOT NULL, expires INTEGER NOT NULL);`
+ challenge_expires INTEGER NOT NULL, expires INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS oauth_passkey_invites(
+ hash TEXT PRIMARY KEY, expires INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);`
 
 //go:embed passkey.js
 var passkeyScript []byte
@@ -155,7 +157,7 @@ func ResetPasskeys(dbPath string) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, q := range []string{passkeySchema, "DELETE FROM oauth_passkeys", "DELETE FROM oauth_passkey_flows"} {
+	for _, q := range []string{passkeySchema, "DELETE FROM oauth_passkeys", "DELETE FROM oauth_passkey_flows", "DELETE FROM oauth_passkey_invites"} {
 		if _, err = tx.Exec(q); err != nil {
 			return err
 		}
@@ -171,6 +173,8 @@ var passkeyPage = template.Must(template.New("passkey").Parse(`<!doctype html><h
 {{if .Message}}<p role="alert">{{.Message}}</p>{{end}}
 <form method="post" action="/authorize/passkey/finish" data-passkey="{{if eq .Step "assert"}}get{{else}}create{{end}}" data-options="/authorize/passkey/options"><input type="hidden" name="session" value="{{.Session}}"><input type="hidden" name="credential" value="">{{if ne .Step "assert"}}<label>Name this passkey <input name="name" value="My passkey" maxlength="64"></label> {{end}}<button type="submit">{{if eq .Step "assert"}}Use passkey{{else}}Register{{end}}</button></form>
 {{if eq .Step "enroll_optional"}}<form method="post" action="/authorize/passkey/finish"><input type="hidden" name="session" value="{{.Session}}"><input type="hidden" name="skip" value="1"><button type="submit">Skip</button></form>{{end}}
+{{if eq .Step "assert"}}<details><summary>New device without a passkey?</summary><p>On the NAS, run <code>sudo docker exec nas-search-nas-search-1 /app/nas-search passkey-invite</code> and enter the code it prints. You will then register this device's passkey.</p>
+<form method="post" action="/authorize/passkey/finish"><input type="hidden" name="session" value="{{.Session}}"><label>Invite code <input name="invite" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="40"></label> <button type="submit">Use invite</button></form></details>{{end}}
 <p id="passkey-status" role="status"></p><noscript><p>Passkeys need JavaScript. Turn it on for this page.</p></noscript>
 <script src="/authorize/passkey.js"></script></body></html>`))
 
@@ -225,6 +229,22 @@ type loginState struct {
 	purpose   string
 	data      string
 	challenge int64
+}
+
+// invited reports a sign-in that redeemed an owner invite; idle is the purpose its flow returns to.
+func (l *loginState) invited() bool {
+	return l.purpose == purposeInvited || l.purpose == purposeInviteRegister
+}
+
+func (l *loginState) idle() string {
+	if l.invited() {
+		return purposeInvited
+	}
+	return "ready"
+}
+
+func (l *loginState) step(mode string, registered int) string {
+	return policy.PasskeyStepInvited(mode, registered, l.invited())
 }
 
 func (l *loginState) close() {
@@ -302,13 +322,16 @@ func (s *Server) passkeyOptions(w http.ResponseWriter, r *http.Request) {
 	var payload any
 	var session *webauthn.SessionData
 	var purpose string
-	switch passkeyStep(s.cfg.PasskeyMode, len(keys)) {
+	switch l.step(s.cfg.PasskeyMode, len(keys)) {
 	case stepAssert:
 		payload, session, err = s.beginAssertion(owner)
 		purpose = "assert"
 	case stepEnrollOptional, stepEnrollRequired:
 		payload, session, err = s.beginEnrollment(owner)
 		purpose = "register"
+		if l.invited() {
+			purpose = purposeInviteRegister
+		}
 	default:
 		oauthError(w, 400, "invalid_request")
 		return
@@ -343,7 +366,7 @@ func (s *Server) beginEnrollment(owner passkeyOwner) (any, *webauthn.SessionData
 // outstanding challenge, and shows the passkey step again.
 func (l *loginState) reject(w http.ResponseWriter, step, message string) {
 	_, e1 := l.tx.Exec("UPDATE oauth_grants SET used=? WHERE hash=? AND kind='login'", policy.FailedLoginCount(l.failures), hash(l.session))
-	_, e2 := l.tx.Exec("UPDATE oauth_passkey_flows SET purpose='ready',session_data='',challenge_expires=0 WHERE session_hash=?", hash(l.session))
+	_, e2 := l.tx.Exec("UPDATE oauth_passkey_flows SET purpose=?,session_data='',challenge_expires=0 WHERE session_hash=?", l.idle(), hash(l.session))
 	if e1 != nil || e2 != nil || l.tx.Commit() != nil {
 		oauthError(w, 500, "server_error")
 		return
@@ -362,9 +385,17 @@ func (s *Server) passkeyFinish(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 500, "server_error")
 		return
 	}
-	step := passkeyStep(s.cfg.PasskeyMode, len(keys))
+	step := l.step(s.cfg.PasskeyMode, len(keys))
 	if step == stepComplete {
 		passkeyRequestError(w)
+		return
+	}
+	if code := r.PostForm.Get("invite"); code != "" {
+		if step != stepAssert {
+			l.reject(w, step, "This sign-in does not need an invite code.")
+			return
+		}
+		s.redeemInvite(w, l, code)
 		return
 	}
 	if r.PostForm.Get("skip") == "1" {
@@ -379,6 +410,8 @@ func (s *Server) passkeyFinish(w http.ResponseWriter, r *http.Request) {
 	want := "register"
 	if step == stepAssert {
 		want = "assert"
+	} else if l.invited() {
+		want = purposeInviteRegister
 	}
 	var session webauthn.SessionData
 	if l.purpose != want || l.challenge <= time.Now().Unix() || credential == "" || len(credential) > maxCredentialForm || json.Unmarshal([]byte(l.data), &session) != nil {
@@ -386,7 +419,7 @@ func (s *Server) passkeyFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Spend the challenge before verifying: it is single use whatever the outcome.
-	if _, err = l.tx.Exec("UPDATE oauth_passkey_flows SET purpose='ready',session_data='',challenge_expires=0 WHERE session_hash=?", hash(l.session)); err != nil {
+	if _, err = l.tx.Exec("UPDATE oauth_passkey_flows SET purpose=?,session_data='',challenge_expires=0 WHERE session_hash=?", l.idle(), hash(l.session)); err != nil {
 		oauthError(w, 500, "server_error")
 		return
 	}

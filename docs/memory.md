@@ -88,6 +88,20 @@ Check that a new passkey works: open `<issuer>/passkeys` in a private window, en
 
 Add a second passkey that does not depend on the first. A Mac passkey syncs through iCloud Keychain to your iPhone, so losing your Apple account loses both. Add one from Chrome on another computer, or a hardware security key, so you cannot lock yourself out.
 
+Add a passkey on a device that has none, without your first passkey:
+
+1. On the NAS, run:
+
+   ```sh
+   sudo docker exec nas-search-nas-search-1 /app/nas-search passkey-invite
+   ```
+
+   It prints an invite code that works once, for 15 minutes. A new code replaces the old one.
+2. On the new device, open `<issuer>/passkeys` and enter your password.
+3. At the passkey step, open "New device without a passkey?", enter the code and register the device's passkey.
+
+The invite still needs your password, and it only adds a passkey: it never signs you in without one.
+
 If you lose every passkey, run this on the NAS to clear them:
 
 ```sh

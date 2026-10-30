@@ -742,6 +742,30 @@ module Core {
     ensures registered - 1 >= 1
   {}
 
+  // An owner invite (made over SSH on the NAS) stands in for a passkey only to register another one.
+  function PasskeyStepInvited(mode: string, registered: int, invited: bool): string
+    ensures !invited ==> PasskeyStepInvited(mode, registered, invited) == PasskeyStep(mode, registered)
+    ensures invited && PasskeyStep(mode, registered) == "assert" ==> PasskeyStepInvited(mode, registered, invited) == "enroll_required"
+    ensures PasskeyStepInvited(mode, registered, invited) in {"complete", "assert", "enroll_optional", "enroll_required"}
+  {
+    if invited && PasskeyStep(mode, registered) == "assert" then "enroll_required" else PasskeyStep(mode, registered)
+  }
+
+  // An invite never finishes a sign-in on its own: where a passkey is required, the
+  // invited step still needs a passkey ceremony and offers no skip.
+  lemma InviteNeverSkipsThePasskey(mode: string, registered: int, invited: bool)
+    requires PasskeyRequired(mode, registered)
+    ensures PasskeyStepInvited(mode, registered, invited) in {"assert", "enroll_required"}
+  {}
+
+  predicate PasskeyInviteUsable(used: bool, now: int, expires: int) {
+    !used && now < expires
+  }
+
+  predicate ValidPasskeyInviteMinutes(minutes: int) {
+    1 <= minutes <= 60
+  }
+
   predicate CanRegisterPasskey(registered: int, capacity: int) {
     registered >= 0 && 1 <= capacity <= 32 && registered < capacity
   }
