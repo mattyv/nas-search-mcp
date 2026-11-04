@@ -384,7 +384,7 @@ func TestEnrollModeOffersOptionalEnrollmentAndSkipWorks(t *testing.T) {
 func TestPasswordPageStillUsesStrictCSP(t *testing.T) {
 	f := newPasskeyFixture(t, "enroll")
 	w := f.do("GET", "/authorize?"+authorizeValues(f.s).Encode(), nil)
-	if csp := w.Header().Get("Content-Security-Policy"); csp != "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" {
+	if csp := w.Header().Get("Content-Security-Policy"); csp != "default-src 'none'; form-action 'self' https://claude.ai; frame-ancestors 'none'; base-uri 'none'" {
 		t.Fatalf("password page CSP changed: %q", csp)
 	}
 }

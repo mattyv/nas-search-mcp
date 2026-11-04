@@ -89,5 +89,5 @@ func (s *Server) redeemInvite(w http.ResponseWriter, l *loginState, code string)
 		oauthError(w, 500, "server_error")
 		return
 	}
-	renderPasskeyStep(w, 200, l.session, stepEnrollRequired, "Invite accepted. Register this device's passkey.")
+	renderPasskeyStep(w, 200, l.session, stepEnrollRequired, "Invite accepted. Register this device's passkey.", l.values.Get("redirect_uri"))
 }

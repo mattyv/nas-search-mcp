@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS oauth_passkey_invites(
 var passkeyScript []byte
 
 const (
-	// Passkey pages may load the same-origin script and call same-origin endpoints; nothing else.
+	// Sign-in pages additionally allow the validated callback for form redirects.
 	passkeyCSP        = "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; script-src 'self'; connect-src 'self'"
 	challengeLifetime = 5 * time.Minute
 	maxCredentialForm = 6000
@@ -178,9 +178,9 @@ var passkeyPage = template.Must(template.New("passkey").Parse(`<!doctype html><h
 <p id="passkey-status" role="status"></p><noscript><p>Passkeys need JavaScript. Turn it on for this page.</p></noscript>
 <script src="/authorize/passkey.js"></script></body></html>`))
 
-func renderPasskeyStep(w http.ResponseWriter, status int, session, step, message string) {
+func renderPasskeyStep(w http.ResponseWriter, status int, session, step, message, redirect string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", passkeyCSP)
+	w.Header().Set("Content-Security-Policy", signInCSP(passkeyCSP, redirect))
 	// Pages with forms must let the browser send their origin on same-site requests:
 	// under "no-referrer" a form submission carries Origin "null" and is refused.
 	w.Header().Set("Referrer-Policy", "same-origin")
@@ -195,7 +195,7 @@ func (s *Server) passkeyScript(w http.ResponseWriter, r *http.Request) {
 
 // beginPasskeyStep runs inside consent after a correct password. It reports
 // true when it has answered the request (passkey step shown or an error sent).
-func (s *Server) beginPasskeyStep(w http.ResponseWriter, tx *sql.Tx, session string) bool {
+func (s *Server) beginPasskeyStep(w http.ResponseWriter, tx *sql.Tx, session, redirect string) bool {
 	if s.wa == nil {
 		return false
 	}
@@ -216,7 +216,7 @@ func (s *Server) beginPasskeyStep(w http.ResponseWriter, tx *sql.Tx, session str
 		oauthError(w, 500, "server_error")
 		return true
 	}
-	renderPasskeyStep(w, 200, session, step, "")
+	renderPasskeyStep(w, 200, session, step, "", redirect)
 	return true
 }
 
@@ -371,7 +371,7 @@ func (l *loginState) reject(w http.ResponseWriter, step, message string) {
 		oauthError(w, 500, "server_error")
 		return
 	}
-	renderPasskeyStep(w, 403, l.session, step, message)
+	renderPasskeyStep(w, 403, l.session, step, message, l.values.Get("redirect_uri"))
 }
 
 func (s *Server) passkeyFinish(w http.ResponseWriter, r *http.Request) {

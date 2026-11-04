@@ -689,3 +689,41 @@ second passkey without the first and both then sign in, that Skip is refused aft
 invite, that a replaced or spent invite fails, that an expired or wrong code fails and
 counts as an attempt, that codes are stored hashed and reset clears them, and that typed
 codes ignore case and spacing.
+
+## D052 — Allow the current OAuth callback in the sign-in form policy
+
+Status: accepted locally; NAS deployment and affected-device sign-in unvalidated.
+
+The owner reported Mac and iPhone sign-ins stopping at “Checking the passkey…” while
+Linux worked. That message appears after the device returns a credential, immediately
+before the final form submission. Sign-in pages allowed forms only to the NAS origin,
+but successful submission redirects to the client's callback. Browsers can apply that
+restriction to redirects too; WebKit has a [regression test for this behavior](https://github.com/WebKit/WebKit/blob/main/LayoutTests/http/tests/security/contentSecurityPolicy/form-action-redirect-with-correct-blocked-uri.html).
+This is a confirmed defect and a likely explanation of the report, not a diagnosis from
+the affected devices' browser logs.
+
+Password, passkey enrollment, assertion, retry, and invite pages now allow the origin of
+only the callback already validated for that sign-in, alongside the NAS origin. No
+wildcards or lists of unrelated clients are added. Script and network requests remain
+same-origin. Exact callback validation, password and passkey checks, cookies, expiry,
+and single-use authorization codes are unchanged. Passkey management and error pages
+retain their existing policy. The form policy permits the callback origin rather than
+its path because browsers ignore path restrictions when following redirects; the OAuth
+server still checks and uses the exact callback URI. Header composition is a browser
+protocol adapter outside Dafny verification; no core decision rules changed.
+
+Evidence: new tests failed before implementation for Claude, ChatGPT, and registered
+loopback clients, including retry and invite pages. A local isolated headless Chrome
+check submitted a same-origin form followed by a cross-origin 303: the previous policy
+blocked callback arrival, and the corrected policy allowed it. This check used a local
+callback, not a live Claude account. An onward callback redirect to another origin may
+still be blocked and requires live browser validation. Why the client needed a new
+sign-in was not established, and token lifetimes were not changed.
+
+Validation: focused regressions and all 82 OAuth tests pass with `sqlite_fts5` and the
+race detector. `scripts/build-core.sh` verified 97 declarations with no errors, passed
+its executable tests, and regenerated identical core output. The OAuth deployment
+Python tests passed (4); the fresh-client interoperability test was skipped because
+this machine lacks `mcp.client.auth`. The installed macOS 27 SDK did not link with the
+available toolchain, so Go checks used the installed macOS 26.5 SDK. No container build,
+release CI, NAS deployment, or actual Mac/iPhone passkey ceremony was performed.

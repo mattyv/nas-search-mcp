@@ -260,6 +260,14 @@ func (s *Server) validAuthorizeWith(v url.Values, q rowQuerier) bool {
 
 var page = template.Must(template.New("login").Parse(`<!doctype html><html><head><title>Authorize NAS search</title></head><body><h1>{{if .Browser}}Sign in to continue{{else if .ServiceUpgrades}}Allow NAS access and service upgrades?{{else}}Allow read-only NAS access?{{end}}</h1>{{if .Browser}}<p>Sign in again to open the requested file, submit an upload, or continue to upgrade approval. This sign-in is limited to this browser action.</p>{{else}}<p>This connector can search and read the folders enabled by the NAS owner.</p>{{end}}{{if .ServiceUpgrades}}<p>This connector can also upgrade the search service from main when requested. Original files remain read-only.</p>{{end}}<p>Send authorization to {{.Destination}}.</p>{{if .Loopback}}<p>Warning: another local program could receive this authorization.</p>{{end}}<form method="post" action="/authorize"><input type="hidden" name="session" value="{{.Session}}"><label>NAS connector password <input name="password" type="password" autocomplete="current-password" required maxlength="1024"></label><button name="consent" value="allow">{{if .Browser}}Continue{{else if .ServiceUpgrades}}Allow access and upgrades{{else}}Allow read-only access{{end}}</button></form></body></html>`))
 
+// signInCSP accepts only a callback already checked by validAuthorizeWith.
+// Browsers can apply form-action to the callback redirect as well as the POST.
+func signInCSP(base, redirect string) string {
+	destination, _ := url.Parse(redirect)
+	origin := destination.Scheme + "://" + destination.Host
+	return strings.Replace(base, "form-action 'self'", "form-action 'self' "+origin, 1)
+}
+
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	if !s.limiter.Allow() {
 		oauthError(w, 429, "temporarily_unavailable")
@@ -283,6 +291,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: loginCookieName(session), Value: session, Path: "/authorize", HttpOnly: true, Secure: strings.HasPrefix(s.cfg.Issuer, "https:"), SameSite: http.SameSiteStrictMode, MaxAge: 300})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Referrer-Policy", "strict-origin")
+	w.Header().Set("Content-Security-Policy", signInCSP(w.Header().Get("Content-Security-Policy"), parameters.Get("redirect_uri")))
 	destination, _ := url.Parse(r.URL.Query().Get("redirect_uri"))
 	page.Execute(w, struct {
 		Session, Destination               string
@@ -338,7 +347,7 @@ func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, 403, "access_denied")
 		return
 	}
-	if s.beginPasskeyStep(w, tx, session) {
+	if s.beginPasskeyStep(w, tx, session, v.Get("redirect_uri")) {
 		return
 	}
 	s.issueCode(w, r, tx, session, v)
