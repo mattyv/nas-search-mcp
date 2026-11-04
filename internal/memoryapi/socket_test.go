@@ -63,7 +63,7 @@ func TestRoundTripOverSocket(t *testing.T) {
 	ctx := context.Background()
 	roots := []string{"personal"}
 
-	e, created, err := c.AppendEvent(ctx, roots, memoryapi.Event{Type: "decision", Title: "use sockets", Project: "p", Scope: "personal", Client: "t", Actor: memoryapi.ActorUser, IdempotencyKey: "k"})
+	e, created, err := c.AppendEvent(ctx, roots, memoryapi.Event{Type: "memory", Title: "use sockets", Project: "p", Scope: "personal", Client: "t", Actor: memoryapi.ActorUser, IdempotencyKey: "k"})
 	if err != nil || !created || e.Status == "confirmed" || e.OccurredAt.IsZero() {
 		t.Fatalf("%+v %v %v", e, created, err)
 	}

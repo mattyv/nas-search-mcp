@@ -183,8 +183,16 @@ module CoreTests {
     expect !AssistantMayTransition("candidate", "accepted");
     expect !AssistantMayTransition("accepted", "retracted");
     expect !AssistantMayTransition("retracted", "disputed");
-    expect ProposesMemory("decision");
-    expect ProposesMemory("manual_note");
+    expect ProposesMemory("memory");
+    expect MemorySaveOutcome("memory", true) == "memory_suggestion";
+    expect MemorySaveOutcome("memory", false) == "already_saved";
+    expect MemorySaveOutcome("observation", true) == "journal_only";
+    expect MemorySaveOutcome("decision", false) == "already_saved";
+    expect ValidEventType("memory");
+    expect !ProposesMemory("decision");
+    expect !ProposesMemory("manual_note");
+    expect !ProposesMemory("observation");
+    expect !ProposesMemory("correction");
     expect !ProposesMemory("discussion");
     expect !ProposesMemory("checkpoint");
     expect DefaultMemoryCategory("decision") == "decision";

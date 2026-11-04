@@ -115,7 +115,7 @@ func TestNonProposingTypesOnlyMarked(t *testing.T) {
 }
 
 func TestUserEntryProposedAttestedWithoutExternalCall(t *testing.T) {
-	e := ev("1", "decision", memoryapi.ActorUser, "personal")
+	e := ev("1", "memory", memoryapi.ActorUser, "personal")
 	s := newStore(e)
 	cl := &fakeClassifier{category: "fact", pm: 900}
 	if _, err := Once(context.Background(), s, cfg(cl)); err != nil {
@@ -128,7 +128,7 @@ func TestUserEntryProposedAttestedWithoutExternalCall(t *testing.T) {
 		t.Fatalf("%+v %v", s.proposed, s.attested)
 	}
 	m := s.proposed[0]
-	if m.Probability != -1 || m.Category != "decision" || m.Project != "nas" || m.Scope != "personal" ||
+	if m.Probability != -1 || m.Category != "fact" || m.Project != "nas" || m.Scope != "personal" ||
 		len(m.Evidence) != 1 || m.Evidence[0] != "1" || m.Statement != "Use SQLite for the index" {
 		t.Fatalf("%+v", m)
 	}
@@ -137,39 +137,8 @@ func TestUserEntryProposedAttestedWithoutExternalCall(t *testing.T) {
 	}
 }
 
-func TestStatementIncludesUsefulBody(t *testing.T) {
-	e := ev("1", "decision", memoryapi.ActorUser, "personal")
-	e.Body = strings.Repeat("x", 600)
-	s := newStore(e)
-	Once(context.Background(), s, cfg(nil))
-	want := "Use SQLite for the index: " + strings.Repeat("x", 400)
-	if s.proposed[0].Statement != want {
-		t.Fatalf("got %q", s.proposed[0].Statement)
-	}
-
-	// Body that only repeats the title adds nothing.
-	e2 := ev("2", "decision", memoryapi.ActorUser, "personal")
-	e2.Body = "  use sqlite for the index. "
-	s2 := newStore(e2)
-	Once(context.Background(), s2, cfg(nil))
-	if s2.proposed[0].Statement != "Use SQLite for the index" {
-		t.Fatalf("got %q", s2.proposed[0].Statement)
-	}
-}
-
-func TestStatementCapped(t *testing.T) {
-	e := ev("1", "decision", memoryapi.ActorUser, "personal")
-	e.Title = strings.Repeat("t", 800)
-	e.Body = strings.Repeat("b", 600)
-	s := newStore(e)
-	Once(context.Background(), s, cfg(nil))
-	if n := len([]rune(s.proposed[0].Statement)); n != 1000 {
-		t.Fatalf("len %d", n)
-	}
-}
-
 func TestOutOfScopeNeverReachesClassifier(t *testing.T) {
-	s := newStore(ev("1", "decision", memoryapi.ActorAssistant, "work/acme"))
+	s := newStore(ev("1", "memory", memoryapi.ActorAssistant, "work/acme"))
 	cl := &fakeClassifier{category: "fact", pm: 990, model: "m"}
 	if _, err := Once(context.Background(), s, cfg(cl)); err != nil {
 		t.Fatal(err)
@@ -183,7 +152,7 @@ func TestOutOfScopeNeverReachesClassifier(t *testing.T) {
 }
 
 func TestNilClassifierKeepsUnscored(t *testing.T) {
-	s := newStore(ev("1", "decision", memoryapi.ActorAssistant, "personal"))
+	s := newStore(ev("1", "memory", memoryapi.ActorAssistant, "personal"))
 	if _, err := Once(context.Background(), s, Config{Roots: roots, ExternalScopes: []string{"personal"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +162,7 @@ func TestNilClassifierKeepsUnscored(t *testing.T) {
 }
 
 func TestClassifierResultApplied(t *testing.T) {
-	s := newStore(ev("1", "observation", memoryapi.ActorAssistant, "personal"))
+	s := newStore(ev("1", "memory", memoryapi.ActorAssistant, "personal"))
 	cl := &fakeClassifier{category: "preference", pm: 870, model: "jev-1"}
 	if _, err := Once(context.Background(), s, cfg(cl)); err != nil {
 		t.Fatal(err)
@@ -205,10 +174,10 @@ func TestClassifierResultApplied(t *testing.T) {
 }
 
 func TestInvalidCategoryFallsBack(t *testing.T) {
-	s := newStore(ev("1", "decision", memoryapi.ActorAssistant, "personal"))
+	s := newStore(ev("1", "memory", memoryapi.ActorAssistant, "personal"))
 	cl := &fakeClassifier{category: "gossip", pm: 500, model: "m"}
 	Once(context.Background(), s, cfg(cl))
-	if s.proposed[0].Category != "decision" {
+	if s.proposed[0].Category != "fact" {
 		t.Fatalf("%q", s.proposed[0].Category)
 	}
 }
@@ -216,7 +185,7 @@ func TestInvalidCategoryFallsBack(t *testing.T) {
 func TestOutOfRangeScoresReachTheStoreUnclamped(t *testing.T) {
 	// The core routes out-of-range scores to review; the adapter must not rewrite them.
 	for _, pm := range []int{5000, -7} {
-		s := newStore(ev("1", "decision", memoryapi.ActorAssistant, "personal"))
+		s := newStore(ev("1", "memory", memoryapi.ActorAssistant, "personal"))
 		cl := &fakeClassifier{category: "fact", pm: pm, model: "m"}
 		Once(context.Background(), s, cfg(cl))
 		if s.proposed[0].Probability != pm {
@@ -226,7 +195,7 @@ func TestOutOfRangeScoresReachTheStoreUnclamped(t *testing.T) {
 }
 
 func TestDuplicateSkipped(t *testing.T) {
-	s := newStore(ev("1", "decision", memoryapi.ActorUser, "personal"))
+	s := newStore(ev("1", "memory", memoryapi.ActorUser, "personal"))
 	s.existing = []memoryapi.Memory{{ID: "m1", Project: "nas", Statement: "  use SQLite   for the index. ", Status: "accepted"}}
 	cl := &fakeClassifier{}
 	n, err := Once(context.Background(), s, cfg(cl))
@@ -256,7 +225,7 @@ func TestDuplicateSkipped(t *testing.T) {
 }
 
 func TestDifferentStatementNotDuplicate(t *testing.T) {
-	s := newStore(ev("1", "decision", memoryapi.ActorUser, "personal"))
+	s := newStore(ev("1", "memory", memoryapi.ActorUser, "personal"))
 	s.existing = []memoryapi.Memory{{ID: "m1", Project: "nas", Statement: "Use Postgres", Status: "accepted"}}
 	Once(context.Background(), s, cfg(nil))
 	if len(s.proposed) != 1 {
@@ -264,13 +233,13 @@ func TestDifferentStatementNotDuplicate(t *testing.T) {
 	}
 }
 
-func TestCorrectionStillProposed(t *testing.T) {
+func TestCorrectionStaysInJournal(t *testing.T) {
 	e := ev("2", "correction", memoryapi.ActorUser, "personal")
 	e.Supersedes = "1"
 	s := newStore(e)
 	Once(context.Background(), s, cfg(nil))
-	if len(s.proposed) != 1 {
-		t.Fatalf("correction types that propose must be proposed: %d", len(s.proposed))
+	if len(s.proposed) != 0 || !s.classified[e.ID] {
+		t.Fatalf("journal correction created a suggestion: %d", len(s.proposed))
 	}
 }
 
@@ -290,9 +259,9 @@ func retryableErr(t *testing.T) error {
 }
 
 func TestRetryableErrorStopsRound(t *testing.T) {
-	e2 := ev("2", "decision", memoryapi.ActorAssistant, "personal")
+	e2 := ev("2", "memory", memoryapi.ActorAssistant, "personal")
 	e2.Title = "Second"
-	s := newStore(ev("1", "decision", memoryapi.ActorAssistant, "personal"), e2)
+	s := newStore(ev("1", "memory", memoryapi.ActorAssistant, "personal"), e2)
 	cl := &fakeClassifier{err: retryableErr(t)}
 	n, err := Once(context.Background(), s, cfg(cl))
 	if err != nil {
@@ -310,11 +279,11 @@ func TestClassifierOutageStillProcessesEntriesThatNeedNoClassifier(t *testing.T)
 		return x
 	}
 	s := newStore(
-		e("1", "decision", memoryapi.ActorAssistant, "personal", "needs classifier one"),
+		e("1", "memory", memoryapi.ActorAssistant, "personal", "needs classifier one"),
 		e("2", "checkpoint", memoryapi.ActorAssistant, "personal", "non proposing"),
-		e("3", "decision", memoryapi.ActorUser, "personal", "owner wrote this"),
-		e("4", "decision", memoryapi.ActorAssistant, "work/acme", "private scope"),
-		e("5", "decision", memoryapi.ActorAssistant, "personal", "needs classifier two"),
+		e("3", "memory", memoryapi.ActorUser, "personal", "owner wrote this"),
+		e("4", "memory", memoryapi.ActorAssistant, "work/acme", "private scope"),
+		e("5", "memory", memoryapi.ActorAssistant, "personal", "needs classifier two"),
 	)
 	cl := &fakeClassifier{err: retryableErr(t)}
 	n, err := Once(context.Background(), s, cfg(cl))
@@ -341,7 +310,7 @@ func TestClassifierOutageStillProcessesEntriesThatNeedNoClassifier(t *testing.T)
 
 func TestRetryableAfterProgressKeepsEarlierWork(t *testing.T) {
 	e1 := ev("1", "checkpoint", memoryapi.ActorAssistant, "personal")
-	e2 := ev("2", "decision", memoryapi.ActorAssistant, "personal")
+	e2 := ev("2", "memory", memoryapi.ActorAssistant, "personal")
 	s := newStore(e1, e2)
 	cl := &fakeClassifier{err: retryableErr(t)}
 	n, _ := Once(context.Background(), s, cfg(cl))
@@ -351,9 +320,9 @@ func TestRetryableAfterProgressKeepsEarlierWork(t *testing.T) {
 }
 
 func TestNonRetryableContinuesUnscored(t *testing.T) {
-	e2 := ev("2", "decision", memoryapi.ActorAssistant, "personal")
+	e2 := ev("2", "memory", memoryapi.ActorAssistant, "personal")
 	e2.Title = "Second"
-	s := newStore(ev("1", "decision", memoryapi.ActorAssistant, "personal"), e2)
+	s := newStore(ev("1", "memory", memoryapi.ActorAssistant, "personal"), e2)
 	cl := &fakeClassifier{err: errors.New("bad request")}
 	n, err := Once(context.Background(), s, cfg(cl))
 	if err != nil || n != 2 {
@@ -424,7 +393,7 @@ func TestJevClassifier(t *testing.T) {
 	}))
 	defer srv.Close()
 	cl := NewJevClassifier(&jev.Client{BaseURL: srv.URL, APIKey: "k"})
-	e := ev("SECRET-ID", "observation", memoryapi.ActorAssistant, "personal")
+	e := ev("SECRET-ID", "memory", memoryapi.ActorAssistant, "personal")
 	e.Body = "body text"
 	e.Sources = []memoryapi.Source{{Kind: "file", Locator: "/secret/path", Excerpt: "SECRET-EXCERPT"}}
 	cat, pm, model, err := cl.Classify(context.Background(), e)
@@ -437,7 +406,7 @@ func TestJevClassifier(t *testing.T) {
 			t.Fatalf("request leaked %q: %s", bad, raw)
 		}
 	}
-	for _, want := range []string{"Use SQLite for the index", "body text", "nas", "observation"} {
+	for _, want := range []string{"Use SQLite for the index", "body text", "nas", "memory"} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("state lacks %q: %s", want, raw)
 		}
@@ -458,8 +427,44 @@ func TestJevClassifierPropagatesRetryable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(429) }))
 	defer srv.Close()
 	cl := NewJevClassifier(&jev.Client{BaseURL: srv.URL, APIKey: "k"})
-	_, _, _, err := cl.Classify(context.Background(), ev("1", "decision", memoryapi.ActorAssistant, "personal"))
+	_, _, _, err := cl.Classify(context.Background(), ev("1", "memory", memoryapi.ActorAssistant, "personal"))
 	if !jev.IsRetryable(err) {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestRoutineJournalEntriesNeverCreateReviewWork(t *testing.T) {
+	types := []string{"observation", "decision", "correction", "manual_note", "discussion", "exploration", "action", "result", "checkpoint"}
+	for _, actor := range []string{memoryapi.ActorUser, memoryapi.ActorAssistant} {
+		for _, typ := range types {
+			t.Run(actor+"/"+typ, func(t *testing.T) {
+				s := newStore(ev("routine", typ, actor, "personal"))
+				cl := &fakeClassifier{pm: 990}
+				n, err := Once(context.Background(), s, cfg(cl))
+				if err != nil || n != 1 || len(s.proposed) != 0 || cl.calls != 0 || !s.classified["routine"] {
+					t.Fatalf("routine note produced work: n=%d proposed=%d classifier=%d err=%v", n, len(s.proposed), cl.calls, err)
+				}
+			})
+		}
+	}
+}
+
+func TestExplicitMemoryKeepsCompleteStatementAndEvidence(t *testing.T) {
+	e := ev("explicit", "memory", memoryapi.ActorAssistant, "personal")
+	e.Title = "The damp doorframe's cause is still unknown."
+	e.Body = strings.Repeat("Supporting research. ", 80) + "Do not infer termite damage."
+	s := newStore(e)
+	if _, err := Once(context.Background(), s, cfg(nil)); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.proposed) != 1 {
+		t.Fatalf("proposals: %d", len(s.proposed))
+	}
+	m := s.proposed[0]
+	if m.Statement != e.Title || m.Probability != -1 || s.attested[0] || len(m.Evidence) != 1 || m.Evidence[0] != e.ID {
+		t.Fatalf("wrong suggestion: %+v", m)
+	}
+	if s.events[0].Body != e.Body {
+		t.Fatal("supporting journal text changed")
 	}
 }

@@ -316,7 +316,16 @@ func (_static *CompanionStruct_Default___) ValidMemoryCategory(c _dafny.Sequence
 	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("fact"), _dafny.UnicodeSeqOfUtf8Bytes("preference"), _dafny.UnicodeSeqOfUtf8Bytes("decision"), _dafny.UnicodeSeqOfUtf8Bytes("constraint"), _dafny.UnicodeSeqOfUtf8Bytes("lesson"))).Contains(c)
 }
 func (_static *CompanionStruct_Default___) ProposesMemory(eventType _dafny.Sequence) bool {
-	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("decision"), _dafny.UnicodeSeqOfUtf8Bytes("observation"), _dafny.UnicodeSeqOfUtf8Bytes("correction"), _dafny.UnicodeSeqOfUtf8Bytes("manual_note"))).Contains(eventType)
+	return _dafny.Companion_Sequence_.Equal(eventType, _dafny.UnicodeSeqOfUtf8Bytes("memory"))
+}
+func (_static *CompanionStruct_Default___) MemorySaveOutcome(eventType _dafny.Sequence, created bool) _dafny.Sequence {
+	if !(created) {
+		return _dafny.UnicodeSeqOfUtf8Bytes("already_saved")
+	} else if Companion_Default___.ProposesMemory(eventType) {
+		return _dafny.UnicodeSeqOfUtf8Bytes("memory_suggestion")
+	} else {
+		return _dafny.UnicodeSeqOfUtf8Bytes("journal_only")
+	}
 }
 func (_static *CompanionStruct_Default___) DefaultMemoryCategory(eventType _dafny.Sequence) _dafny.Sequence {
 	if _dafny.Companion_Sequence_.Equal(eventType, _dafny.UnicodeSeqOfUtf8Bytes("decision")) {
@@ -326,7 +335,7 @@ func (_static *CompanionStruct_Default___) DefaultMemoryCategory(eventType _dafn
 	}
 }
 func (_static *CompanionStruct_Default___) ValidEventType(t _dafny.Sequence) bool {
-	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("observation"), _dafny.UnicodeSeqOfUtf8Bytes("discussion"), _dafny.UnicodeSeqOfUtf8Bytes("exploration"), _dafny.UnicodeSeqOfUtf8Bytes("decision"), _dafny.UnicodeSeqOfUtf8Bytes("action"), _dafny.UnicodeSeqOfUtf8Bytes("result"), _dafny.UnicodeSeqOfUtf8Bytes("correction"), _dafny.UnicodeSeqOfUtf8Bytes("checkpoint"), _dafny.UnicodeSeqOfUtf8Bytes("manual_note"))).Contains(t)
+	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("observation"), _dafny.UnicodeSeqOfUtf8Bytes("discussion"), _dafny.UnicodeSeqOfUtf8Bytes("exploration"), _dafny.UnicodeSeqOfUtf8Bytes("decision"), _dafny.UnicodeSeqOfUtf8Bytes("action"), _dafny.UnicodeSeqOfUtf8Bytes("result"), _dafny.UnicodeSeqOfUtf8Bytes("correction"), _dafny.UnicodeSeqOfUtf8Bytes("checkpoint"), _dafny.UnicodeSeqOfUtf8Bytes("manual_note"), _dafny.UnicodeSeqOfUtf8Bytes("memory"))).Contains(t)
 }
 func (_static *CompanionStruct_Default___) ValidEventStatus(s _dafny.Sequence) bool {
 	return (_dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("proposed"), _dafny.UnicodeSeqOfUtf8Bytes("confirmed"), _dafny.UnicodeSeqOfUtf8Bytes("unverified"), _dafny.UnicodeSeqOfUtf8Bytes("superseded"))).Contains(s)

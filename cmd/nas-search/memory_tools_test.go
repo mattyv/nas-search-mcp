@@ -415,3 +415,30 @@ func TestToolLimitsMatchTheStore(t *testing.T) {
 		}
 	}
 }
+
+func TestJournalSaveExplainsMemoryHandling(t *testing.T) {
+	env := newMemToolEnv(t, []string{"personal"}, "personal", "https://editor.example")
+	for _, tc := range []struct{ typ, outcome string }{{"observation", "journal_only"}, {"decision", "journal_only"}, {"memory", "memory_suggestion"}} {
+		out := env.mustCall("journal_append", map[string]any{"type": tc.typ, "title": "A complete statement", "idempotency_key": tc.typ})
+		if out["memory_handling"] != tc.outcome || out["message"] == nil || out["message"] == "" {
+			t.Fatalf("missing save notice: %+v", out)
+		}
+		if tc.typ == "memory" && out["editor_url"] != "https://editor.example/review" {
+			t.Fatalf("missing review link: %+v", out)
+		}
+		// A retry must describe the stored event, not the new request's claimed type.
+		again := env.mustCall("journal_append", map[string]any{"type": "memory", "title": "retry", "idempotency_key": tc.typ})
+		if again["memory_handling"] != "already_saved" {
+			t.Fatalf("retry created a new notice: %+v", again)
+		}
+	}
+}
+
+func TestDisputingMemoryReturnsUserNotice(t *testing.T) {
+	env := newMemToolEnv(t, []string{"personal"}, "personal", "https://editor.example")
+	env.store.memories["m1"] = memoryapi.Memory{ID: "m1", Scope: "personal", Status: "accepted", Statement: "old fact"}
+	out := env.mustCall("memory_correct", map[string]any{"memory_id": "m1", "status": "disputed", "reason": "uncertain"})
+	if out["status"] != "disputed" || out["message"] == nil || out["editor_url"] != "https://editor.example/m/m1" {
+		t.Fatalf("silent dispute: %+v", out)
+	}
+}

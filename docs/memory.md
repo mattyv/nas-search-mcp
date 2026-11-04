@@ -6,7 +6,7 @@ Memory is off by default. Nothing in this guide changes how search works.
 
 ## What you get
 
-- `journal_append` saves a note when you ask an assistant to remember or record something.
+- `journal_append` saves journal notes without creating an approval task. An explicit `memory` entry proposes a lasting memory.
 - `context_open` loads the notes for a project at the start of a conversation.
 - A web editor, which only you can open, lets you read, fix, and delete notes.
 
@@ -51,7 +51,21 @@ A Mac that is connected to a different tailnet, such as a work one, cannot reach
 
 Put this line in Claude's personal preferences or in a project's instructions:
 
-> At the start of a conversation about an ongoing project, call context_open for that project before answering. When I ask you to remember or record something, use journal_append.
+> At the start of a conversation about an ongoing project, call context_open for that project before answering. Use journal_append to record activity. Use its memory type only to propose a concise fact, preference, decision, constraint, or lesson worth remembering long term. Tell me when you save a memory suggestion or flag an existing memory as disputed, including whether screening is still pending.
+
+## Journal notes and memory suggestions
+
+Ordinary journal entries stay searchable without approval. Observations, decisions, corrections, and manual notes no longer automatically become lasting memories. Progress and research can stay in the journal and project checkpoints.
+
+In the editor, choose **New → Type → memory** to save a lasting statement you confirm yourself. Other note types stay in the journal. Use the Timeline project dropdown to choose a project or **All projects**; the selected day and project stay selected when you move between days.
+
+To propose a lasting memory, an assistant uses `journal_append` with type `memory`. Its title is the complete statement, up to 200 characters; the body holds supporting context in the linked journal entry. The statement is never made by cutting off a longer note. Keep qualifications that affect its meaning in the title too. Assign a project so its context includes the memory. Without automatic classification, suggestions use the fact category; project-less facts stay searchable but are not automatically loaded into every project.
+
+The assistant is instructed to tell you when it saves an unconfirmed memory suggestion or marks an existing memory as disputed. Automatic screening runs later, so an initial save may still be pending. A suggestion is not an established fact while it awaits screening or your review.
+
+In Review, accept suggestions you want assistants to rely on, edit the wording first if needed, or choose **Dismiss suggestion**. Dismissing changes the suggestion's status to rejected and leaves the journal intact. You can leave ordinary suggestions undecided. Disputed memories may be wrong; check them before relying on them.
+
+Existing suggestions remain available after upgrading. The upgrade does not approve, dismiss, or delete them. Unconfirmed items can still appear in project context with their status clearly marked.
 
 ## Forgetting
 
@@ -110,17 +124,17 @@ sudo docker exec nas-search-nas-search-1 /app/nas-search reset-passkeys
 
 If you roll back to an older release, sign-in returns to password only.
 
-## Optional: screen notes with the Jev classifier
+## Optional: screen memory suggestions with the Jev classifier
 
-Jev is a hosted classifier from TypeSafe that scores notes. It is optional, and notes work without it.
+Jev is a hosted classifier from TypeSafe that scores explicit memory suggestions. It is optional; the journal works without it.
 
 1. Get an API key from TypeSafe.
 2. Add `NAS_JEV_API_KEY=<key>` to `.env`. The installer never prints it.
 3. Choose which scopes it may see with `NAS_JEV_SCOPES` (default `personal`). Set `NAS_JEV_SCOPES=none` to send nothing to TypeSafe.
 
-Only notes in `NAS_JEV_SCOPES` go to TypeSafe. Notes you write yourself in the editor are never sent.
+Only explicit memory entries in `NAS_JEV_SCOPES` go to TypeSafe. Ordinary journal entries and notes you write yourself in the editor are never sent.
 
-Two thresholds, scored from 0 to 1000, control the result. A score at or above `NAS_MEMORY_ACCEPT_AT` (default 900) is accepted. A score at or below `NAS_MEMORY_REJECT_AT` (default 100) is rejected. Scores in between, and entries the classifier never sees, wait in the editor's Review screen for you to decide. Keep `0 <= reject < accept <= 1000`. A reject threshold of `0` is allowed.
+Two thresholds, scored from 0 to 1000, control the result. A score at or above `NAS_MEMORY_ACCEPT_AT` (default 900) is accepted. A score at or below `NAS_MEMORY_REJECT_AT` (default 100) is rejected. Suggestions with scores in between, and those the classifier never sees, remain unconfirmed in the editor's Review screen. Keep `0 <= reject < accept <= 1000`. A reject threshold of `0` is allowed.
 
 Other settings: `NAS_JEV_URL` (default `https://api.typesafe.ai`), `NAS_JEV_MODEL` (default `jev-latest`), `NAS_EDITOR_PORT` (default 8083, range 1024 to 65535).
 

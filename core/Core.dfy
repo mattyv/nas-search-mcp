@@ -504,9 +504,24 @@ module Core {
     c in {"fact", "preference", "decision", "constraint", "lesson"}
   }
 
-  // Only events that state something durable become memory candidates.
+  // Recording activity never implies a request to create a lasting memory.
   predicate ProposesMemory(eventType: string) {
-    eventType in {"decision", "observation", "correction", "manual_note"}
+    eventType == "memory"
+  }
+
+  lemma RoutineJournalNeedsNoReview(eventType: string)
+    requires eventType != "memory"
+    ensures !ProposesMemory(eventType)
+  {}
+
+  function MemorySaveOutcome(eventType: string, created: bool): string
+    ensures MemorySaveOutcome(eventType, created) == "memory_suggestion" <==> created && ProposesMemory(eventType)
+    ensures MemorySaveOutcome(eventType, created) == "already_saved" <==> !created
+    ensures MemorySaveOutcome(eventType, created) == "journal_only" <==> created && !ProposesMemory(eventType)
+  {
+    if !created then "already_saved"
+    else if ProposesMemory(eventType) then "memory_suggestion"
+    else "journal_only"
   }
 
   function DefaultMemoryCategory(eventType: string): string
@@ -517,7 +532,7 @@ module Core {
 
   predicate ValidEventType(t: string) {
     t in {"observation", "discussion", "exploration", "decision", "action",
-          "result", "correction", "checkpoint", "manual_note"}
+          "result", "correction", "checkpoint", "manual_note", "memory"}
   }
 
   predicate ValidEventStatus(s: string) {

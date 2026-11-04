@@ -103,6 +103,10 @@ func ProposesMemory(eventType string) bool {
 	return core.Companion_Default___.ProposesMemory(str(eventType))
 }
 
+func MemorySaveOutcome(eventType string, created bool) string {
+	return dafny.SequenceVerbatimString(core.Companion_Default___.MemorySaveOutcome(str(eventType), created), false)
+}
+
 func DefaultMemoryCategory(eventType string) string {
 	return dafny.SequenceVerbatimString(core.Companion_Default___.DefaultMemoryCategory(str(eventType)), false)
 }

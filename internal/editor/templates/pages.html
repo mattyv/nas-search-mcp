@@ -3,7 +3,7 @@
 {{range .Data.Projects}}<a class="card" href="/p/{{pe .Project}}">
 <h3>{{.Project}}</h3>
 <div class="muted">Last activity {{ts .LastActivity}}</div>
-<span class="tag">checkpoint v{{.CheckpointVersion}}</span>{{if .OpenCandidates}}<span class="tag warn">{{.OpenCandidates}} to review</span>{{end}}
+<span class="tag">checkpoint v{{.CheckpointVersion}}</span>{{if .OpenCandidates}}<span class="tag warn">{{.OpenCandidates}} unconfirmed</span>{{end}}
 </a>
 {{else}}<p class="muted">No projects yet. Add a note to start one.</p>{{end}}
 <p><a class="button secondary" href="/memories">Browse memories</a></p>
@@ -32,7 +32,7 @@
 {{if .Decisions}}<h2>Decisions</h2>{{range .Decisions}}{{template "memcard" .}}{{end}}{{end}}
 {{if .Memories}}<h2>Memories</h2>{{range .Memories}}{{template "memcard" .}}{{end}}{{end}}
 {{if .Unconfirmed}}<h2>Not confirmed</h2>
-<p class="muted">These suggestions are not confirmed yet. <a href="/review">Review them</a>.</p>
+<p class="muted">These memories are unconfirmed. Suggestions can wait; check disputed items before relying on them. <a href="/review">Open Review</a>.</p>
 {{range .Unconfirmed}}{{template "memcard" .}}{{end}}{{end}}
 {{if .Recent}}<h2>Recent events</h2>{{range .Recent}}{{template "eventrow" .}}{{end}}{{end}}
 {{range .Notes}}<p class="muted">{{.}}</p>{{end}}
@@ -70,7 +70,7 @@
 <h1>Timeline</h1>
 <form class="filter" method="get" action="/timeline">
 <input type="date" name="day" value="{{.Data.Day}}" aria-label="Day">
-<input name="project" value="{{.Data.Project}}" placeholder="Project" aria-label="Project">
+<select name="project" aria-label="Project"><option value="">All projects</option>{{if .Data.Project}}<option value="{{.Data.Project}}" selected>{{.Data.Project}}</option>{{end}}{{range .Data.Projects}}{{if ne .Project $.Data.Project}}<option value="{{.Project}}">{{.Project}}</option>{{end}}{{end}}</select>
 <button type="submit">Go</button>
 </form>
 <p class="pager">
@@ -127,6 +127,7 @@
 
 {{define "new"}}{{template "head" .}}
 <h1>New note</h1>
+<p class="muted">Ordinary notes stay in the journal. Choose memory for a lasting statement: put the complete statement, including important qualifications, in the title and supporting context in Details.</p>
 <p id="note-message" class="notice" role="status" hidden></p>
 <p id="outbox-status" class="notice" role="status" hidden></p>
 <form id="note-form" method="post" action="/new">
@@ -188,7 +189,7 @@
 
 {{define "review"}}{{template "head" .}}
 <h1>Review</h1>
-<p class="muted">Suggestions that need your decision. Accepted ones become part of what assistants remember. <a href="/memories">Browse all memories</a>.</p>
+<p class="muted">Accept suggestions you want assistants to remember. You can leave others here or dismiss them. Disputed memories may be wrong and need checking before you rely on them. Dismissing a suggestion leaves its journal entries unchanged. <a href="/memories">Browse all memories</a>.</p>
 {{range .Data.Items}}
 <div class="card unconfirmed">
 <span class="tag warn">{{if eq .Status "disputed"}}disputed{{else}}not confirmed{{end}}</span>
@@ -201,11 +202,11 @@
 <label>Statement<textarea name="statement" required>{{.Statement}}</textarea></label>
 <label>Reason (optional)<input name="reason" maxlength="500"></label>
 <button type="submit" name="action" value="accept">Accept</button>
-<button type="submit" name="action" value="reject" class="danger">Reject</button>
+<button type="submit" name="action" value="reject" class="secondary">Dismiss suggestion</button>
 <button type="submit" name="action" value="edit" class="secondary">Edit &amp; accept</button>
 </form>
 </div>
-{{else}}<p class="notice">Nothing to review. You are all caught up.</p>{{end}}
+{{else}}<p class="notice">No unconfirmed memories.</p>{{end}}
 {{template "foot" .}}{{end}}
 
 {{define "error"}}{{template "head" .}}

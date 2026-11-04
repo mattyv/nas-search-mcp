@@ -68,7 +68,7 @@ func Once(ctx context.Context, store memoryapi.Store, cfg Config) (int, error) {
 			continue
 		}
 		m := memoryapi.Memory{
-			Statement:   buildStatement(e.Title, e.Body),
+			Statement:   e.Title,
 			Category:    policy.DefaultMemoryCategory(e.Type),
 			Scope:       e.Scope,
 			Project:     e.Project,

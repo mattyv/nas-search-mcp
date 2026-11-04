@@ -60,7 +60,7 @@ func TestMemoryRoutingBridge(t *testing.T) {
 	if !AssistantMayTransition("accepted", "disputed") || AssistantMayTransition("candidate", "accepted") {
 		t.Fatal("assistant transitions")
 	}
-	if !ProposesMemory("decision") || ProposesMemory("discussion") || DefaultMemoryCategory("decision") != "decision" || DefaultMemoryCategory("observation") != "fact" {
+	if !ProposesMemory("memory") || ProposesMemory("decision") || ProposesMemory("observation") || ProposesMemory("correction") || ProposesMemory("manual_note") || ProposesMemory("discussion") || DefaultMemoryCategory("decision") != "decision" || DefaultMemoryCategory("observation") != "fact" {
 		t.Fatal("proposal rules")
 	}
 	if !ValidMemoryCategory("lesson") || ValidMemoryCategory("rumour") {

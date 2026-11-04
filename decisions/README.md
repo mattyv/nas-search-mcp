@@ -727,3 +727,57 @@ Python tests passed (4); the fresh-client interoperability test was skipped beca
 this machine lacks `mcp.client.auth`. The installed macOS 27 SDK did not link with the
 available toolchain, so Go checks used the installed macOS 26.5 SDK. No container build,
 release CI, NAS deployment, or actual Mac/iPhone passkey ceremony was performed.
+
+## D053 — Make lasting-memory suggestions explicit and visible
+
+Status: accepted; local implementation, release checks pending. NAS deployment held at the owner's request.
+
+The owner found memory review burdensome and silent: assistant-written journal
+observations, decisions, corrections and notes automatically became candidates, but
+assistants did not explain the extra review work. A read-only sample confirmed unscored
+candidates made from dated research and activity summaries. The previous consolidator
+copied a title and the first 400 body characters, which could omit qualifications.
+
+Only an explicit journal entry of type `memory` now proposes a lasting memory. Other
+entry types remain searchable journal records without creating review work or calling
+the external classifier. The complete title, limited to 200 characters by existing
+validation, is the proposed statement. The full body remains supporting evidence in
+the journal; it is never spliced or truncated into the statement. Owner-written explicit
+memory entries retain their existing attested treatment. Assistant suggestions retain
+the existing confidence thresholds and owner-only acceptance rules; an assistant cannot
+confirm its own statement. Ordinary owner notes also stay in the journal unless the
+owner chooses the new memory type.
+
+Journal saves return a verified outcome: journal-only, newly nominated suggestion, or
+already saved. Human-readable messages and editor links tell assistants to disclose new
+suggestions and disputes in their reply. A new suggestion is unconfirmed and automatic
+screening may still be pending; the response does not invent a final review decision.
+Idempotent retries do not announce a new suggestion or assume an old one's current
+status. The dispute result keeps its existing memory fields and adds a message and link.
+Third-party assistants can ignore tool guidance, so this is an explicit reporting
+contract, not a guarantee about their final prose or an out-of-band notification service.
+
+Existing candidates, accepted memories, disputes and journal entries are preserved.
+Review describes optional suggestions and keeps disputes visibly marked. Dismissing a
+suggestion uses the existing rejection action and leaves journal records intact. No bulk
+acceptance, deletion, semantic deduplication, extra model dependency or schema migration
+is added. Previous releases can read the database after rollback but do not recognize
+`memory` as a type to promote; newer clients must reconnect to refresh tool guidance.
+
+The Timeline project filter is now a dropdown populated from projects visible to the
+owner. It includes All projects and retains the day, pagination and bookmarked selection.
+
+Evidence: new regressions failed before implementation for routine entries creating
+review work, explicit memory nomination, silent save/dispute results, and the Timeline
+filter. Dafny specifies that only explicit memory entries propose memories and that
+save outcomes distinguish new suggestions from retries. HTTP, model, SQLite and browser
+adapters remain outside formal verification. No live memory records were changed.
+
+Local validation: `scripts/build-core.sh` verified 99 declarations with no errors,
+passed executable core tests, and regenerated compiled output. The affected Go suites
+(memory, consolidation, policy, editor, socket API and MCP command integration) passed
+with `sqlite_fts5`; race checks passed on all affected packages. Installer/Compose Python
+tests passed 106 cases, with 9 Docker-dependent checks deferred to CI. The explicit
+nomination rule replaces the automatic candidate selection used by D048; its other
+trust and classification decisions remain in force. Live assistant replies and device
+UI behavior await deployment; no upgrade was queued.

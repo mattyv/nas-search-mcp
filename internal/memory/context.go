@@ -167,9 +167,9 @@ func (s *Store) OpenContext(ctx context.Context, roots []string, r memoryapi.Con
 		pkg.Notes = append(pkg.Notes, "no checkpoint saved yet")
 	}
 	if n := len(unconfirmed); n == 1 {
-		pkg.Notes = append(pkg.Notes, "1 memory awaits review in the editor")
+		pkg.Notes = append(pkg.Notes, "1 unconfirmed memory; see its status before relying on it")
 	} else if n > 1 {
-		pkg.Notes = append(pkg.Notes, fmt.Sprintf("%d memories await review in the editor", n))
+		pkg.Notes = append(pkg.Notes, fmt.Sprintf("%d unconfirmed memories; see their status before relying on them", n))
 	}
 	return pkg, nil
 }

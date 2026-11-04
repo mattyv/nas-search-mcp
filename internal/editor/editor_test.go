@@ -276,7 +276,7 @@ func TestPagesRenderAndEscape(t *testing.T) {
 func TestProjectsPage(t *testing.T) {
 	h, _ := seeded(t)
 	w := do(h, "GET", "/", "")
-	mustContain(t, w, "alpha", `datetime="2026-10-27T10:00:00Z"`, "v2", "1 to review")
+	mustContain(t, w, "alpha", `datetime="2026-10-27T10:00:00Z"`, "v2", "1 unconfirmed")
 }
 
 func TestProjectPage(t *testing.T) {
@@ -338,6 +338,37 @@ func TestTimeline(t *testing.T) {
 	mustContain(t, w, "project=alpha")
 	status(t, do(h, "GET", "/timeline?day=garbage", ""), 400)
 	status(t, do(h, "GET", "/timeline", ""), 200)
+}
+
+func TestTimelineProjectDropdownPreservesSelectionAndDay(t *testing.T) {
+	h, f := seeded(t)
+	w := do(h, "GET", "/timeline?day=2026-10-27&project=alpha", "")
+	status(t, w, 200)
+	mustContain(t, w, `<select name="project" aria-label="Project">`, `<option value="">All projects</option>`, `<option value="alpha" selected>alpha</option>`, `name="day" value="2026-10-27"`, `day=2026-10-26&amp;project=alpha`, `day=2026-10-28&amp;project=alpha`)
+	mustNotContain(t, w, `<input name="project"`, `<script>alert(1)</script>`)
+	if strings.Count(w.Body.String(), `<option value="alpha"`) != 1 {
+		t.Fatal("selected project duplicated in dropdown")
+	}
+	if f.count("Projects") != 1 || strings.Join(f.lastRoots, ",") != "personal,work/acme" {
+		t.Fatalf("project choices must use editor scopes: calls=%d roots=%v", f.count("Projects"), f.lastRoots)
+	}
+	// An old bookmarked selection remains selected even if it is no longer listed.
+	w = do(h, "GET", "/timeline?day=2026-10-27&project=archived", "")
+	mustContain(t, w, `<option value="archived" selected>archived</option>`)
+	if f.lastQuery.Project != "archived" {
+		t.Fatal("missing project selection changed the event filter")
+	}
+}
+
+func TestNewNoteCanExplicitlyCreateMemory(t *testing.T) {
+	h, f := seeded(t)
+	mustContain(t, do(h, "GET", "/new", ""), `<option value="memory">memory</option>`)
+	w := do(h, "POST", "/new", form("type", "memory", "scope", "personal", "title", "Prefer concise answers", "body", "Supporting context"))
+	status(t, w, http.StatusSeeOther)
+	e := f.events[len(f.events)-1]
+	if e.Type != "memory" || e.Title != "Prefer concise answers" || e.Body != "Supporting context" || e.Actor != memoryapi.ActorUser {
+		t.Fatalf("memory note = %+v", e)
+	}
 }
 
 func TestEventDetail(t *testing.T) {
@@ -538,7 +569,7 @@ func TestReviewQueue(t *testing.T) {
 	if strings.Join(f.lastMemQ.Statuses, ",") != "candidate,disputed" {
 		t.Fatalf("statuses = %v", f.lastMemQ.Statuses)
 	}
-	mustContain(t, w, "73", "clf-1", "unscored", "/e/ev1", "/e/ev2", "disputed one", "Accept", "Reject", "Edit &amp; accept", "/review/m-cand")
+	mustContain(t, w, "73", "clf-1", "unscored", "/e/ev1", "/e/ev2", "disputed one", "Accept", "Dismiss suggestion", "Edit &amp; accept", "/review/m-cand")
 	mustNotContain(t, w, "accepted one", "rejected one")
 }
 

@@ -494,7 +494,7 @@ func TestOpenContext(t *testing.T) {
 	if got := strings.Join(pkg.NextActions, ","); got != "write tests,deploy" {
 		t.Fatalf("next actions %q", got)
 	}
-	if len(pkg.Notes) != 1 || !strings.Contains(pkg.Notes[0], "review in the editor") {
+	if len(pkg.Notes) != 1 || !strings.Contains(pkg.Notes[0], "unconfirmed memory") {
 		t.Fatalf("notes %v", pkg.Notes)
 	}
 	pkg2, _ := s.OpenContext(ctx, personal, memoryapi.ContextRequest{})
@@ -536,10 +536,12 @@ func TestProjectsAndClassification(t *testing.T) {
 	s, clk := newStore(t)
 	a := ev("personal", "a1")
 	a.Project = "alpha"
+	a.Type = "memory"
 	mustAppend(t, s, personal, a)
 	clk.advance(time.Hour)
 	b := ev("personal", "b1")
 	b.Project = "beta"
+	b.Type = "memory"
 	mustAppend(t, s, personal, b)
 	other := ev("personal2", "c1")
 	other.Project = "gamma"
@@ -791,7 +793,7 @@ func TestStatusSetsFollowThePolicy(t *testing.T) {
 
 func TestClassifiedAtInsertFollowsPolicy(t *testing.T) {
 	s, _ := newStore(t)
-	for typ, want := range map[string]bool{"observation": false, "decision": false, "correction": false, "manual_note": false, "discussion": true, "exploration": true, "action": true, "result": true, "checkpoint": true} {
+	for typ, want := range map[string]bool{"memory": false, "observation": true, "decision": true, "correction": true, "manual_note": true, "discussion": true, "exploration": true, "action": true, "result": true, "checkpoint": true} {
 		e := ev("personal", "t "+typ)
 		e.Type = typ
 		if typ == "checkpoint" {

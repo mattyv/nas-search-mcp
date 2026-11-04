@@ -39,7 +39,7 @@ func validKey(s string) bool {
 }
 
 // noteTypes are the event types the New note form offers.
-var noteTypes = []string{"manual_note", "decision", "observation", "action", "result", "exploration"}
+var noteTypes = []string{"manual_note", "decision", "observation", "action", "result", "exploration", "memory"}
 
 // A note type must be offered by the form and valid for the store.
 func validNoteType(t string) bool {

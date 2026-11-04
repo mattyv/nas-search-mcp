@@ -147,7 +147,7 @@ type contextOpenInput struct {
 }
 
 type journalAppendInput struct {
-	Type           string        `json:"type" jsonschema:"observation, discussion, exploration, decision, action, result, correction or manual_note"`
+	Type           string        `json:"type" jsonschema:"observation, discussion, exploration, decision, action, result, correction, manual_note or memory"`
 	Title          string        `json:"title" jsonschema:"one-line summary, at most 200 characters"`
 	Body           string        `json:"body,omitempty" jsonschema:"details, at most 20000 characters"`
 	Project        string        `json:"project,omitempty"`
@@ -218,14 +218,23 @@ type memoriesOutput struct {
 }
 
 type appendOutput struct {
-	Event   memoryapi.Event `json:"event"`
-	Created bool            `json:"created"`
+	Event          memoryapi.Event `json:"event"`
+	Created        bool            `json:"created"`
+	MemoryHandling string          `json:"memory_handling"`
+	Message        string          `json:"message"`
+	EditorURL      string          `json:"editor_url,omitempty"`
+}
+
+type memoryCorrectionOutput struct {
+	memoryapi.Memory
+	Message   string `json:"message"`
+	EditorURL string `json:"editor_url,omitempty"`
 }
 
 func boolPtr(v bool) *bool { return &v }
 
 // registerMemoryTools adds the shared-memory tools. roots are the scopes this connection may
-// use. editorOrigin is the owner's editor address (may be empty); memory_forget only points there.
+// use. editorOrigin is the owner's editor address (may be empty); save, dispute and forget responses link there.
 func registerMemoryTools(server *mcp.Server, store memoryapi.Store, roots []string, defaultScope, editorOrigin string) {
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	additive := &mcp.ToolAnnotations{DestructiveHint: boolPtr(false), IdempotentHint: false, OpenWorldHint: boolPtr(false)}
@@ -272,7 +281,7 @@ func registerMemoryTools(server *mcp.Server, store memoryapi.Store, roots []stri
 	})
 
 	mcp.AddTool(server, &mcp.Tool{Name: "journal_append", Annotations: additive,
-		Description: "Record one entry in the shared journal. Call it when the user asks you to remember or record something, or confirms progress, a decision or a result worth keeping. Write a short title and, if useful, a body; add sources that point at evidence. Entries you write are always stored as coming from an assistant and are never confirmed facts: the owner confirms them later. client is self-reported and not verified. Returns {event, created}; created is false when idempotency_key matched an earlier entry. Limits: title 200 characters, body 20000; next_actions and related up to 20 items of at most 300 characters; up to 10 sources (kind 50 characters, locator 1000, excerpt 2000). Save checkpoints with checkpoint_save, not here." + memEvidenceNote,
+		Description: "Record one entry in the shared journal. Call it when the user asks you to remember or record something, or confirms progress, a decision or a result worth keeping. Write a short title and, if useful, a body; add sources that point at evidence. Ordinary entries stay in the journal and need no approval. Use type memory only to explicitly nominate one lasting fact, preference, constraint, lesson or decision worth reusing later. Assign its project so context_open can retrieve it; project-less unscored facts remain searchable with memory_search. For memory entries, the title must be the complete statement (up to 200 characters); body holds supporting context, not extra claims to promote. Avoid nominating routine progress, dated research or temporary choices. Assistant entries never count as owner-confirmed facts. Tell the user when memory_handling is memory_suggestion: quote the proposed statement, say it is unconfirmed and screening may still be pending, and give editor_url when present. Do not silently create a suggestion or claim it was accepted. For already_saved, no new suggestion was created; use memory_search if its current status matters. client is self-reported and not verified. Returns {event, created, memory_handling, message, editor_url}; created is false when idempotency_key matched an earlier entry. Limits: title 200 characters, body 20000; next_actions and related up to 20 items of at most 300 characters; up to 10 sources (kind 50 characters, locator 1000, excerpt 2000). Save checkpoints with checkpoint_save, not here." + memEvidenceNote,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in journalAppendInput) (*mcp.CallToolResult, appendOutput, error) {
 		var zero appendOutput
 		if strings.TrimSpace(in.Title) == "" || memLen(in.Title) > memMaxTitle {
@@ -282,7 +291,7 @@ func registerMemoryTools(server *mcp.Server, store memoryapi.Store, roots []stri
 			return nil, zero, memInvalid("body is longer than %d characters", memMaxBody)
 		}
 		if !policy.ValidEventType(in.Type) {
-			return nil, zero, memInvalid("type must be observation, discussion, exploration, decision, action, result, correction or manual_note")
+			return nil, zero, memInvalid("type must be observation, discussion, exploration, decision, action, result, correction, manual_note or memory")
 		}
 		if !policy.AssistantMayAppendType(in.Type) {
 			return nil, zero, memInvalid("entries of type %q cannot be written here; use checkpoint_save to save a checkpoint", in.Type)
@@ -332,7 +341,19 @@ func registerMemoryTools(server *mcp.Server, store memoryapi.Store, roots []stri
 		if err != nil {
 			return nil, zero, memError(err)
 		}
-		return nil, appendOutput{Event: event, Created: created}, nil
+		out := appendOutput{Event: event, Created: created, MemoryHandling: policy.MemorySaveOutcome(event.Type, created)}
+		switch out.MemoryHandling {
+		case "memory_suggestion":
+			out.Message = "Saved as a long-term memory suggestion. Tell the user the title is unconfirmed and automatic screening may still be pending; offer the Review page."
+			if editorOrigin != "" {
+				out.EditorURL = strings.TrimRight(editorOrigin, "/") + "/review"
+			}
+		case "already_saved":
+			out.Message = "This entry was already saved. No new memory suggestion was created; use memory_search to check any existing suggestion's current status."
+		case "journal_only":
+			out.Message = "Saved in the journal. No memory suggestion was created and no approval is needed."
+		}
+		return nil, out, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{Name: "journal_search", Annotations: readOnly,
@@ -459,9 +480,9 @@ func registerMemoryTools(server *mcp.Server, store memoryapi.Store, roots []stri
 	})
 
 	mcp.AddTool(server, &mcp.Tool{Name: "memory_correct", Annotations: additive,
-		Description: "Flag a memory as wrong or outdated by setting its status to disputed, with a reason and optionally the wording you think is right. This is the only change an assistant can make: accepting, rejecting and retracting memories happen in the owner's editor. A disputed memory is shown as unconfirmed until the owner decides. Returns the updated memory.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in memoryCorrectInput) (*mcp.CallToolResult, memoryapi.Memory, error) {
-		var zero memoryapi.Memory
+		Description: "Flag a memory as wrong or outdated by setting its status to disputed, with a reason and optionally the wording you think is right. This is the only change an assistant can make: accepting, rejecting and retracting memories happen in the owner's editor. A disputed memory is shown as unconfirmed until the owner decides. Returns the updated memory with message and editor_url. Tell the user which memory you flagged, why, and that it now needs review; give editor_url when present. Do not make this change silently.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in memoryCorrectInput) (*mcp.CallToolResult, memoryCorrectionOutput, error) {
+		var zero memoryCorrectionOutput
 		if in.MemoryID == "" || len(in.MemoryID) > memMaxShort {
 			return nil, zero, memInvalid("memory_id is required")
 		}
@@ -483,7 +504,11 @@ func registerMemoryTools(server *mcp.Server, store memoryapi.Store, roots []stri
 		if err != nil {
 			return nil, zero, memError(err)
 		}
-		return nil, memory, nil
+		out := memoryCorrectionOutput{Memory: memory, Message: "Memory marked disputed and no longer treated as accepted. Tell the user what you flagged and why; it needs review in the memory editor."}
+		if editorOrigin != "" {
+			out.EditorURL = strings.TrimRight(editorOrigin, "/") + "/m/" + url.PathEscape(memory.ID)
+		}
+		return nil, out, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{Name: "memory_forget", Annotations: readOnly,

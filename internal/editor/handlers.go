@@ -181,6 +181,11 @@ func (s *server) timeline(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	projects, err := s.store.Projects(r.Context(), s.roots)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	var groups []dayGroup
 	for _, e := range evs {
 		d := e.OccurredAt.UTC().Format(dayLayout)
@@ -191,7 +196,7 @@ func (s *server) timeline(w http.ResponseWriter, r *http.Request) {
 	}
 	s.render(w, r, 200, "timeline", page{Title: "Timeline", Nav: "timeline", Data: map[string]any{
 		"Day": day.Format(dayLayout), "Prev": day.AddDate(0, 0, -1).Format(dayLayout), "Next": day.AddDate(0, 0, 1).Format(dayLayout),
-		"Project": project, "Groups": groups,
+		"Project": project, "Projects": projects, "Groups": groups,
 	}})
 }
 

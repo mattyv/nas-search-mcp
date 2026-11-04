@@ -93,11 +93,11 @@ func TestHandoffBetweenAssistantsThroughLiveService(t *testing.T) {
 	if _, errText := claude("checkpoint_save", map[string]any{"project": "garden", "expected_version": 0, "goal": "Plan the vegetable beds", "summary": "Measured the beds; soil test ordered.", "next": []string{"Choose tomato varieties"}, "client": "claude"}); errText != "" {
 		t.Fatal(errText)
 	}
-	if _, errText := claude("journal_append", map[string]any{"type": "decision", "title": "Raised beds will be 40 cm deep", "project": "garden", "client": "claude", "idempotency_key": "k1"}); errText != "" {
+	if _, errText := claude("journal_append", map[string]any{"type": "memory", "title": "Raised beds will be 40 cm deep", "project": "garden", "client": "claude", "idempotency_key": "k1"}); errText != "" {
 		t.Fatal(errText)
 	}
 	// A retried write with the same key must not duplicate.
-	if out, errText := claude("journal_append", map[string]any{"type": "decision", "title": "Raised beds will be 40 cm deep", "project": "garden", "client": "claude", "idempotency_key": "k1"}); errText != "" || out["created"] != false {
+	if out, errText := claude("journal_append", map[string]any{"type": "memory", "title": "Raised beds will be 40 cm deep", "project": "garden", "client": "claude", "idempotency_key": "k1"}); errText != "" || out["created"] != false {
 		t.Fatal(out, errText)
 	}
 
@@ -114,10 +114,10 @@ func TestHandoffBetweenAssistantsThroughLiveService(t *testing.T) {
 		}
 	}
 	if decisions, _ := pkg["decisions"].([]any); len(decisions) != 0 {
-		t.Fatal("an assistant's decision must not be presented as accepted before review", decisions)
+		t.Fatal("an assistant's memory suggestion must not be presented as accepted before review", decisions)
 	}
 
-	// Consolidation without a classifier leaves the assistant's decision for review.
+	// Consolidation without a classifier leaves the assistant's memory suggestion for review.
 	if n, err := consolidate.Once(context.Background(), live.client, consolidate.Config{Roots: []string{"personal"}}); err != nil || n == 0 {
 		t.Fatal(n, err)
 	}
@@ -142,8 +142,8 @@ func TestHandoffBetweenAssistantsThroughLiveService(t *testing.T) {
 		t.Fatal(err)
 	}
 	pkg, _ = chatgpt("context_open", map[string]any{"project": "garden"})
-	if decisions, _ := pkg["decisions"].([]any); len(decisions) != 1 {
-		t.Fatal("accepted decision missing from handoff", pkg)
+	if memories, _ := pkg["memories"].([]any); len(memories) != 1 {
+		t.Fatal("accepted memory missing from handoff", pkg)
 	}
 
 	// A stale checkpoint write is refused rather than overwriting the other assistant's work.

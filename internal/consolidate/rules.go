@@ -9,24 +9,8 @@ import (
 // normalisation and probability rounding are text processing, kept in Go and covered
 // by tests; every accept, route, scope and privacy decision is in the verified core.
 
-const (
-	bodyExcerptChars = 400
-	statementMax     = 1000
-	// unscored marks a candidate no classifier has scored (owner review).
-	unscored = -1
-)
-
-// Candidate wording: the title, plus ": " and the first 400
-// characters of the body when the body says more than the title; at most 1000 characters.
-func buildStatement(title, body string) string {
-	title = strings.TrimSpace(title)
-	body = strings.TrimSpace(body)
-	out := title
-	if body != "" && !strings.Contains(normalizeStatement(title), normalizeStatement(body)) {
-		out = title + ": " + firstRunes(body, bodyExcerptChars)
-	}
-	return firstRunes(out, statementMax)
-}
+// unscored marks a candidate no classifier has scored (owner review).
+const unscored = -1
 
 // Two statements are duplicates when their normal forms are
 // equal: lowercase, whitespace collapsed to single spaces, surrounding punctuation trimmed.
@@ -45,12 +29,4 @@ func perMille(p float64) int {
 		return 1000
 	}
 	return int(p*1000 + 0.5)
-}
-
-func firstRunes(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n])
 }
