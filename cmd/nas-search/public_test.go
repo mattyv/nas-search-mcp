@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -267,5 +269,132 @@ func TestPublicQueueStaysBounded(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatal("queued requests did not finish")
 		}
+	}
+}
+
+// Cold model work can occupy the search slot beyond the former 15s queue wait.
+func TestAuthenticatedSearchWaitsPastFifteenSeconds(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	var calls atomic.Int32
+	h := admitMCP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			entered <- struct{}{}
+			<-release
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	results := make(chan int, 2)
+	run := func() {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search"}}`)).WithContext(ctx))
+		results <- w.Code
+	}
+	go run()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("initial search did not start")
+	}
+	go run()
+	select {
+	case code := <-results:
+		t.Fatalf("queued search returned before capacity opened: %d", code)
+	case <-time.After(16 * time.Second):
+	}
+	unblock()
+	for i := 0; i < 2; i++ {
+		select {
+		case code := <-results:
+			if code != http.StatusNoContent {
+				t.Fatalf("search status: %d", code)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("search did not finish")
+		}
+	}
+}
+
+func TestAuthenticatedWaitingSearchCancellationReleasesCapacity(t *testing.T) {
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	h := admitMCP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "search") {
+			entered <- struct{}{}
+			<-release
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	go h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"search"}}`)))
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("search did not start")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"search"}}`)).WithContext(ctx))
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("queued request returned before cancellation")
+	case <-time.After(50 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("cancelled search kept waiting")
+	}
+	statusDone := make(chan int, 1)
+	go func() {
+		status := httptest.NewRecorder()
+		h.ServeHTTP(status, httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"index_status"}}`)))
+		statusDone <- status.Code
+	}()
+	select {
+	case code := <-statusDone:
+		if code != 204 {
+			t.Fatalf("status during busy search: %d", code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("status blocked behind search")
+	}
+	unblock()
+	select {
+	case <-entered:
+		t.Fatal("cancelled request ran after capacity freed")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestPublicWaitingTimeoutStillReturnsRetryGuidance(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	defer close(release)
+	h := admitPublicWithWait(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { entered <- struct{}{}; <-release }), 50*time.Millisecond)
+	go h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"search"}}`)))
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("search did not start")
+	}
+	w := httptest.NewRecorder()
+	start := time.Now()
+	h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"method":"tools/call","params":{"name":"search"}}`)))
+	if w.Code != 429 || w.Header().Get("Retry-After") != "1" || time.Since(start) < 40*time.Millisecond {
+		t.Fatalf("timeout response: status=%d retry=%s", w.Code, w.Header().Get("Retry-After"))
 	}
 }

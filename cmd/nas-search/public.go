@@ -82,8 +82,18 @@ func (l *publicCallLimits) allow(key, method string) bool {
 	return allowed
 }
 
+// Signed-in searches may wait behind cold or busy model work. This extends
+// waiting only; execution slots, queue capacity and rate budgets stay bounded.
+func admitMCP(next http.Handler) http.Handler {
+	return admitPublicWithWait(next, 2*time.Minute)
+}
+
 // Admit bounded MCP work, charging only authenticated tools/call requests.
 func admitPublic(next http.Handler) http.Handler {
+	return admitPublicWithWait(next, 15*time.Second)
+}
+
+func admitPublicWithWait(next http.Handler, maxWait time.Duration) http.Handler {
 	callLimits := newPublicCallLimits()
 	workGate := make(chan struct{}, 1)
 	controlGate := make(chan struct{}, 1)
@@ -129,7 +139,7 @@ func admitPublic(next http.Handler) http.Handler {
 		if control {
 			gate = controlGate
 		}
-		wait := time.NewTimer(15 * time.Second)
+		wait := time.NewTimer(maxWait)
 		defer wait.Stop()
 		select {
 		case gate <- struct{}{}:
@@ -207,7 +217,7 @@ func publicResponseBoundary(next http.Handler, logger *log.Logger) http.Handler 
 func buildPublicHandler(server *mcp.Server, auth *oauth.Server, a *app.App, approval *upgradeApproval, uploads ...*uploadPage) http.Handler {
 	mux := http.NewServeMux()
 	h := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
-	mux.Handle("/mcp", publicResponseBoundary(auth.Protect(admitPublic(h)), log.Default()))
+	mux.Handle("/mcp", publicResponseBoundary(auth.Protect(admitMCP(h)), log.Default()))
 	mux.Handle("/", hardenPublic(auth.Handler(), log.Default()))
 	routes := http.NewServeMux()
 	routes.Handle("/download/", hardenDownloads(auth.DownloadHandler(http.HandlerFunc(a.ServeLink), a.LinkKnown), a.LinkKnown, log.Default()))

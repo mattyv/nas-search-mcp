@@ -77,3 +77,9 @@ Set `NAS_DOWNLOAD_URL` to a private address to keep file links off the public ro
 Remove the custom connector from the client, remove its OAuth grant using the service's revocation procedure, and disable the public route if no public clients should connect. Revoking OAuth grants invalidates browser access to public file links; the links also expire within their configured lifetime. Before resetting Funnel, inspect and preserve any unrelated private Serve mappings.
 
 Authentication limits and lockouts apply per expiring login session. Start a new browser sign-in after a locked session. These limits reduce application-level abuse but cannot guarantee availability during sustained network or resource attacks.
+
+## Search reports “Too Many Requests”
+
+Signed-in MCP requests can wait up to two minutes for capacity when another search is busy. Status and upgrade requests retain a separate execution slot. The service still bounds queued work and request rates; an exhausted allowance, full queue, or expired wait can return HTTP 429 with `Retry-After: 1`. A client or proxy may cancel sooner.
+
+Retry after the indicated delay and reduce simultaneous searches if errors continue. Repeated failures during a single search need investigation using the service's rejection reason, such as `work_busy` or `call_rate`; avoid including credentials or document contents when sharing logs. This longer authenticated wait is available from v0.1.3 and takes effect after deployment.

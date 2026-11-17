@@ -781,3 +781,15 @@ tests passed 106 cases, with 9 Docker-dependent checks deferred to CI. The expli
 nomination rule replaces the automatic candidate selection used by D048; its other
 trust and classification decisions remain in force. Live assistant replies and device
 UI behavior await deployment; no upgrade was queued.
+
+## D054 — Let authenticated MCP searches wait through brief model contention
+
+**Date:** 2026-11-17 · **Status:** Accepted; release verification and live NAS validation pending
+
+Authenticated searches previously received HTTP 429 after fifteen seconds waiting for the work slot. A regression held one search open and reproduced this rejection at 15.01 seconds. Let authenticated `/mcp` requests wait up to two minutes, or until client cancellation, while retaining the existing one-work/one-control execution slots, 100-request admission cap, 64 KiB body limit, per-authentication rate allowance and protocol exemptions. Anonymous and browser routes retain their fifteen-second admission wait. Status and upgrade calls retain the separate control slot. This changes waiting time, not model concurrency or NAS resource settings.
+
+The release checkout initially lagged published main. Its proposed two-active/eight-waiting replacement was not integrated: current main already has bounded waiting, separate control capacity and per-authentication budgets. The release applies only the longer authenticated wait to current main, preserving newer sign-in, memory and upload behavior. Unrelated local Nord recovery notes stay outside this release.
+
+The long-wait test failed before implementation and passed afterward. Cancellation after slots free, status availability and finite-timeout/retry-header tests provide additional regression coverage; these were added after implementation and are not TDD evidence. An extended wait can still end with 429 if work remains busy for two minutes, and a client or proxy may cancel sooner. No live rejection logs establish the cause of every reported failure, so this is a reproduced contention fix, not a confirmed resolution of the live incident. HTTP timers, contexts and channels remain unverified adapters outside the Dafny proof boundary; no pure application rule or database schema changes are introduced.
+
+Release preparation: `scripts/build-core.sh` verified 99 declarations with zero errors, passed executable tests and regenerated output without a diff. Local Python checks passed 413 tests and two subtests; nine Docker-dependent cases require CI. The focused public-route suite passed, including the sixteen-second regression. Exact-commit Go race checks, Compose validation, container build and publication gate the release. Publication does not queue or install a NAS upgrade, and does not update the existing privileged host worker.
