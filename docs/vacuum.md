@@ -92,6 +92,17 @@ If the account has several vacuums, the service log names each one with its ID. 
 
 Nothing extra to set up. The vacuum tools ride on the same authenticated MCP connection as search, so they work wherever your connector already does: on your LAN, over your personal Tailscale, or through the OAuth connector. The vacuum service publishes no ports and never sees your files; it talks to the main service only through a private socket on the NAS.
 
+## Phone notifications
+
+Get a push on your phone when the vacuum finishes, gets stuck, or a part (filter, brush, mop pad) drops below 10% life.
+
+1. Install the free **ntfy** app (iPhone or Android).
+2. Make up a long random topic name, for example run `openssl rand -hex 12` on the NAS and put `roberto-` in front.
+3. In the app, tap **+** and subscribe to that topic on `ntfy.sh`.
+4. Add `NAS_VACUUM_NTFY_TOPIC=<your topic>` to `.env` and upgrade.
+
+The NAS checks the vacuum every 30 seconds and sends each event once. Anyone who knows the topic name can read the notices, so keep it long and private. Notices go through the public ntfy.sh service; to keep them in-house, run your own ntfy server and set `NAS_VACUUM_NTFY_URL`.
+
 ## Limits
 
 - **Needs the vendor cloud.** Sign-in and commands go through Dreame's (or Xiaomi's) servers, as the official app does. If their service is down, so is this.

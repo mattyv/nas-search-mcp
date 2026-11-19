@@ -980,6 +980,9 @@ def test_vacuum_enabled_creates_private_socket_dir_and_waits_for_health(tmp_path
     {'NAS_VACUUM_MEMORY': '384'},
     {'NAS_VACUUM_MEMORY': '64m'},
     {'NAS_VACUUM_MEMORY': '2g'},
+    {'NAS_VACUUM_NTFY_TOPIC': 'short'},
+    {'NAS_VACUUM_NTFY_TOPIC': 'has space in it here'},
+    {'NAS_VACUUM_NTFY_TOPIC': 'roberto-x7Qp2LmZk9Vw', 'NAS_VACUUM_NTFY_URL': 'ftp://ntfy.sh'},
 ])
 def test_vacuum_settings_are_validated_before_pull(tmp_path, overrides):
     args, env, log, secret = vacuum_config(tmp_path, **overrides)
@@ -993,6 +996,7 @@ def test_vacuum_settings_are_validated_before_pull(tmp_path, overrides):
 @pytest.mark.parametrize('overrides', [
     {'DREAME_ACCOUNT_TYPE': 'mi', 'DREAME_COUNTRY': 'de'},
     {'DREAME_ACCOUNT_TYPE': 'mova', 'NAS_VACUUM_MEMORY': '512m'},
+    {'NAS_VACUUM_NTFY_TOPIC': 'roberto-x7Qp2LmZk9Vw'},
 ])
 def test_vacuum_accepts_supported_accounts(tmp_path, overrides):
     args, env, log, secret = vacuum_config(tmp_path, **overrides)

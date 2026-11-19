@@ -1111,6 +1111,42 @@ module Core {
     ensures !ValidVacuumMapEdit(element, items, bounds)
   {}
 
+  // Notifications. The watcher compares two consecutive readings and sends a
+  // notice only on a change: a job ending, a new error, or a part crossing
+  // below the wear threshold. Mid-job mop washing returns to cleaning, so it
+  // never counts as finished.
+  const VacuumWorkingStates: seq<string> := ["sweeping", "mopping", "sweeping_and_mopping", "returning",
+    "washing", "returning_to_wash", "second_cleaning", "spot_cleaning", "extra_cleaning",
+    "heading_to_extra_cleaning", "shortcut", "initial_deep_cleaning"]
+  const VacuumDoneStates: seq<string> := ["charging", "charging_completed", "idle", "drying", "sleeping"]
+
+  function VacuumJobFinished(previous: string, current: string): bool
+    ensures VacuumJobFinished(previous, current) ==> previous in VacuumWorkingStates && current in VacuumDoneStates
+  {
+    previous in VacuumWorkingStates && current in VacuumDoneStates
+  }
+
+  function VacuumNewError(previous: string, current: string): bool
+    ensures VacuumNewError(previous, current) ==> previous == "" && current != ""
+  {
+    previous == "" && current != ""
+  }
+
+  function VacuumPartWorn(previous: int, current: int, threshold: int): bool
+    ensures VacuumPartWorn(previous, current, threshold) ==> previous >= threshold > current
+  {
+    previous >= threshold && current < threshold
+  }
+
+  // An unchanged reading never produces a notice, so nothing repeats.
+  lemma VacuumNoticesNeverRepeat(state: string, error: string, wear: int, threshold: int)
+    ensures !VacuumJobFinished(state, state) && !VacuumNewError(error, error) && !VacuumPartWorn(wear, wear, threshold)
+  {
+    if VacuumJobFinished(state, state) {
+      assert state in VacuumWorkingStates && state in VacuumDoneStates;
+    }
+  }
+
   // App shortcuts: start, rename, or delete only a shortcut the vacuum listed.
   // Renames carry a 1-32 character name; other actions carry none.
   function ValidVacuumShortcut(action: string, id: int, known: seq<int>, nameLength: int): bool

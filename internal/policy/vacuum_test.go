@@ -107,3 +107,12 @@ func TestVacuumMapEditPolicyBridgesCore(t *testing.T) {
 		t.Fatal("path mismatch")
 	}
 }
+
+func TestVacuumNoticePolicyBridgesCore(t *testing.T) {
+	if !VacuumJobFinished("sweeping", "charging") || VacuumJobFinished("washing", "mopping") {
+		t.Fatal("finished rule mismatch")
+	}
+	if !VacuumNewError("", "stuck") || VacuumNewError("stuck", "stuck") || !VacuumPartWorn(10, 9, 10) {
+		t.Fatal("error or wear rule mismatch")
+	}
+}

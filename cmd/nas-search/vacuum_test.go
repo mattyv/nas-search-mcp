@@ -277,3 +277,29 @@ func TestVacuumCameraSwitchAlsoHidesObstacleIgnore(t *testing.T) {
 		t.Fatal("obstacle ignore listed with the camera switched off")
 	}
 }
+
+func TestVacuumNotificationsConfig(t *testing.T) {
+	t.Setenv("NAS_VACUUM_ENABLED", "true")
+	t.Setenv("NAS_VACUUM_SOCKET", "/data/vacuum-ipc/vacuum.sock")
+	t.Setenv("NAS_VACUUM_NTFY_TOPIC", "")
+	if n, err := configuredVacuumNotifier(); n != nil || err != nil {
+		t.Fatalf("no topic should mean no notifier, got %v %v", n, err)
+	}
+	t.Setenv("NAS_VACUUM_NTFY_TOPIC", "short")
+	if _, err := configuredVacuumNotifier(); err == nil {
+		t.Fatal("a guessable topic must be rejected")
+	}
+	t.Setenv("NAS_VACUUM_NTFY_TOPIC", "roberto-x7Qp2LmZk9Vw")
+	if n, err := configuredVacuumNotifier(); n == nil || err != nil {
+		t.Fatalf("valid topic: %v %v", n, err)
+	}
+	t.Setenv("NAS_VACUUM_NTFY_URL", "ftp://example.com")
+	if _, err := configuredVacuumNotifier(); err == nil {
+		t.Fatal("non-http URL must be rejected")
+	}
+	t.Setenv("NAS_VACUUM_NTFY_URL", "")
+	t.Setenv("NAS_VACUUM_ENABLED", "false")
+	if n, err := configuredVacuumNotifier(); n != nil || err != nil {
+		t.Fatal("vacuum off should mean no notifier")
+	}
+}

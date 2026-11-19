@@ -160,3 +160,18 @@ func ValidVacuumPath(points [][2]int, bounds [4]int) bool {
 	}
 	return core.Companion_Default___.ValidVacuumPath(dafny.SeqOf(values...), box(bounds))
 }
+
+// VacuumJobFinished reports whether two readings show a cleaning job ending.
+func VacuumJobFinished(previous, current string) bool {
+	return core.Companion_Default___.VacuumJobFinished(dafny.UnicodeSeqOfUtf8Bytes(previous), dafny.UnicodeSeqOfUtf8Bytes(current))
+}
+
+// VacuumNewError reports whether an error appeared between two readings.
+func VacuumNewError(previous, current string) bool {
+	return core.Companion_Default___.VacuumNewError(dafny.UnicodeSeqOfUtf8Bytes(previous), dafny.UnicodeSeqOfUtf8Bytes(current))
+}
+
+// VacuumPartWorn reports whether a part's remaining life fell below threshold.
+func VacuumPartWorn(previous, current, threshold int) bool {
+	return core.Companion_Default___.VacuumPartWorn(dafny.IntOf(previous), dafny.IntOf(current), dafny.IntOf(threshold))
+}

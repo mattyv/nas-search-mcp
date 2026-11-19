@@ -200,6 +200,13 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	notifier, err := configuredVacuumNotifier()
+	if err != nil {
+		log.Fatalf("vacuum notifications invalid: %v", err)
+	}
+	if notifier != nil {
+		go notifier.Run(ctx, 30*time.Second, log.Printf)
+	}
 	mem, err := configuredMemory()
 	if err != nil {
 		log.Fatalf("memory configuration invalid: %v", err)
