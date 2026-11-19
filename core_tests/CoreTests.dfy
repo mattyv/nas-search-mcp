@@ -368,16 +368,6 @@ module CoreTests {
     expect !VacuumJobFinished("washing", "mopping") && !VacuumJobFinished("charging", "charging");
     expect !VacuumJobFinished("idle", "charging") && !VacuumJobFinished("sweeping", "returning_to_wash");
     expect VacuumNewError("", "wheel_stuck") && !VacuumNewError("wheel_stuck", "wheel_stuck") && !VacuumNewError("x", "");
-    expect ValidVacuumPlace("save", "Front door", [], 100, 200, (0, 0, 1000, 1000));
-    expect !ValidVacuumPlace("save", "Front door", [], 2000, 200, (0, 0, 1000, 1000));
-    expect !ValidVacuumPlace("save", "", [], 100, 200, (0, 0, 1000, 1000));
-    expect !ValidVacuumPlace("save", "bad\nname", [], 100, 200, (0, 0, 1000, 1000));
-    expect !ValidVacuumPlace("save", "this name is far far far too long to keep", [], 1, 1, (0, 0, 9, 9));
-    expect !ValidVacuumPlace("save", "new", seq(30, i => "p"), 1, 1, (0, 0, 9, 9));
-    expect ValidVacuumPlace("save", "p", seq(30, i => "p"), 1, 1, (0, 0, 9, 9));
-    expect ValidVacuumPlace("forget", "Front door", ["Front door"], 0, 0, (0, 0, 0, 0));
-    expect !ValidVacuumPlace("forget", "Kitchen", ["Front door"], 0, 0, (0, 0, 0, 0));
-    expect !ValidVacuumPlace("drive", "Front door", ["Front door"], 1, 1, (0, 0, 9, 9));
     expect VacuumPartWorn(12, 9, 10) && !VacuumPartWorn(9, 8, 10) && !VacuumPartWorn(50, 40, 10);
     print "Dafny core executable tests passed\n";
   }

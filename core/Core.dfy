@@ -1242,35 +1242,4 @@ module Core {
     requires VacuumSettingNeedsRoom(name) && room !in known
     ensures !ValidVacuumSetting(name, value, room, known)
   {}
-
-  // Saved places: named map points the owner keeps on the NAS. Names are
-  // 1-40 printable characters; at most VacuumMaxPlaces are kept; a saved
-  // point lies on the current map; only a saved place can be forgotten.
-  const VacuumMaxPlaces: int := 30
-
-  predicate PrintableName(name: string) {
-    1 <= |name| <= 40 && forall i :: 0 <= i < |name| ==> name[i] >= ' ' && name[i] != '\U{7f}'
-  }
-
-  function ValidVacuumPlace(action: string, name: string, saved: seq<string>, x: int, y: int,
-                            bounds: (int, int, int, int)): bool
-    ensures ValidVacuumPlace(action, name, saved, x, y, bounds) ==>
-      PrintableName(name) &&
-      ((action == "save" && bounds.0 <= x <= bounds.2 && bounds.1 <= y <= bounds.3 &&
-        (name in saved || |saved| < VacuumMaxPlaces)) ||
-       (action == "forget" && name in saved))
-  {
-    PrintableName(name) &&
-    ((action == "save" && bounds.0 <= x <= bounds.2 && bounds.1 <= y <= bounds.3 &&
-      (name in saved || |saved| < VacuumMaxPlaces)) ||
-     (action == "forget" && name in saved))
-  }
-
-  // Saving never grows the list past the limit: a new name needs room, and a
-  // known name replaces itself.
-  lemma VacuumPlacesStayBounded(name: string, saved: seq<string>, x: int, y: int, bounds: (int, int, int, int))
-    requires |saved| <= VacuumMaxPlaces
-    requires ValidVacuumPlace("save", name, saved, x, y, bounds)
-    ensures name in saved || |saved| + 1 <= VacuumMaxPlaces
-  {}
 }

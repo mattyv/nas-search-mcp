@@ -824,16 +824,6 @@ func (_static *CompanionStruct_Default___) ValidVacuumSetting(name _dafny.Sequen
 func (_static *CompanionStruct_Default___) ValidVacuumHistoryLimit(limit _dafny.Int) bool {
 	return ((_dafny.One).Cmp(limit) <= 0) && ((limit).Cmp(_dafny.IntOfInt64(20)) <= 0)
 }
-func (_static *CompanionStruct_Default___) PrintableName(name _dafny.Sequence) bool {
-	return (((_dafny.One).Cmp(_dafny.IntOfUint32((name).Cardinality())) <= 0) && ((_dafny.IntOfUint32((name).Cardinality())).Cmp(_dafny.IntOfInt64(40)) <= 0)) && (_dafny.Quantifier(_dafny.IntegerRange(_dafny.Zero, _dafny.IntOfUint32((name).Cardinality())), true, func(_forall_var_0 _dafny.Int) bool {
-		var _0_i _dafny.Int
-		_0_i = interface{}(_forall_var_0).(_dafny.Int)
-		return !(((_0_i).Sign() != -1) && ((_0_i).Cmp(_dafny.IntOfUint32((name).Cardinality())) < 0)) || ((((name).Select((_0_i).Uint32()).(_dafny.CodePoint)) >= (_dafny.CodePoint(' '))) && (((name).Select((_0_i).Uint32()).(_dafny.CodePoint)) != (_dafny.CodePoint('\U0000007f')) /* dircomp */))
-	}))
-}
-func (_static *CompanionStruct_Default___) ValidVacuumPlace(action _dafny.Sequence, name _dafny.Sequence, saved _dafny.Sequence, x _dafny.Int, y _dafny.Int, bounds _dafny.Tuple) bool {
-	return (Companion_Default___.PrintableName(name)) && (((((_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("save"))) && ((((*(bounds).IndexInt(0)).(_dafny.Int)).Cmp(x) <= 0) && ((x).Cmp((*(bounds).IndexInt(2)).(_dafny.Int)) <= 0))) && ((((*(bounds).IndexInt(1)).(_dafny.Int)).Cmp(y) <= 0) && ((y).Cmp((*(bounds).IndexInt(3)).(_dafny.Int)) <= 0))) && ((_dafny.Companion_Sequence_.Contains(saved, name)) || ((_dafny.IntOfUint32((saved).Cardinality())).Cmp(Companion_Default___.VacuumMaxPlaces()) < 0))) || ((_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("forget"))) && (_dafny.Companion_Sequence_.Contains(saved, name))))
-}
 func (_static *CompanionStruct_Default___) InlineTypes() _dafny.Set {
 	return _dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("application/pdf"), _dafny.UnicodeSeqOfUtf8Bytes("image/jpeg"), _dafny.UnicodeSeqOfUtf8Bytes("image/png"), _dafny.UnicodeSeqOfUtf8Bytes("image/gif"), _dafny.UnicodeSeqOfUtf8Bytes("image/webp"), _dafny.UnicodeSeqOfUtf8Bytes("text/plain"))
 }
@@ -869,9 +859,6 @@ func (_static *CompanionStruct_Default___) VacuumWorkingStates() _dafny.Sequence
 }
 func (_static *CompanionStruct_Default___) VacuumDoneStates() _dafny.Sequence {
 	return _dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("charging"), _dafny.UnicodeSeqOfUtf8Bytes("charging_completed"), _dafny.UnicodeSeqOfUtf8Bytes("idle"), _dafny.UnicodeSeqOfUtf8Bytes("drying"), _dafny.UnicodeSeqOfUtf8Bytes("sleeping"))
-}
-func (_static *CompanionStruct_Default___) VacuumMaxPlaces() _dafny.Int {
-	return _dafny.IntOfInt64(30)
 }
 
 // End of class Default__

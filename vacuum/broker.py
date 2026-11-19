@@ -197,7 +197,7 @@ class Broker:
         device = self._device()
         status = device.status
         room = getattr(status, 'current_room', None)
-        result = {
+        return {
             'name': _text(device.name),
             'connected': bool(device.available),
             'state': _text(status.state_name),
@@ -209,11 +209,6 @@ class Broker:
             'cleaned_area_m2': _count(self._property(device, self.area_key)),
             'cleaning_minutes': _count(self._property(device, self.time_key)),
         }
-        current = getattr(status, 'current_map', None)
-        robot = getattr(current, 'robot_position', None) if current else None
-        if robot is not None and isinstance(getattr(robot, 'x', None), (int, float)) and isinstance(getattr(robot, 'y', None), (int, float)):
-            result['position'] = [round(robot.x), round(robot.y)]
-        return result
 
     def _segments(self, device):
         return getattr(device.status, 'current_segments', None) or {}

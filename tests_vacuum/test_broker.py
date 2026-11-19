@@ -144,15 +144,6 @@ def test_status_reports_error_and_tolerates_missing_values():
     assert out['error'] == 'wheel_stuck'
     assert out['current_room'] == ''
     assert out['battery'] == 0 and out['cleaned_area_m2'] == 0
-    assert 'position' not in out
-
-
-def test_status_reports_vacuum_position_on_the_map():
-    device = FakeDevice()
-    device.status.current_map.robot_position = SimpleNamespace(x=1234.6, y=-56, a=90)
-    assert make(device).status()['position'] == [1235, -56]
-    device.status.current_map.robot_position = None
-    assert 'position' not in make(device).status()
 
 
 def test_not_connected_is_unavailable():

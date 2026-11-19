@@ -175,15 +175,3 @@ func VacuumNewError(previous, current string) bool {
 func VacuumPartWorn(previous, current, threshold int) bool {
 	return core.Companion_Default___.VacuumPartWorn(dafny.IntOf(previous), dafny.IntOf(current), dafny.IntOf(threshold))
 }
-
-// VacuumMaxPlaces is the verified core's limit on saved places.
-var VacuumMaxPlaces = int(core.Companion_Default___.VacuumMaxPlaces().Int64())
-
-// ValidVacuumPlace checks saving a named point on the map, or forgetting a saved one.
-func ValidVacuumPlace(action, name string, saved []string, x, y int, bounds [4]int) bool {
-	names := make([]interface{}, len(saved))
-	for i, value := range saved {
-		names[i] = dafny.UnicodeSeqOfUtf8Bytes(value)
-	}
-	return core.Companion_Default___.ValidVacuumPlace(dafny.UnicodeSeqOfUtf8Bytes(action), dafny.UnicodeSeqOfUtf8Bytes(name), dafny.SeqOf(names...), dafny.IntOf(x), dafny.IntOf(y), box(bounds))
-}

@@ -116,16 +116,3 @@ func TestVacuumNoticePolicyBridgesCore(t *testing.T) {
 		t.Fatal("error or wear rule mismatch")
 	}
 }
-
-func TestValidVacuumPlaceBridgesCore(t *testing.T) {
-	bounds := [4]int{0, 0, 1000, 1000}
-	if !ValidVacuumPlace("save", "Front door", nil, 10, 10, bounds) || ValidVacuumPlace("save", "Front door", nil, 2000, 10, bounds) {
-		t.Fatal("save bounds")
-	}
-	if !ValidVacuumPlace("forget", "Front door", []string{"Front door"}, 0, 0, [4]int{}) || ValidVacuumPlace("forget", "Kitchen", []string{"Front door"}, 0, 0, [4]int{}) {
-		t.Fatal("forget")
-	}
-	if ValidVacuumPlace("save", "tab\there", nil, 1, 1, bounds) || VacuumMaxPlaces != 30 {
-		t.Fatal("name or limit")
-	}
-}
