@@ -15,14 +15,21 @@ RUN git init -q /src && cd /src && git fetch -q --depth 1 https://github.com/Tas
     && git checkout -q FETCH_HEAD && [ "$(git rev-parse HEAD)" = "$DREAME_COMMIT" ] \
     && mkdir -p /out && cp -R custom_components/dreame_vacuum/dreame /out/dreame && cp LICENSE /out/LICENSE
 
+# Build the vacuum environment where a compiler exists (netifaces ships no
+# Python 3.12 wheel); the runtime image receives only the finished venv.
+FROM docker.io/library/python:3.12-bookworm AS vacuum-deps
+COPY vacuum/requirements.lock /tmp/vacuum-requirements.lock
+RUN python -m venv /opt/vacuum-venv && /opt/vacuum-venv/bin/pip install --no-cache-dir -r /tmp/vacuum-requirements.lock
+
 FROM docker.io/library/python:3.12-slim-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 ca-certificates poppler-utils tesseract-ocr tesseract-ocr-eng && rm -rf /var/lib/apt/lists/*
 COPY requirements.lock /app/requirements.lock
 RUN pip install --no-cache-dir -r /app/requirements.lock && python -c 'import shutil,sqlite_vec; shutil.copyfile(sqlite_vec.loadable_path()+".so", "/opt/vec0.so")'
-COPY vacuum/requirements.lock /app/vacuum/requirements.lock
 # A separate environment keeps the vacuum libraries away from the search worker.
-RUN python -m venv /opt/vacuum-venv && /opt/vacuum-venv/bin/pip install --no-cache-dir -r /app/vacuum/requirements.lock
+COPY --from=vacuum-deps /opt/vacuum-venv /opt/vacuum-venv
 COPY --from=dreame /out/ /opt/dreame/
+# Fail the build, not the NAS, if the library cannot load in the runtime image.
+RUN /opt/vacuum-venv/bin/python -I -W ignore -c "import sys; sys.path.insert(0, '/opt/dreame'); import dreame, py_mini_racer; py_mini_racer.MiniRacer().eval('1+1'); print('vacuum library', dreame.VERSION)"
 COPY --from=build /out/nas-search /app/nas-search
 COPY worker/ /app/worker/
 COPY vacuum/broker.py /app/vacuum/broker.py
