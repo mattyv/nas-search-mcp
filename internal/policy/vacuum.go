@@ -142,3 +142,21 @@ func ValidVacuumRoomOption(room int, known []int, name string, value int, option
 	}
 	return core.Companion_Default___.ValidVacuumRoomOption(dafny.IntOf(room), intSeq(known), dafny.UnicodeSeqOfUtf8Bytes(name), dafny.IntOf(value), dafny.SeqOf(values...))
 }
+
+// ValidVacuumMapEdit checks a replacement list for one kind of map element.
+func ValidVacuumMapEdit(element string, items [][4]int, bounds [4]int) bool {
+	values := make([]interface{}, len(items))
+	for i, item := range items {
+		values[i] = box(item)
+	}
+	return core.Companion_Default___.ValidVacuumMapEdit(dafny.UnicodeSeqOfUtf8Bytes(element), dafny.SeqOf(values...), box(bounds))
+}
+
+// ValidVacuumPath checks a patrol path against the map bounds.
+func ValidVacuumPath(points [][2]int, bounds [4]int) bool {
+	values := make([]interface{}, len(points))
+	for i, p := range points {
+		values[i] = dafny.TupleOf(dafny.IntOf(p[0]), dafny.IntOf(p[1]))
+	}
+	return core.Companion_Default___.ValidVacuumPath(dafny.SeqOf(values...), box(bounds))
+}

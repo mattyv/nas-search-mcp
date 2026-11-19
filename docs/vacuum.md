@@ -22,18 +22,29 @@ Doing (only when you ask):
 - `vacuum_control` `go_to`: drive to a point on the map (for example the middle of a room) and stop there, without cleaning.
 - `vacuum_drive`: one small remote-control step (turn and roll), like the app's joystick. Each call is a short nudge, a few seconds apart, and the vacuum's own bump and cliff sensors still apply.
 - `vacuum_shortcuts` and `vacuum_shortcut`: list, run, rename or delete the cleaning shortcuts saved in the Dreamehome app.
-- `vacuum_settings`: cleaning mode (vacuum, mop, both, or mop after vacuuming), suction, mop wetness (dry, moist, wet), volume, do-not-disturb on/off and hours, child lock, carpet avoidance and recognition; and per room: mode, suction, mop wetness, and passes.
+- `vacuum_settings`: the everyday settings by friendly name: cleaning mode, suction, mop wetness, volume, do-not-disturb, child lock, carpet handling, and per-room mode, suction, wetness and passes.
+- `vacuum_options` and `vacuum_set_option`: every other setting your model has, as in the app (about 100: carpet boost, AI detection, hot washing, mop pressure, water temperature, cleaning route, drying time, off-peak charging and more), with current values and allowed choices.
+- `vacuum_buttons` and `vacuum_press`: one-press actions: reset a part's wear counter after replacing it, clear a warning, drain or empty the water tank, base self-clean or self-repair, dust-bag drying, start mapping, re-clean missed areas, back up the map.
 
-Camera (on by default; set `NAS_VACUUM_CAMERA=false` in `.env` to hide both):
+Maps and rooms (only when you ask):
+
+- `vacuum_maps` and `vacuum_manage_map`: list maps and their backups; switch, rename, delete, back up, restore, refresh, and save, discard or keep a freshly scanned map.
+- `vacuum_manage_rooms`: rename rooms, set a room's type, merge two rooms, split a room along a line, set the cleaning order, hide rooms.
+- `vacuum_room_options` and `vacuum_set_room_option`: each room's own settings (suction, water, mode, passes, routes, mop pressure and temperature, mop type, floor material).
+- `vacuum_map_elements` and `vacuum_edit_map`: see and change no-go and no-mop zones, virtual walls, thresholds, ramps, curtains, low-lying areas, carpet areas, saved points and the router position.
+- `vacuum_patrol`: drive along a path of up to 20 points without cleaning.
+
+Camera (on by default; set `NAS_VACUUM_CAMERA=false` in `.env` to hide these three):
 
 - `vacuum_obstacles`: things the vacuum recognised and avoided on its current map (socks, cables, shoes, pet mess), with where they are and whether it took a photo.
 - `vacuum_obstacle_photo`: shows one of those photos. View only; nothing is saved.
+- `vacuum_ignore_obstacle`: stop avoiding one of them (for example a rug edge it mistakes for a cable), or avoid it again.
 
 The vacuum takes these photos automatically while cleaning. It cannot yet take a photo on request, and there is no live video: the library does not support either. So "go to the hallway and tell me what you see" works only as far as driving there.
 
-The assistant cannot edit the map, change schedules, or update firmware. Room, zone and spot cleaning only accept rooms the vacuum reported and areas inside its saved map. Settings only accept the listed values. A feature your model lacks is refused with the vacuum's own message.
+The assistant cannot change schedules, update firmware, place furniture, edit structural walls and doors, or set carpet types; see [coverage](vacuum-coverage.md) for why. Everything it aims, from cleaning zones to no-go zones and patrol points, must lie inside the saved map, and only rooms, maps, shortcuts, settings and buttons the vacuum reported are accepted, with allowed values. A feature your model lacks is refused with the vacuum's own message.
 
-Try: "Drive the vacuum to the kitchen", "What did the vacuum avoid today? Show me", "How worn are the vacuum's brushes?", "Show me the vacuum map", "Clean the area in front of the sofa", "Mop the kitchen only, wet", "Turn on do-not-disturb from 22:00 to 08:00".
+Try: "Run the after-dinner shortcut", "Add a no-go zone around the dog bowl", "Turn on carpet boost", "I replaced the filter", "Mop the bathroom with strong pressure", "Drive the vacuum to the kitchen", "What did the vacuum avoid today? Show me", "How worn are the vacuum's brushes?", "Show me the vacuum map", "Clean the area in front of the sofa", "Mop the kitchen only, wet", "Turn on do-not-disturb from 22:00 to 08:00".
 
 ## Turn it on
 

@@ -104,11 +104,27 @@ func addVacuumTools(server *mcp.Server) {
 		out, err := client.SetRoomOption(ctx, in)
 		return nil, out, err
 	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_map_elements", Description: "Show everything drawn on the selected map, in map units: no_go_zones, no_mop_zones, ramps, low_lying_areas, carpets and deleted_carpets as boxes [x0, y0, x1, y1]; virtual_walls, virtual_thresholds, passable_thresholds, impassable_thresholds and curtains as lines [x0, y0, x1, y1]; predefined_points and router_position as points [x, y]. Read this before vacuum_edit_map, which replaces a whole kind at once.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false), IdempotentHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in VacuumEmptyInput) (*mcp.CallToolResult, vacuum.MapElements, error) {
+		out, err := client.MapElements(ctx)
+		return nil, out, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_edit_map", Description: "Replace one kind of element on the selected map with a new complete list: no-go zones, no-mop zones, ramps, low-lying areas or carpet areas (boxes); virtual walls, thresholds or curtains (lines); saved points; or the router position (one point). Read vacuum_map_elements first and include every existing item to keep; an empty list removes them all. Other kinds stay as they are. Use room boxes from vacuum_rooms to place items. Confirm removals with the user. Only use when the user asks.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(true), IdempotentHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.MapEditInput) (*mcp.CallToolResult, vacuum.CommandResult, error) {
+		out, err := client.EditMap(ctx, in)
+		return nil, out, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_patrol", Description: "Send the robot vacuum along 1-20 points [x, y] inside the map, in order, without cleaning (the vendor's cruise or follow-path feature on camera models). Only use when the user asks.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(false), IdempotentHint: false, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.PatrolInput) (*mcp.CallToolResult, vacuum.CommandResult, error) {
+		out, err := client.Patrol(ctx, in)
+		return nil, out, err
+	})
 	if !enabled("NAS_VACUUM_CAMERA", true) {
 		return
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_obstacles", Description: "List things the robot vacuum recognised and avoided on its current map (for example socks, cables, shoes, pet mess), with map position, confidence (percent), and whether it took a photo. Use the index with vacuum_obstacle_photo. Photos are taken automatically while cleaning; the vacuum cannot take one on request.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false), IdempotentHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in VacuumEmptyInput) (*mcp.CallToolResult, vacuum.ObstaclesResult, error) {
 		out, err := client.Obstacles(ctx)
+		return nil, out, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_ignore_obstacle", Description: "Tell the robot vacuum to stop avoiding (ignore true) or to avoid again (ignore false) one obstacle from vacuum_obstacles, by index, for example a rug edge it keeps mistaking for a cable. Only use when the user asks.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(false), IdempotentHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.IgnoreObstacleInput) (*mcp.CallToolResult, vacuum.CommandResult, error) {
+		out, err := client.IgnoreObstacle(ctx, in)
 		return nil, out, err
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_obstacle_photo", Description: "Show the photo the robot vacuum's camera took of one avoided obstacle, by index from vacuum_obstacles (only those with has_photo true). Describe what is visible; do not identify people. View only: nothing is saved.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false), IdempotentHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.ObstaclePhotoInput) (*mcp.CallToolResult, any, error) {

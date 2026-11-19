@@ -675,6 +675,32 @@ func (_static *CompanionStruct_Default___) ValidVacuumLine(line _dafny.Tuple, bo
 func (_static *CompanionStruct_Default___) ValidVacuumRoomOption(room _dafny.Int, known _dafny.Sequence, name _dafny.Sequence, value _dafny.Int, options _dafny.Sequence) bool {
 	return (_dafny.Companion_Sequence_.Contains(known, room)) && (Companion_Default___.ValidVacuumOption(name, value, options))
 }
+func (_static *CompanionStruct_Default___) ItemInside(item _dafny.Tuple, bounds _dafny.Tuple) bool {
+	return ((((((*(bounds).IndexInt(0)).(_dafny.Int)).Cmp((*(item).IndexInt(0)).(_dafny.Int)) <= 0) && (((*(item).IndexInt(0)).(_dafny.Int)).Cmp((*(bounds).IndexInt(2)).(_dafny.Int)) <= 0)) && ((((*(bounds).IndexInt(0)).(_dafny.Int)).Cmp((*(item).IndexInt(2)).(_dafny.Int)) <= 0) && (((*(item).IndexInt(2)).(_dafny.Int)).Cmp((*(bounds).IndexInt(2)).(_dafny.Int)) <= 0))) && ((((*(bounds).IndexInt(1)).(_dafny.Int)).Cmp((*(item).IndexInt(1)).(_dafny.Int)) <= 0) && (((*(item).IndexInt(1)).(_dafny.Int)).Cmp((*(bounds).IndexInt(3)).(_dafny.Int)) <= 0))) && ((((*(bounds).IndexInt(1)).(_dafny.Int)).Cmp((*(item).IndexInt(3)).(_dafny.Int)) <= 0) && (((*(item).IndexInt(3)).(_dafny.Int)).Cmp((*(bounds).IndexInt(3)).(_dafny.Int)) <= 0))
+}
+func (_static *CompanionStruct_Default___) ItemShape(element _dafny.Sequence, item _dafny.Tuple) bool {
+	if _dafny.Companion_Sequence_.Contains(Companion_Default___.MapRectElements(), element) {
+		return (((*(item).IndexInt(0)).(_dafny.Int)).Cmp((*(item).IndexInt(2)).(_dafny.Int)) < 0) && (((*(item).IndexInt(1)).(_dafny.Int)).Cmp((*(item).IndexInt(3)).(_dafny.Int)) < 0)
+	} else if _dafny.Companion_Sequence_.Contains(Companion_Default___.MapLineElements(), element) {
+		return (((*(item).IndexInt(0)).(_dafny.Int)).Cmp((*(item).IndexInt(2)).(_dafny.Int)) != 0) || (((*(item).IndexInt(1)).(_dafny.Int)).Cmp((*(item).IndexInt(3)).(_dafny.Int)) != 0)
+	} else {
+		return (((*(item).IndexInt(0)).(_dafny.Int)).Cmp((*(item).IndexInt(2)).(_dafny.Int)) == 0) && (((*(item).IndexInt(1)).(_dafny.Int)).Cmp((*(item).IndexInt(3)).(_dafny.Int)) == 0)
+	}
+}
+func (_static *CompanionStruct_Default___) ValidVacuumMapEdit(element _dafny.Sequence, items _dafny.Sequence, bounds _dafny.Tuple) bool {
+	return (((_dafny.Companion_Sequence_.Contains(_dafny.Companion_Sequence_.Concatenate(_dafny.Companion_Sequence_.Concatenate(Companion_Default___.MapRectElements(), Companion_Default___.MapLineElements()), Companion_Default___.MapPointElements()), element)) && ((_dafny.IntOfUint32((items).Cardinality())).Cmp(_dafny.IntOfInt64(30)) <= 0)) && (!(_dafny.Companion_Sequence_.Equal(element, _dafny.UnicodeSeqOfUtf8Bytes("router_position"))) || ((_dafny.IntOfUint32((items).Cardinality())).Cmp(_dafny.One) == 0))) && (_dafny.Quantifier((items).UniqueElements(), true, func(_forall_var_0 _dafny.Tuple) bool {
+		var _0_item _dafny.Tuple
+		_0_item = interface{}(_forall_var_0).(_dafny.Tuple)
+		return !(_dafny.Companion_Sequence_.Contains(items, _0_item)) || ((Companion_Default___.ItemInside(_0_item, bounds)) && (Companion_Default___.ItemShape(element, _0_item)))
+	}))
+}
+func (_static *CompanionStruct_Default___) ValidVacuumPath(points _dafny.Sequence, bounds _dafny.Tuple) bool {
+	return (((_dafny.One).Cmp(_dafny.IntOfUint32((points).Cardinality())) <= 0) && ((_dafny.IntOfUint32((points).Cardinality())).Cmp(_dafny.IntOfInt64(20)) <= 0)) && (_dafny.Quantifier((points).UniqueElements(), true, func(_forall_var_0 _dafny.Tuple) bool {
+		var _0_p _dafny.Tuple
+		_0_p = interface{}(_forall_var_0).(_dafny.Tuple)
+		return !(_dafny.Companion_Sequence_.Contains(points, _0_p)) || (((((*(bounds).IndexInt(0)).(_dafny.Int)).Cmp((*(_0_p).IndexInt(0)).(_dafny.Int)) <= 0) && (((*(_0_p).IndexInt(0)).(_dafny.Int)).Cmp((*(bounds).IndexInt(2)).(_dafny.Int)) <= 0)) && ((((*(bounds).IndexInt(1)).(_dafny.Int)).Cmp((*(_0_p).IndexInt(1)).(_dafny.Int)) <= 0) && (((*(_0_p).IndexInt(1)).(_dafny.Int)).Cmp((*(bounds).IndexInt(3)).(_dafny.Int)) <= 0)))
+	}))
+}
 func (_static *CompanionStruct_Default___) ValidVacuumShortcut(action _dafny.Sequence, id _dafny.Int, known _dafny.Sequence, nameLength _dafny.Int) bool {
 	return ((_dafny.Companion_Sequence_.Contains(_dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("start"), _dafny.UnicodeSeqOfUtf8Bytes("rename"), _dafny.UnicodeSeqOfUtf8Bytes("delete")), action)) && (_dafny.Companion_Sequence_.Contains(known, id))) && ((func() bool {
 		if _dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("rename")) {
@@ -809,6 +835,15 @@ func (_static *CompanionStruct_Default___) MinVacuumZoneSide() _dafny.Int {
 }
 func (_static *CompanionStruct_Default___) MaxVacuumZones() _dafny.Int {
 	return _dafny.IntOfInt64(5)
+}
+func (_static *CompanionStruct_Default___) MapRectElements() _dafny.Sequence {
+	return _dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("no_go_zones"), _dafny.UnicodeSeqOfUtf8Bytes("no_mop_zones"), _dafny.UnicodeSeqOfUtf8Bytes("ramps"), _dafny.UnicodeSeqOfUtf8Bytes("low_lying_areas"), _dafny.UnicodeSeqOfUtf8Bytes("carpets"))
+}
+func (_static *CompanionStruct_Default___) MapLineElements() _dafny.Sequence {
+	return _dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("virtual_walls"), _dafny.UnicodeSeqOfUtf8Bytes("virtual_thresholds"), _dafny.UnicodeSeqOfUtf8Bytes("passable_thresholds"), _dafny.UnicodeSeqOfUtf8Bytes("impassable_thresholds"), _dafny.UnicodeSeqOfUtf8Bytes("curtains"))
+}
+func (_static *CompanionStruct_Default___) MapPointElements() _dafny.Sequence {
+	return _dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("predefined_points"), _dafny.UnicodeSeqOfUtf8Bytes("router_position"))
 }
 
 // End of class Default__

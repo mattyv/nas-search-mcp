@@ -820,3 +820,90 @@ def test_room_option_for_unknown_room_rejected():
     b, device = room_broker()
     with pytest.raises(broker.BadRequest):
         b.set_room_option({'room': 9, 'name': 'mop_pressure', 'value': 1})
+
+
+def area(x0, y0, x1, y1):
+    """A library-style four-cornered area."""
+    return SimpleNamespace(x0=x0, y0=y0, x1=x1, y1=y0, x2=x1, y2=y1, x3=x0, y3=y1)
+
+
+def line(x0, y0, x1, y1):
+    return SimpleNamespace(x0=x0, y0=y0, x1=x1, y1=y1)
+
+
+class EditDevice(FakeDevice):
+    def __init__(self):
+        super().__init__()
+        current = self.status.current_map
+        current.no_go_areas = [area(0, 0, 500, 400)]
+        current.no_mopping_areas = [area(1000, 1000, 1500, 1500)]
+        current.virtual_walls = [line(0, 0, 0, 900)]
+        current.virtual_thresholds = []
+        current.passable_thresholds = [line(10, 10, 60, 10)]
+        current.impassable_thresholds = []
+        current.ramps = [area(-100, -100, 0, 0)]
+        current.curtains = None
+        current.low_lying_areas = []
+        current.carpets = [area(200, 200, 300, 300)]
+        current.deleted_carpets = [area(400, 400, 450, 450)]
+        current.predefined_points = {1: SimpleNamespace(x=10, y=20)}
+        current.router_position = SimpleNamespace(x=5, y=6)
+        for method in ('set_restricted_zone', 'set_virtual_threshold', 'set_threshold', 'set_curtain',
+                       'set_low_lying_area', 'set_carpet_area', 'set_predefined_points', 'set_router_position',
+                       'follow_path', 'set_obstacle_ignore'):
+            setattr(self, method, (lambda m: lambda *a: self.calls.append((m, *a)))(method))
+
+
+def test_map_elements_read_every_kind():
+    out = make(EditDevice()).map_elements()
+    assert out['no_go_zones'] == [[0, 0, 500, 400]]
+    assert out['virtual_walls'] == [[0, 0, 0, 900]]
+    assert out['ramps'] == [[-100, -100, 0, 0]]
+    assert out['curtains'] == [] and out['carpets'] == [[200, 200, 300, 300]]
+    assert out['predefined_points'] == [[10, 20]] and out['router_position'] == [[5, 6]]
+
+
+@pytest.mark.parametrize('element,items,call', [
+    # Editing one kind always resends the current others, because the library clears what is left out.
+    ('no_go_zones', [[0, 0, 100, 100]], ('set_restricted_zone', [[0, 0, 0, 900]], [[0, 0, 100, 100]], [[1000, 1000, 1500, 1500]])),
+    ('no_mop_zones', [], ('set_restricted_zone', [[0, 0, 0, 900]], [[0, 0, 500, 400]], [])),
+    ('virtual_walls', [[1, 1, 2, 2]], ('set_restricted_zone', [[1, 1, 2, 2]], [[0, 0, 500, 400]], [[1000, 1000, 1500, 1500]])),
+    ('passable_thresholds', [], ('set_threshold', [], [], [[-100, -100, 0, 0]])),
+    ('ramps', [[0, 0, 50, 50]], ('set_threshold', [[10, 10, 60, 10]], [], [[0, 0, 50, 50]])),
+    ('virtual_thresholds', [[0, 0, 10, 0]], ('set_virtual_threshold', [[0, 0, 10, 0]])),
+    ('curtains', [[0, 0, 10, 0]], ('set_curtain', [[0, 0, 10, 0]])),
+    ('low_lying_areas', [[0, 0, 10, 10]], ('set_low_lying_area', [[0, 0, 10, 10]])),
+    ('carpets', [[0, 0, 10, 10]], ('set_carpet_area', [[0, 0, 10, 10]], [[400, 400, 450, 450]])),
+    ('predefined_points', [[1, 2], [3, 4]], ('set_predefined_points', [[1, 2], [3, 4]])),
+    ('router_position', [[7, 8]], ('set_router_position', 7, 8)),
+])
+def test_edit_map_dispatch_keeps_other_kinds(element, items, call):
+    device = EditDevice()
+    out = make(device).edit_map({'element': element, 'items': items})
+    assert device.calls == [call] and out['accepted']
+
+
+@pytest.mark.parametrize('body', [
+    {'element': 'furniture', 'items': []},
+    {'element': 'deleted_carpets', 'items': []},
+    {'element': 'no_go_zones', 'items': [[0, 0, 1]]},
+    {'element': 'no_go_zones', 'items': [['0', 0, 1, 1]]},
+    {'element': 'router_position', 'items': []},
+])
+def test_edit_map_rejects_malformed(body):
+    device = EditDevice()
+    with pytest.raises(broker.BadRequest):
+        make(device).edit_map(body)
+    assert device.calls == []
+
+
+def test_patrol_and_ignore_obstacle():
+    device = EditDevice()
+    b = make(device)
+    b.patrol({'points': [[0, 0], [100, 100]]})
+    b.ignore_obstacle({'x': 10, 'y': 20, 'ignore': True})
+    assert device.calls == [('follow_path', [[0, 0], [100, 100]]), ('set_obstacle_ignore', 10, 20, True)]
+    with pytest.raises(broker.BadRequest):
+        b.patrol({'points': [[0]]})
+    with pytest.raises(broker.BadRequest):
+        b.ignore_obstacle({'x': 1, 'y': 2, 'ignore': 'yes'})

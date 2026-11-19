@@ -765,3 +765,68 @@ func TestRoomActionsAndOptionsChecked(t *testing.T) {
 		t.Fatalf("%d room changes reached the vacuum", sent)
 	}
 }
+
+func TestMapEditingChecked(t *testing.T) {
+	var gotEdit mapEditRequest
+	var gotPath pathRequest
+	var gotIgnore ignoreRequest
+	sent := 0
+	socket := broker(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rooms":
+			w.Write([]byte(mapRooms))
+		case "/map_elements":
+			w.Write([]byte(`{"no_go_zones":[[0,0,500,500]],"virtual_walls":[],"predefined_points":[[10,20]],"router_position":[[5,5]]}`))
+		case "/obstacles":
+			w.Write([]byte(`{"obstacles":[{"index":2,"type":"shoes","x":10,"y":20,"confidence":90,"has_photo":false}]}`))
+		case "/edit_map":
+			sent++
+			json.NewDecoder(r.Body).Decode(&gotEdit)
+			w.Write([]byte(`{"accepted":true,"message":"Done"}`))
+		case "/patrol":
+			sent++
+			json.NewDecoder(r.Body).Decode(&gotPath)
+			w.Write([]byte(`{"accepted":true,"message":"Patrolling"}`))
+		case "/ignore_obstacle":
+			sent++
+			json.NewDecoder(r.Body).Decode(&gotIgnore)
+			w.Write([]byte(`{"accepted":true,"message":"Ignoring"}`))
+		}
+	})
+	client := newClient(t, socket)
+	elements, err := client.MapElements(context.Background())
+	if err != nil || len(elements["no_go_zones"]) != 1 || elements["predefined_points"][0][1] != 20 {
+		t.Fatalf("elements=%#v err=%v", elements, err)
+	}
+	if _, err := client.EditMap(context.Background(), MapEditInput{Element: "no_go_zones", Items: [][]int{{0, 0, 1000, 1000}, {2000, 2000, 3000, 3000}}}); err != nil || len(gotEdit.Items) != 2 {
+		t.Fatalf("got=%#v err=%v", gotEdit, err)
+	}
+	if _, err := client.EditMap(context.Background(), MapEditInput{Element: "predefined_points", Items: [][]int{{10, 20}}}); err != nil || len(gotEdit.Items[0]) != 2 {
+		t.Fatalf("points sent as %#v err=%v", gotEdit.Items, err)
+	}
+	if _, err := client.Patrol(context.Background(), PatrolInput{Points: [][2]int{{0, 0}, {100, 100}}}); err != nil || len(gotPath.Points) != 2 {
+		t.Fatalf("got=%#v err=%v", gotPath, err)
+	}
+	if _, err := client.IgnoreObstacle(context.Background(), IgnoreObstacleInput{Index: 2, Ignore: true}); err != nil || gotIgnore.X != 10 || !gotIgnore.Ignore {
+		t.Fatalf("got=%#v err=%v", gotIgnore, err)
+	}
+	for _, in := range []MapEditInput{
+		{Element: "furniture", Items: [][]int{{0, 0, 10, 10}}},
+		{Element: "no_go_zones", Items: [][]int{{0, 0, 9000, 10}}},
+		{Element: "no_go_zones", Items: [][]int{{0, 0, 10}}},
+		{Element: "router_position", Items: [][]int{}},
+	} {
+		if _, err := client.EditMap(context.Background(), in); !errors.Is(err, ErrInput) {
+			t.Errorf("%#v: err=%v", in, err)
+		}
+	}
+	if _, err := client.Patrol(context.Background(), PatrolInput{Points: [][2]int{{0, 9000}}}); !errors.Is(err, ErrInput) {
+		t.Errorf("off-map patrol accepted: %v", err)
+	}
+	if _, err := client.IgnoreObstacle(context.Background(), IgnoreObstacleInput{Index: 7, Ignore: true}); !errors.Is(err, ErrInput) {
+		t.Errorf("unknown obstacle accepted: %v", err)
+	}
+	if sent != 4 {
+		t.Fatalf("%d edits reached the vacuum", sent)
+	}
+}
