@@ -367,6 +367,43 @@ class Broker:
         picture.save(out, 'JPEG', quality=85)
         return {'mime_type': 'image/jpeg', 'data': base64.b64encode(out.getvalue()).decode()}
 
+    def shortcuts(self):
+        device = self._device()
+        found = getattr(device.status, 'shortcuts', None) or {}
+        names = {seg_id: getattr(seg, 'name', '') for seg_id, seg in self._segments(device).items()}
+        out = []
+        for shortcut_id, item in found.items():
+            if not _is_int(shortcut_id) or item is None:
+                continue
+            rooms = []
+            tasks = getattr(item, 'tasks', None) or []
+            if tasks and tasks[0]:
+                for task in sorted(tasks[0], key=lambda t: getattr(t, 'order', 0) or 0):
+                    seg_id = getattr(task, 'segment_id', None)
+                    if seg_id is not None:
+                        rooms.append(_text(names.get(seg_id) or f'Room {seg_id}', 64))
+            out.append({'id': shortcut_id, 'name': _text(getattr(item, 'name', '') or f'Shortcut {shortcut_id}', 64),
+                        'running': bool(getattr(item, 'running', False)), 'rooms': rooms[:64]})
+        return {'shortcuts': sorted(out, key=lambda s: s['id'])[:104]}
+
+    def shortcut(self, body):
+        if not isinstance(body, dict) or set(body) != {'action', 'id', 'name'} or not _is_int(body['id']) \
+                or not isinstance(body['name'], str) or body['action'] not in ('start', 'rename', 'delete'):
+            raise BadRequest('shortcut needs action, id and name')
+        device = self._device()
+        action, shortcut_id, name = body['action'], body['id'], body['name']
+        label = next((s['name'] for s in self.shortcuts()['shortcuts'] if s['id'] == shortcut_id), f'shortcut {shortcut_id}')
+        if action == 'start':
+            self._run(lambda: device.start_shortcut(shortcut_id))
+            message = f'Started {label}'
+        elif action == 'rename':
+            self._run(lambda: device.rename_shortcut(shortcut_id, name))
+            message = f'Renamed {label} to {name}'
+        else:
+            self._run(lambda: device.delete_shortcut(shortcut_id))
+            message = f'Deleted {label}'
+        return {'accepted': True, 'message': _text(message, 512)}
+
     def map(self):
         import base64
         import io
@@ -416,7 +453,8 @@ def make_server(path, holder):
               '/details': lambda b, _: b.details(), '/history': lambda b, body: b.history(body),
               '/map': lambda b, _: b.map(), '/move': lambda b, body: b.move(body),
               '/obstacles': lambda b, _: b.obstacles(),
-              '/obstacle_photo': lambda b, body: b.obstacle_photo(body)}
+              '/obstacle_photo': lambda b, body: b.obstacle_photo(body),
+              '/shortcuts': lambda b, _: b.shortcuts(), '/shortcut': lambda b, body: b.shortcut(body)}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):

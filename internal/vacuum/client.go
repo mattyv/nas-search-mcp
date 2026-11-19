@@ -149,6 +149,29 @@ type obstacleRequest struct {
 	Index int `json:"index"`
 }
 
+type Shortcut struct {
+	ID      int      `json:"id"`
+	Name    string   `json:"name"`
+	Running bool     `json:"running"`
+	Rooms   []string `json:"rooms"`
+}
+
+type ShortcutsResult struct {
+	Shortcuts []Shortcut `json:"shortcuts"`
+}
+
+type ShortcutInput struct {
+	Action string `json:"action" jsonschema:"start, rename, or delete"`
+	ID     int    `json:"id" jsonschema:"shortcut ID from vacuum_shortcuts"`
+	Name   string `json:"name,omitempty" jsonschema:"new name, 1-32 characters; only for rename"`
+}
+
+type shortcutRequest struct {
+	Action string `json:"action"`
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+}
+
 type commandRequest struct {
 	Action  string   `json:"action"`
 	Rooms   []int    `json:"rooms"`
@@ -190,6 +213,7 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 	if out.Battery < 0 || out.Battery > 100 || out.CleanedAreaM2 < 0 || out.CleanedAreaM2 > 100000 || out.CleaningMinutes < 0 || out.CleaningMinutes > 100000 {
 		return Status{}, errReply
 	}
+	out.Name = strings.TrimSpace(out.Name)
 	for _, text := range []string{out.Name, out.State, out.Error, out.Suction, out.CurrentRoom} {
 		if !boundedText(text, 256) {
 			return Status{}, errReply
@@ -506,6 +530,48 @@ func (c *Client) ObstaclePhoto(ctx context.Context, in ObstaclePhotoInput) (MapI
 	return MapImage{MIMEType: "image/jpeg", Data: clean.Bytes()}, nil
 }
 
+func (c *Client) Shortcuts(ctx context.Context) (ShortcutsResult, error) {
+	var out ShortcutsResult
+	if err := c.post(ctx, "/shortcuts", struct{}{}, &out); err != nil {
+		return ShortcutsResult{}, err
+	}
+	if out.Shortcuts == nil || len(out.Shortcuts) > 104 {
+		return ShortcutsResult{}, errReply
+	}
+	for _, s := range out.Shortcuts {
+		if s.ID < 1 || s.ID > 1000 || !boundedText(s.Name, 64) || len(s.Rooms) > 64 {
+			return ShortcutsResult{}, errReply
+		}
+		for _, room := range s.Rooms {
+			if !boundedText(room, 64) {
+				return ShortcutsResult{}, errReply
+			}
+		}
+	}
+	return out, nil
+}
+
+// Shortcut starts, renames or deletes an app shortcut, checked in the verified
+// core against the shortcuts the vacuum currently lists.
+func (c *Client) Shortcut(ctx context.Context, in ShortcutInput) (CommandResult, error) {
+	in.Name = strings.TrimSpace(in.Name)
+	if !boundedText(in.Name, 64) {
+		return CommandResult{}, ErrInput
+	}
+	list, err := c.Shortcuts(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	known := make([]int, 0, len(list.Shortcuts))
+	for _, s := range list.Shortcuts {
+		known = append(known, s.ID)
+	}
+	if !policy.ValidVacuumShortcut(in.Action, in.ID, known, utf8.RuneCountInString(in.Name)) {
+		return CommandResult{}, ErrInput
+	}
+	return c.accepted(ctx, "/shortcut", shortcutRequest{Action: in.Action, ID: in.ID, Name: in.Name})
+}
+
 func validBox(box [4]int) bool {
 	const limit = 1000000
 	return box[0] < box[2] && box[1] < box[3] && box[0] > -limit && box[1] > -limit && box[2] < limit && box[3] < limit
@@ -532,7 +598,7 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 		return ErrInput
 	}
 	limit := c.quick
-	if path == "/map" || path == "/command" || path == "/setting" || path == "/move" || path == "/obstacle_photo" {
+	if path == "/map" || path == "/command" || path == "/setting" || path == "/move" || path == "/obstacle_photo" || path == "/shortcut" {
 		limit = c.slow
 	}
 	parent := ctx

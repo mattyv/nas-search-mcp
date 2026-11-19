@@ -593,6 +593,14 @@ func (_static *CompanionStruct_Default___) ValidVacuumMove(rotation _dafny.Int, 
 func (_static *CompanionStruct_Default___) ValidVacuumObstacle(index _dafny.Int, known _dafny.Sequence) bool {
 	return ((index).Sign() == 1) && (_dafny.Companion_Sequence_.Contains(known, index))
 }
+func (_static *CompanionStruct_Default___) ValidVacuumShortcut(action _dafny.Sequence, id _dafny.Int, known _dafny.Sequence, nameLength _dafny.Int) bool {
+	return ((_dafny.Companion_Sequence_.Contains(_dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("start"), _dafny.UnicodeSeqOfUtf8Bytes("rename"), _dafny.UnicodeSeqOfUtf8Bytes("delete")), action)) && (_dafny.Companion_Sequence_.Contains(known, id))) && ((func() bool {
+		if _dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("rename")) {
+			return ((_dafny.One).Cmp(nameLength) <= 0) && ((nameLength).Cmp(_dafny.IntOfInt64(32)) <= 0)
+		}
+		return (nameLength).Sign() == 0
+	})())
+}
 func (_static *CompanionStruct_Default___) VacuumSettingRange(name _dafny.Sequence) SettingRange {
 	var _source0 _dafny.Sequence = name
 	_ = _source0

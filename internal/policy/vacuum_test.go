@@ -60,3 +60,9 @@ func TestVacuumDrivePolicyBridgesCore(t *testing.T) {
 		t.Fatal("obstacle check mismatch")
 	}
 }
+
+func TestVacuumShortcutPolicyBridgesCore(t *testing.T) {
+	if !ValidVacuumShortcut("start", 32, []int{32}, 0) || ValidVacuumShortcut("start", 33, []int{32}, 0) || !ValidVacuumShortcut("rename", 32, []int{32}, 5) {
+		t.Fatal("shortcut rule mismatch")
+	}
+}

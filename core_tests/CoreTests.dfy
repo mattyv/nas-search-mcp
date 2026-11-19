@@ -315,6 +315,10 @@ module CoreTests {
     expect ValidVacuumGoTo(100, -200, (-5000, -5000, 5000, 5000), 0, -1);
     expect !ValidVacuumGoTo(9000, 0, (-5000, -5000, 5000, 5000), 0, -1);
     expect !ValidVacuumGoTo(0, 0, (-5000, -5000, 5000, 5000), 1, -1) && !ValidVacuumGoTo(0, 0, (-5000, -5000, 5000, 5000), 0, 2);
+    expect ValidVacuumShortcut("start", 32, [32, 40], 0) && ValidVacuumShortcut("delete", 40, [32, 40], 0);
+    expect ValidVacuumShortcut("rename", 32, [32], 12) && !ValidVacuumShortcut("rename", 32, [32], 0) && !ValidVacuumShortcut("rename", 32, [32], 33);
+    expect !ValidVacuumShortcut("start", 33, [32], 0) && !ValidVacuumShortcut("start", 32, [32], 5);
+    expect !ValidVacuumShortcut("edit", 32, [32], 0);
     print "Dafny core executable tests passed\n";
   }
 }

@@ -46,6 +46,10 @@ class FakeDevice:
             cleaning_mode_name='sweeping_and_mopping', mop_pad_humidity_name='moist',
             volume=40, dnd=True, dnd_start='22:00', dnd_end='08:00',
             carpet_avoidance=False, carpet_recognition=True, wetness_level=None,
+            shortcuts={
+                32: SimpleNamespace(name='After dinner', running=False, tasks=[[SimpleNamespace(segment_id=3, order=1), SimpleNamespace(segment_id=5, order=2)]]),
+                40: SimpleNamespace(name='Bathroom mop', running=True, tasks=None),
+            },
             _cleaning_history=[
                 SimpleNamespace(date=datetime(2026, 11, 1, 9, 0, tzinfo=timezone.utc), cleaning_time=30, cleaned_area=40, completed=True, status=None),
                 SimpleNamespace(date=datetime(2026, 11, 3, 9, 0, tzinfo=timezone.utc), cleaning_time=45, cleaned_area=52, completed=False, status=None),
@@ -541,3 +545,36 @@ def test_http_drive_and_obstacle_routes(served):
     status, body = request(path, 'POST', '/obstacles')
     assert status == 200 and len(body['obstacles']) == 2
     assert request(path, 'POST', '/obstacle_photo', json.dumps({'index': 2}).encode())[0] == 200
+
+
+def test_shortcuts_listed_with_room_names():
+    assert make().shortcuts() == {'shortcuts': [
+        {'id': 32, 'name': 'After dinner', 'running': False, 'rooms': ['Kitchen', 'Hall']},
+        {'id': 40, 'name': 'Bathroom mop', 'running': True, 'rooms': []},
+    ]}
+
+
+@pytest.mark.parametrize('body,call', [
+    ({'action': 'start', 'id': 32, 'name': ''}, ('start_shortcut', 32)),
+    ({'action': 'rename', 'id': 32, 'name': 'Evening tidy'}, ('set_rename_shortcut',)),
+    ({'action': 'delete', 'id': 40, 'name': ''}, ('delete_shortcut', 40)),
+])
+def test_shortcut_dispatch(body, call):
+    device = FakeDevice()
+    device.rename_shortcut = lambda i, n: device.calls.append(('rename_shortcut', i, n))
+    device.delete_shortcut = lambda i: device.calls.append(('delete_shortcut', i))
+    out = make(device).shortcut(body)
+    expected = ('rename_shortcut', 32, 'Evening tidy') if call == ('set_rename_shortcut',) else call
+    assert device.calls == [expected] and out['accepted'] and out['message']
+
+
+@pytest.mark.parametrize('body', [
+    {'action': 'start', 'id': '32', 'name': ''},
+    {'action': 'start', 'id': 32},
+    {'action': 'launch', 'id': 32, 'name': ''},
+])
+def test_malformed_shortcut_rejected(body):
+    device = FakeDevice()
+    with pytest.raises(broker.BadRequest):
+        make(device).shortcut(body)
+    assert device.calls == []

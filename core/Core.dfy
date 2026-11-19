@@ -965,6 +965,22 @@ module Core {
     ensures !ValidVacuumObstacle(index, known)
   {}
 
+  // App shortcuts: start, rename, or delete only a shortcut the vacuum listed.
+  // Renames carry a 1-32 character name; other actions carry none.
+  function ValidVacuumShortcut(action: string, id: int, known: seq<int>, nameLength: int): bool
+    ensures ValidVacuumShortcut(action, id, known, nameLength) ==>
+      action in ["start", "rename", "delete"] && id in known &&
+      (if action == "rename" then 1 <= nameLength <= 32 else nameLength == 0)
+  {
+    action in ["start", "rename", "delete"] && id in known &&
+    (if action == "rename" then 1 <= nameLength <= 32 else nameLength == 0)
+  }
+
+  lemma VacuumUnknownShortcutRejected(action: string, id: int, known: seq<int>, nameLength: int)
+    requires id !in known
+    ensures !ValidVacuumShortcut(action, id, known, nameLength)
+  {}
+
   // Settings the assistant may change, each with its allowed integer range.
   // Enumerated values are indexes the adapter maps from names.
   datatype SettingRange = NoSetting | Range(lo: int, hi: int, perRoom: bool)

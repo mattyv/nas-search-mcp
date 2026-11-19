@@ -522,3 +522,54 @@ func TestObstaclesAndPhotos(t *testing.T) {
 		t.Fatalf("%d photo requests reached the vacuum", photos)
 	}
 }
+
+func TestShortcutsListedAndChecked(t *testing.T) {
+	var got shortcutRequest
+	sent := 0
+	socket := broker(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/shortcuts":
+			w.Write([]byte(`{"shortcuts":[{"id":32,"name":"After dinner","running":false,"rooms":["Kitchen","Living Room"]}]}`))
+		case "/shortcut":
+			sent++
+			json.NewDecoder(r.Body).Decode(&got)
+			w.Write([]byte(`{"accepted":true,"message":"Started After dinner"}`))
+		}
+	})
+	client := newClient(t, socket)
+	list, err := client.Shortcuts(context.Background())
+	if err != nil || len(list.Shortcuts) != 1 || list.Shortcuts[0].Name != "After dinner" || len(list.Shortcuts[0].Rooms) != 2 {
+		t.Fatalf("list=%#v err=%v", list, err)
+	}
+	if _, err := client.Shortcut(context.Background(), ShortcutInput{Action: "start", ID: 32}); err != nil || got.Action != "start" || got.ID != 32 {
+		t.Fatalf("got=%#v err=%v", got, err)
+	}
+	if _, err := client.Shortcut(context.Background(), ShortcutInput{Action: "rename", ID: 32, Name: "Evening tidy"}); err != nil || got.Name != "Evening tidy" {
+		t.Fatalf("got=%#v err=%v", got, err)
+	}
+	for _, in := range []ShortcutInput{
+		{Action: "start", ID: 99},
+		{Action: "rename", ID: 32},
+		{Action: "rename", ID: 32, Name: strings.Repeat("x", 33)},
+		{Action: "start", ID: 32, Name: "x"},
+		{Action: "edit", ID: 32},
+		{Action: "rename", ID: 32, Name: "bad\nname"},
+	} {
+		if _, err := client.Shortcut(context.Background(), in); !errors.Is(err, ErrInput) {
+			t.Errorf("%#v: err=%v", in, err)
+		}
+	}
+	if sent != 2 {
+		t.Fatalf("%d shortcut commands reached the vacuum", sent)
+	}
+}
+
+func TestStatusTrimsName(t *testing.T) {
+	socket := broker(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"name":"Roberto ","connected":true,"state":"idle","battery":50,"docked":true,"error":"","suction":"","current_room":"","cleaned_area_m2":0,"cleaning_minutes":0}`))
+	})
+	out, err := newClient(t, socket).Status(context.Background())
+	if err != nil || out.Name != "Roberto" {
+		t.Fatalf("name=%q err=%v", out.Name, err)
+	}
+}

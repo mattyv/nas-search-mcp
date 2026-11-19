@@ -87,3 +87,8 @@ func ValidVacuumMove(rotation, velocity int) bool {
 func ValidVacuumObstacle(index int, known []int) bool {
 	return core.Companion_Default___.ValidVacuumObstacle(dafny.IntOf(index), intSeq(known))
 }
+
+// ValidVacuumShortcut checks a shortcut action against the shortcuts the vacuum listed.
+func ValidVacuumShortcut(action string, id int, known []int, nameLength int) bool {
+	return core.Companion_Default___.ValidVacuumShortcut(dafny.UnicodeSeqOfUtf8Bytes(action), dafny.IntOf(id), intSeq(known), dafny.IntOf(nameLength))
+}

@@ -60,6 +60,14 @@ func addVacuumTools(server *mcp.Server) {
 		out, err := client.Move(ctx, in)
 		return nil, out, err
 	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_shortcuts", Description: "List the cleaning shortcuts saved in the vendor app (one-tap routines with their own rooms, order and settings): ID, name, whether one is running, and the rooms it covers.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false), IdempotentHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in VacuumEmptyInput) (*mcp.CallToolResult, vacuum.ShortcutsResult, error) {
+		out, err := client.Shortcuts(ctx)
+		return nil, out, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_shortcut", Description: "Run, rename or delete a cleaning shortcut from vacuum_shortcuts. action: start (runs it now with its saved rooms and settings), rename (name: 1-32 characters), or delete (removes it from the app; cannot be undone, so confirm with the user first). Only use when the user asks.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(true), IdempotentHint: false, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.ShortcutInput) (*mcp.CallToolResult, vacuum.CommandResult, error) {
+		out, err := client.Shortcut(ctx, in)
+		return nil, out, err
+	})
 	if !enabled("NAS_VACUUM_CAMERA", true) {
 		return
 	}
