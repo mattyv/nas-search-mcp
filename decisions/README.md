@@ -819,3 +819,17 @@ D055 passed the vendor password from `.env` to the vacuum container as an enviro
 Alternatives: an external secrets manager would need another service or a cloud dependency on a 2 GB NAS and still a stored unlock key on the device; deferred. Storing the vendor refresh token instead of the password would avoid keeping the password at all, but the token rotates at every sign-in and its lifetime is unknown without a real account; deferred until the basic integration is validated.
 
 Consequences: the password is still a plaintext file readable by NAS root and the service user; recovery scripts that copy only `.env` leave it behind, and the installer then stops with a clear message. Evidence: broker, installer and Compose contract tests for the file were written first and failed before implementation.
+
+## D057 — Extend vacuum tools to everyday app features
+
+**Date:** 2026-11-19 · **Status:** Accepted; live vacuum validation pending
+
+The owner asked for every everyday feature of the vendor app. Add read-only `vacuum_details` (parts wear, base station, current settings), `vacuum_history` (recent runs) and `vacuum_map` (a re-encoded PNG); add room boxes and map bounds to `vacuum_rooms`; extend `vacuum_control` with zone cleaning, spot cleaning, emptying the dustbin, and washing, drying or stopping drying the mops; and add `vacuum_settings` for cleaning mode, suction, mop wetness, volume, do-not-disturb, child lock, carpet handling, and per-room mode, suction, wetness and passes.
+
+Still excluded: manual remote driving (needs a live control loop), the camera (privacy), map editing and firmware updates (hard to undo), and schedules (the library can only delete them).
+
+The verified core decides what is forwarded. New rules: base-station actions take no arguments; `VacuumTargetsMatch` lets each action carry only its own kind of target; `ValidVacuumZones` accepts 1-5 zones, each inside the saved map's bounds with sides of at least 300 units; `ValidVacuumSpot` keeps the point inside the bounds; `ValidVacuumSetting` accepts only listed settings within their ranges, with per-room settings naming a reported room and whole-vacuum settings naming none; `ValidVacuumHistoryLimit` bounds history to 1-20 runs. Lemmas prove zones never leave the map, unknown settings are rejected, and per-room settings never target an unknown room. The Go adapter fetches rooms and bounds before every aimed command or per-room setting.
+
+Outside the proof boundary: turning setting names into indexes, mapping indexes onto the library's per-model encodings (for example dry/moist/wet onto a 1-32 wetness scale), rendering the map, and the vacuum's own behaviour. The adapter re-encodes map pictures so only pixels reach the assistant.
+
+Evidence: Dafny tests for the zone, spot, setting and target rules, and Go client, tool and broker tests, were written first and failed before implementation; the history-limit rule's test was added with its implementation. A check against the pinned library confirmed every called method, status field and capability flag exists, and caught that room boxes must use the millimetre `x0..y1` fields rather than map-grid `coords`. The real renderer produced a PNG with peak RSS of about 106 MiB in isolation; memory with a real map on the NAS is unmeasured.
