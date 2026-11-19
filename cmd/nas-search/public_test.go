@@ -398,3 +398,76 @@ func TestPublicWaitingTimeoutStillReturnsRetryGuidance(t *testing.T) {
 		t.Fatalf("timeout response: status=%d retry=%s", w.Code, w.Header().Get("Retry-After"))
 	}
 }
+
+// slowLanes returns a handler where the named tools hold their lane until release closes.
+func slowLanes(t *testing.T, slow ...string) (http.Handler, func(string) chan int, chan string) {
+	t.Helper()
+	entered := make(chan string, 8)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	h := admitPublic(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Params struct {
+				Name string `json:"name"`
+			} `json:"params"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		for _, name := range slow {
+			if request.Params.Name == name {
+				entered <- name
+				<-release
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	call := func(name string) chan int {
+		result := make(chan int, 1)
+		go func() {
+			w := httptest.NewRecorder()
+			body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + name + `"}}`
+			h.ServeHTTP(w, httptest.NewRequest("POST", "/mcp", strings.NewReader(body)))
+			result <- w.Code
+		}()
+		return result
+	}
+	return h, call, entered
+}
+
+func waitEntered(t *testing.T, entered chan string, count int) {
+	t.Helper()
+	for i := 0; i < count; i++ {
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatal("slow calls did not occupy their lanes")
+		}
+	}
+}
+
+func expectPrompt(t *testing.T, result chan int, name string) {
+	t.Helper()
+	select {
+	case code := <-result:
+		if code != http.StatusNoContent {
+			t.Fatalf("%s returned %d", name, code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("%s waited behind another lane", name)
+	}
+}
+
+func TestPublicVacuumCallsSkipSearchAndStatusLanes(t *testing.T) {
+	_, call, entered := slowLanes(t, "search", "index_status")
+	call("search")
+	call("index_status")
+	waitEntered(t, entered, 2)
+	expectPrompt(t, call("vacuum_status"), "vacuum_status")
+}
+
+func TestPublicSlowVacuumCallDoesNotBlockStatusOrSearch(t *testing.T) {
+	_, call, entered := slowLanes(t, "vacuum_map")
+	call("vacuum_map")
+	waitEntered(t, entered, 1)
+	expectPrompt(t, call("upgrade_status"), "upgrade_status")
+	expectPrompt(t, call("search"), "search")
+}

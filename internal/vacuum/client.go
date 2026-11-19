@@ -26,6 +26,7 @@ import (
 )
 
 var ErrInput = errors.New("invalid vacuum request: check the action or setting name, use room IDs from vacuum_rooms, zones and points inside the map bounds from vacuum_rooms (zones at least 300 units per side, up to 5), repeats 1-3, and suction quiet, standard, strong, or turbo")
+var ErrBusy = errors.New("the robot vacuum service is busy (for example, still signing in or loading the map); try again in a minute")
 var ErrNoMap = errors.New("the robot vacuum has no saved map yet, so it cannot aim at zones or spots; let it finish a full mapping run first")
 var ErrUnavailable = errors.New("the robot vacuum is unavailable; check the vacuum service and that the vacuum is online")
 var errReply = errors.New("the robot vacuum returned an invalid or unsupported response")
@@ -124,7 +125,12 @@ type commandRequest struct {
 	Suction int      `json:"suction"`
 }
 
-type Client struct{ http *http.Client }
+type Client struct {
+	http *http.Client
+	// Deadlines stay under the assistant's own tool timeout, so a slow vacuum
+	// returns ErrBusy instead of hanging the conversation.
+	quick, slow time.Duration
+}
 
 func New(socket string) (*Client, error) {
 	if !filepath.IsAbs(socket) || filepath.Clean(socket) != socket || len(socket) > 107 || strings.ContainsRune(socket, 0) || socket == "/" {
@@ -139,7 +145,8 @@ func New(socket string) (*Client, error) {
 		ResponseHeaderTimeout: 30 * time.Second,
 	}
 	return &Client{http: &http.Client{Transport: transport, Timeout: 45 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		quick: 20 * time.Second, slow: 40 * time.Second}, nil
 }
 
 func (c *Client) Status(ctx context.Context) (Status, error) {
@@ -414,6 +421,13 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 	if err != nil {
 		return ErrInput
 	}
+	limit := c.quick
+	if path == "/map" || path == "/command" || path == "/setting" {
+		limit = c.slow
+	}
+	parent := ctx
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://dreame-vacuum"+path, bytes.NewReader(body))
 	if err != nil {
 		return ErrInput
@@ -421,6 +435,9 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 	request.Header.Set("Content-Type", "application/json")
 	response, err := c.http.Do(request)
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) && parent.Err() == nil {
+			return ErrBusy
+		}
 		return ErrUnavailable
 	}
 	defer response.Body.Close()

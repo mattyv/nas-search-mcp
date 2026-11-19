@@ -89,8 +89,39 @@ Ask your assistant for the vacuum status. When the vacuum is unavailable, the an
 
 | Log says | Fix |
 |---|---|
-| `sign-in failed` | Check the username, account type, and region in `.env`, and the password in `dreame_password`. If those are right, try region `us`, then `eu`. |
+| `rejected the sign-in` / `rejected the password` | The service stops trying, because Dreame locks the account after five wrong passwords. Fix the username, region or `dreame_password` file (see below), then restart the vacuum service. |
+| `could not reach the Dreame cloud` | Network or Dreame outage; it retries on its own. |
 | `several vacuums found` | Add `DREAME_DEVICE_ID` with one of the listed IDs. |
 | `no supported vacuum found` | Check you used the account that owns the vacuum, and the right account type. |
 | `connection failed, retrying` | Temporary network or vendor issue; it retries on its own. |
 | `vacuum did not respond` | Signed in, but the vacuum is off, asleep without Wi-Fi, or out of range. Check it in the Dreamehome app. |
+
+### Find your account's region
+
+Dreame keeps each account on one regional server, which is not always where you live. This tries each region with your saved details and prints which one signs in. It never shows the password. Every try may count as a failed sign-in on that region's server, and Dreame locks an account after five, so run it once, and if every region fails, check the password in the app before running it again.
+
+```sh
+cd /volume1/@nas-search-upgrader
+sudo docker run --rm --entrypoint /opt/vacuum-venv/bin/python \
+  -v "$PWD/dreame_password:/pw:ro" \
+  -e U="$(sudo sed -n 's/^DREAME_USERNAME=//p' .env | tr -d "'\"")" \
+  "$(cat current-image)" -I -W ignore -c '
+import os, sys, logging; logging.disable(logging.CRITICAL); sys.path.insert(0, "/opt/dreame")
+from dreame import DreameVacuumProtocol
+pw = open("/pw").read().rstrip("\r\n"); u = os.environ["U"]
+for c in ["sg", "eu", "us", "cn", "ru", "kr"]:
+    p = DreameVacuumProtocol(username=u, password=pw, country=c, prefer_cloud=True, account_type="dreame")
+    p.cloud.login(); print(c, "SIGNED IN" if p.cloud.logged_in else "no")
+'
+```
+
+### Restart only the vacuum service
+
+After changing `DREAME_` settings or the password file:
+
+```sh
+cd /volume1/@nas-search-upgrader
+sudo docker compose --profile vacuum --env-file .env --project-name nas-search --project-directory . -f compose.yaml up -d --no-build --force-recreate nas-vacuum
+```
+
+Search and the rest of the NAS keep running.

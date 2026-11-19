@@ -451,3 +451,25 @@ def test_http_unavailable_explains_why(served):
     holder.set_problem('login failed: check the account, password, and country')
     status, body = request(path, 'POST', '/status')
     assert status == 503 and body == {'error': 'login failed: check the account, password, and country'}
+
+
+def test_rejected_password_stops_retrying_to_protect_the_account():
+    holder = broker.Holder()
+    attempts = []
+    def connect(_env):
+        attempts.append(1)
+        raise broker.PasswordRejected('user password not match')
+    def sleep(_delay):
+        raise AssertionError('must not retry a rejected password')
+    broker.keep_connected(holder, {}, connect=connect, sleep=sleep)
+    assert len(attempts) == 1 and holder.get() is None
+    assert 'rejected the password' in holder.problem() and 'stopped trying' in holder.problem()
+
+
+def test_network_trouble_keeps_retrying():
+    holder = broker.Holder()
+    def connect(_env):
+        raise broker.CloudUnreachable('timed out')
+    with pytest.raises(StopLoop):
+        broker.keep_connected(holder, {}, connect=connect, sleep=stop_after_first)
+    assert holder.problem() == 'could not reach the Dreame cloud; retrying'

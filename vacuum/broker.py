@@ -40,6 +40,14 @@ class VacuumOffline(Exception):
     """Signed in to the vendor cloud, but the vacuum itself did not answer."""
 
 
+class PasswordRejected(ConfigError):
+    """The vendor rejected the credentials. Retrying would count towards its account lockout."""
+
+
+class CloudUnreachable(Exception):
+    """Sign-in failed for a reason other than the credentials, such as the network."""
+
+
 def _text(value, limit=256):
     text = '' if value is None else str(value)
     text = ''.join(ch for ch in text if ch.isprintable())
@@ -500,8 +508,9 @@ def connect_from_env(env):  # pragma: no cover - needs the vendor library and a 
                                     prefer_cloud=True, account_type=account)
     protocol.cloud.login()
     if not protocol.cloud.logged_in:
-        reason = getattr(protocol.cloud, 'login_error', None) or 'check DREAME_USERNAME, the dreame_password file and DREAME_COUNTRY, and that the NAS can reach the internet'
-        raise ConfigError(f'Dreame sign-in failed: {reason}')
+        if getattr(protocol.cloud, 'auth_failed', False):
+            raise PasswordRejected('the account, password, or region did not match')
+        raise CloudUnreachable(getattr(protocol.cloud, 'login_error', None) or 'sign-in did not complete')
 
     info = json.loads(zlib.decompress(base64.b64decode(DEVICE_INFO), zlib.MAX_WBITS | 32))
     prefixes = {1: 'xiaomi', 2: 'mova', 3: 'trouver'}
@@ -540,6 +549,15 @@ def keep_connected(holder, env, connect=connect_from_env, sleep=time.sleep):
         try:
             holder.set(connect(env))
             return
+        except PasswordRejected as error:
+            # Dreame locks the account after a few wrong passwords; never retry on our own.
+            LOG.error('Dreame rejected the sign-in (%s); not retrying until the service restarts', error)
+            holder.set_problem('Dreame rejected the password, so the vacuum service stopped trying to avoid locking the account. '
+                               'Check DREAME_USERNAME, DREAME_COUNTRY and the dreame_password file, then restart the vacuum service')
+            return
+        except CloudUnreachable as error:
+            LOG.warning('could not reach the Dreame cloud, retrying: %s', _text(error))
+            holder.set_problem('could not reach the Dreame cloud; retrying')
         except ConfigError as error:
             LOG.error('vacuum setup problem: %s', error)
             holder.set_problem(str(error))
