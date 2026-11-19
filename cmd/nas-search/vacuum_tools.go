@@ -33,7 +33,7 @@ func addVacuumTools(server *mcp.Server) {
 		out, err := client.Rooms(ctx)
 		return nil, out, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_control", Description: "Control the robot vacuum. action: start (clean everywhere), pause, stop, dock (return to the base), locate (play a sound), clean_rooms (rooms: IDs from vacuum_rooms), clean_zones (zones: up to 5 rectangles [x0, y0, x1, y1] inside the map bounds, at least 300 units per side), clean_spot (point: [x, y] inside the map bounds), empty_dustbin, wash_mops, dry_mops, or stop_drying. Cleaning actions take optional repeats (1-3 passes, default 1) and suction (quiet, standard, strong, turbo; default keeps the current setting). Only use when the user asks; this physically moves the vacuum or runs its base station.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(false), IdempotentHint: false, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.CommandInput) (*mcp.CallToolResult, vacuum.CommandResult, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_control", Description: "Control the robot vacuum. action: start (clean everywhere), pause, stop, dock (return to the base), locate (play a sound), clean_rooms (rooms: IDs from vacuum_rooms), clean_zones (zones: up to 5 rectangles [x0, y0, x1, y1] inside the map bounds, at least 300 units per side), clean_spot (point: [x, y] inside the map bounds), go_to (point: drive to [x, y] and stop there, without cleaning; use a room's box centre to reach a room), empty_dustbin, wash_mops, dry_mops, or stop_drying. Cleaning actions take optional repeats (1-3 passes, default 1) and suction (quiet, standard, strong, turbo; default keeps the current setting). Only use when the user asks; this physically moves the vacuum or runs its base station.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(false), IdempotentHint: false, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.CommandInput) (*mcp.CallToolResult, vacuum.CommandResult, error) {
 		out, err := client.Command(ctx, in)
 		return nil, out, err
 	})
@@ -55,5 +55,23 @@ func addVacuumTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_settings", Description: "Change one robot vacuum setting. setting and value: cleaning_mode (sweeping, mopping, sweeping_and_mopping, mopping_after_sweeping), suction (quiet, standard, strong, turbo), mop_wetness (dry, moist, wet), volume (0-100), dnd (on/off), dnd_start and dnd_end (HH:MM), child_lock (on/off), carpet_avoidance (on/off), carpet_recognition (on/off). Per-room settings need room (an ID from vacuum_rooms): room_mode, room_suction, room_wetness (same values as above) and room_passes (1-3). Only use when the user asks. Check vacuum_details first to see current values; a setting the model lacks is refused.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(false), IdempotentHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.SettingInput) (*mcp.CallToolResult, vacuum.CommandResult, error) {
 		out, err := client.Setting(ctx, in)
 		return nil, out, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_drive", Description: "Move the robot vacuum one small remote-control step, like the joystick in the vendor app. turn: degrees, -360 to 360 (positive turns left); speed: -600 to 600 (negative reverses; about 200 is a gentle roll). Each call is one short nudge, so send several to travel further, and check vacuum_status between them. Its own bump and cliff sensors still apply. To reach a room or spot, prefer vacuum_control go_to. Only use when the user asks.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(false), IdempotentHint: false, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.MoveInput) (*mcp.CallToolResult, vacuum.CommandResult, error) {
+		out, err := client.Move(ctx, in)
+		return nil, out, err
+	})
+	if !enabled("NAS_VACUUM_CAMERA", true) {
+		return
+	}
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_obstacles", Description: "List things the robot vacuum recognised and avoided on its current map (for example socks, cables, shoes, pet mess), with map position, confidence (percent), and whether it took a photo. Use the index with vacuum_obstacle_photo. Photos are taken automatically while cleaning; the vacuum cannot take one on request.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false), IdempotentHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in VacuumEmptyInput) (*mcp.CallToolResult, vacuum.ObstaclesResult, error) {
+		out, err := client.Obstacles(ctx)
+		return nil, out, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_obstacle_photo", Description: "Show the photo the robot vacuum's camera took of one avoided obstacle, by index from vacuum_obstacles (only those with has_photo true). Describe what is visible; do not identify people. View only: nothing is saved.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false), IdempotentHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.ObstaclePhotoInput) (*mcp.CallToolResult, any, error) {
+		out, err := client.ObstaclePhoto(ctx, in)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.ImageContent{Data: out.Data, MIMEType: out.MIMEType}}}, nil, nil
 	})
 }

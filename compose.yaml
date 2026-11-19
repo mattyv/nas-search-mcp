@@ -38,6 +38,7 @@ services:
       # Optional robot vacuum (profile "vacuum"); the socket lives under /data.
       NAS_VACUUM_ENABLED: "${NAS_VACUUM_ENABLED:-false}"
       NAS_VACUUM_SOCKET: /data/vacuum-ipc/vacuum.sock
+      NAS_VACUUM_CAMERA: "${NAS_VACUUM_CAMERA:-true}"
       NAS_ROOT: /files
       NAS_DATA: /data
       NAS_SEMANTIC: "true"

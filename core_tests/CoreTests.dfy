@@ -307,6 +307,14 @@ module CoreTests {
     expect VacuumTargetsMatch("clean_rooms", 2, 0, false) && VacuumTargetsMatch("dock", 0, 0, false);
     expect !VacuumTargetsMatch("clean_zones", 1, 2, false) && !VacuumTargetsMatch("clean_spot", 0, 0, false);
     expect !VacuumTargetsMatch("dock", 0, 1, false) && !VacuumTargetsMatch("start", 0, 0, true);
+    expect ValidVacuumMove(0, 200) && ValidVacuumMove(-360, 0) && ValidVacuumMove(90, -600);
+    expect !ValidVacuumMove(0, 0) && !ValidVacuumMove(361, 0) && !ValidVacuumMove(0, 601) && !ValidVacuumMove(0, -601);
+    expect ValidVacuumObstacle(3, [1, 3]) && !ValidVacuumObstacle(2, [1, 3]) && !ValidVacuumObstacle(0, [0]);
+    expect VacuumAction("go_to") && VacuumNeedsMap("go_to");
+    expect VacuumTargetsMatch("go_to", 0, 0, true) && !VacuumTargetsMatch("go_to", 0, 0, false) && !VacuumTargetsMatch("go_to", 1, 0, true);
+    expect ValidVacuumGoTo(100, -200, (-5000, -5000, 5000, 5000), 0, -1);
+    expect !ValidVacuumGoTo(9000, 0, (-5000, -5000, 5000, 5000), 0, -1);
+    expect !ValidVacuumGoTo(0, 0, (-5000, -5000, 5000, 5000), 1, -1) && !ValidVacuumGoTo(0, 0, (-5000, -5000, 5000, 5000), 0, 2);
     print "Dafny core executable tests passed\n";
   }
 }

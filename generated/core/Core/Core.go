@@ -538,7 +538,10 @@ func (_static *CompanionStruct_Default___) VacuumNeedsRooms(action _dafny.Sequen
 	return _dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_rooms"))
 }
 func (_static *CompanionStruct_Default___) VacuumNeedsMap(action _dafny.Sequence) bool {
-	return (_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_zones"))) || (_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_spot")))
+	return ((_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_zones"))) || (_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_spot")))) || (_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("go_to")))
+}
+func (_static *CompanionStruct_Default___) VacuumPointAction(action _dafny.Sequence) bool {
+	return (_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_spot"))) || (_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("go_to")))
 }
 func (_static *CompanionStruct_Default___) DistinctInts(xs _dafny.Sequence) bool {
 	return _dafny.Quantifier(_dafny.IntegerRange(_dafny.Zero, _dafny.IntOfUint32((xs).Cardinality())), true, func(_forall_var_0 _dafny.Int) bool {
@@ -566,7 +569,7 @@ func (_static *CompanionStruct_Default___) ValidVacuumCommand(action _dafny.Sequ
 	}
 }
 func (_static *CompanionStruct_Default___) VacuumTargetsMatch(action _dafny.Sequence, rooms _dafny.Int, zones _dafny.Int, point bool) bool {
-	return (((!(_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_zones"))) || (((rooms).Sign() == 0) && (!(point)))) && (!(_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_spot"))) || ((((rooms).Sign() == 0) && ((zones).Sign() == 0)) && (point)))) && (!(!_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_zones"))) || ((zones).Sign() == 0))) && (!(!_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_spot"))) || (!(point)))
+	return (((!(_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_zones"))) || (((rooms).Sign() == 0) && (!(point)))) && (!(Companion_Default___.VacuumPointAction(action)) || ((((rooms).Sign() == 0) && ((zones).Sign() == 0)) && (point)))) && (!(!_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_zones"))) || ((zones).Sign() == 0))) && (!(!(Companion_Default___.VacuumPointAction(action))) || (!(point)))
 }
 func (_static *CompanionStruct_Default___) ZoneInside(zone _dafny.Tuple, bounds _dafny.Tuple) bool {
 	return (((((((*(bounds).IndexInt(0)).(_dafny.Int)).Cmp((*(zone).IndexInt(0)).(_dafny.Int)) <= 0) && ((((*(zone).IndexInt(0)).(_dafny.Int)).Plus(Companion_Default___.MinVacuumZoneSide())).Cmp((*(zone).IndexInt(2)).(_dafny.Int)) <= 0)) && (((*(zone).IndexInt(2)).(_dafny.Int)).Cmp((*(bounds).IndexInt(2)).(_dafny.Int)) <= 0)) && (((*(bounds).IndexInt(1)).(_dafny.Int)).Cmp((*(zone).IndexInt(1)).(_dafny.Int)) <= 0)) && ((((*(zone).IndexInt(1)).(_dafny.Int)).Plus(Companion_Default___.MinVacuumZoneSide())).Cmp((*(zone).IndexInt(3)).(_dafny.Int)) <= 0)) && (((*(zone).IndexInt(3)).(_dafny.Int)).Cmp((*(bounds).IndexInt(3)).(_dafny.Int)) <= 0)
@@ -580,6 +583,15 @@ func (_static *CompanionStruct_Default___) ValidVacuumZones(zones _dafny.Sequenc
 }
 func (_static *CompanionStruct_Default___) ValidVacuumSpot(x _dafny.Int, y _dafny.Int, bounds _dafny.Tuple, repeats _dafny.Int, suction _dafny.Int) bool {
 	return (((((*(bounds).IndexInt(0)).(_dafny.Int)).Cmp(x) <= 0) && ((x).Cmp((*(bounds).IndexInt(2)).(_dafny.Int)) <= 0)) && ((((*(bounds).IndexInt(1)).(_dafny.Int)).Cmp(y) <= 0) && ((y).Cmp((*(bounds).IndexInt(3)).(_dafny.Int)) <= 0))) && (Companion_Default___.ValidPassesAndSuction(repeats, suction))
+}
+func (_static *CompanionStruct_Default___) ValidVacuumGoTo(x _dafny.Int, y _dafny.Int, bounds _dafny.Tuple, repeats _dafny.Int, suction _dafny.Int) bool {
+	return ((((((*(bounds).IndexInt(0)).(_dafny.Int)).Cmp(x) <= 0) && ((x).Cmp((*(bounds).IndexInt(2)).(_dafny.Int)) <= 0)) && ((((*(bounds).IndexInt(1)).(_dafny.Int)).Cmp(y) <= 0) && ((y).Cmp((*(bounds).IndexInt(3)).(_dafny.Int)) <= 0))) && ((repeats).Sign() == 0)) && ((suction).Cmp(_dafny.IntOfInt64(-1)) == 0)
+}
+func (_static *CompanionStruct_Default___) ValidVacuumMove(rotation _dafny.Int, velocity _dafny.Int) bool {
+	return ((((_dafny.IntOfInt64(-360)).Cmp(rotation) <= 0) && ((rotation).Cmp(_dafny.IntOfInt64(360)) <= 0)) && (((_dafny.IntOfInt64(-600)).Cmp(velocity) <= 0) && ((velocity).Cmp(_dafny.IntOfInt64(600)) <= 0))) && (((rotation).Sign() != 0) || ((velocity).Sign() != 0))
+}
+func (_static *CompanionStruct_Default___) ValidVacuumObstacle(index _dafny.Int, known _dafny.Sequence) bool {
+	return ((index).Sign() == 1) && (_dafny.Companion_Sequence_.Contains(known, index))
 }
 func (_static *CompanionStruct_Default___) VacuumSettingRange(name _dafny.Sequence) SettingRange {
 	var _source0 _dafny.Sequence = name
@@ -697,7 +709,7 @@ func (_static *CompanionStruct_Default___) VacuumSimpleActions() _dafny.Sequence
 	return _dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("start"), _dafny.UnicodeSeqOfUtf8Bytes("pause"), _dafny.UnicodeSeqOfUtf8Bytes("stop"), _dafny.UnicodeSeqOfUtf8Bytes("dock"), _dafny.UnicodeSeqOfUtf8Bytes("locate"), _dafny.UnicodeSeqOfUtf8Bytes("empty_dustbin"), _dafny.UnicodeSeqOfUtf8Bytes("wash_mops"), _dafny.UnicodeSeqOfUtf8Bytes("dry_mops"), _dafny.UnicodeSeqOfUtf8Bytes("stop_drying"))
 }
 func (_static *CompanionStruct_Default___) VacuumActions() _dafny.Sequence {
-	return _dafny.Companion_Sequence_.Concatenate(Companion_Default___.VacuumSimpleActions(), _dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("clean_rooms"), _dafny.UnicodeSeqOfUtf8Bytes("clean_zones"), _dafny.UnicodeSeqOfUtf8Bytes("clean_spot")))
+	return _dafny.Companion_Sequence_.Concatenate(Companion_Default___.VacuumSimpleActions(), _dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("clean_rooms"), _dafny.UnicodeSeqOfUtf8Bytes("clean_zones"), _dafny.UnicodeSeqOfUtf8Bytes("clean_spot"), _dafny.UnicodeSeqOfUtf8Bytes("go_to")))
 }
 func (_static *CompanionStruct_Default___) MaxVacuumRooms() _dafny.Int {
 	return _dafny.IntOfInt64(32)

@@ -843,7 +843,7 @@ module Core {
   // vacuum broker; everything else the vendor library can do stays unreachable.
   const VacuumSimpleActions: seq<string> := ["start", "pause", "stop", "dock", "locate",
     "empty_dustbin", "wash_mops", "dry_mops", "stop_drying"]
-  const VacuumActions: seq<string> := VacuumSimpleActions + ["clean_rooms", "clean_zones", "clean_spot"]
+  const VacuumActions: seq<string> := VacuumSimpleActions + ["clean_rooms", "clean_zones", "clean_spot", "go_to"]
   const MaxVacuumRooms: nat := 32
   const MaxVacuumZones: nat := 5
   // Smallest zone side, in map millimetres; smaller zones are mis-aimed points.
@@ -862,9 +862,13 @@ module Core {
   }
 
   function VacuumNeedsMap(action: string): bool
-    ensures VacuumNeedsMap(action) <==> action == "clean_zones" || action == "clean_spot"
+    ensures VacuumNeedsMap(action) <==> action == "clean_zones" || action == "clean_spot" || action == "go_to"
   {
-    action == "clean_zones" || action == "clean_spot"
+    action == "clean_zones" || action == "clean_spot" || action == "go_to"
+  }
+
+  predicate VacuumPointAction(action: string) {
+    action == "clean_spot" || action == "go_to"
   }
 
   predicate DistinctInts(xs: seq<int>) {
@@ -900,9 +904,9 @@ module Core {
     ensures VacuumTargetsMatch(action, rooms, zones, point) && VacuumNeedsMap(action) ==> rooms == 0
   {
     (action == "clean_zones" ==> rooms == 0 && !point) &&
-    (action == "clean_spot" ==> rooms == 0 && zones == 0 && point) &&
+    (VacuumPointAction(action) ==> rooms == 0 && zones == 0 && point) &&
     (action != "clean_zones" ==> zones == 0) &&
-    (action != "clean_spot" ==> !point)
+    (!VacuumPointAction(action) ==> !point)
   }
 
   // A zone is (x0, y0, x1, y1); bounds is the map's extent in the same units.
@@ -926,6 +930,40 @@ module Core {
   {
     bounds.0 <= x <= bounds.2 && bounds.1 <= y <= bounds.3 && ValidPassesAndSuction(repeats, suction)
   }
+
+  // Driving to a point carries no passes or suction; the point must be on the saved map.
+  function ValidVacuumGoTo(x: int, y: int, bounds: (int, int, int, int), repeats: int, suction: int): bool
+    ensures ValidVacuumGoTo(x, y, bounds, repeats, suction) ==>
+      bounds.0 <= x <= bounds.2 && bounds.1 <= y <= bounds.3 && repeats == 0 && suction == -1
+  {
+    bounds.0 <= x <= bounds.2 && bounds.1 <= y <= bounds.3 && repeats == 0 && suction == -1
+  }
+
+  // One remote-control step: turn in degrees and speed within the vendor's
+  // limits. A step that neither turns nor moves is meaningless and refused.
+  function ValidVacuumMove(rotation: int, velocity: int): bool
+    ensures ValidVacuumMove(rotation, velocity) ==>
+      -360 <= rotation <= 360 && -600 <= velocity <= 600 && (rotation != 0 || velocity != 0)
+  {
+    -360 <= rotation <= 360 && -600 <= velocity <= 600 && (rotation != 0 || velocity != 0)
+  }
+
+  // Obstacle photos are fetched only for obstacles the vacuum itself reported.
+  function ValidVacuumObstacle(index: int, known: seq<int>): bool
+    ensures ValidVacuumObstacle(index, known) ==> index > 0 && index in known
+  {
+    index > 0 && index in known
+  }
+
+  lemma VacuumGoToNeverLeavesMap(x: int, y: int, bounds: (int, int, int, int), repeats: int, suction: int)
+    requires x < bounds.0 || x > bounds.2 || y < bounds.1 || y > bounds.3
+    ensures !ValidVacuumGoTo(x, y, bounds, repeats, suction)
+  {}
+
+  lemma VacuumUnknownObstacleRejected(index: int, known: seq<int>)
+    requires index !in known
+    ensures !ValidVacuumObstacle(index, known)
+  {}
 
   // Settings the assistant may change, each with its allowed integer range.
   // Enumerated values are indexes the adapter maps from names.

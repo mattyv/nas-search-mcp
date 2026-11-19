@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"image"
+	"image/jpeg"
 	"image/png"
 	"net"
 	"net/http"
@@ -413,5 +414,111 @@ func TestSlowBrokerReportsBusyQuickly(t *testing.T) {
 	_, err := client.Status(context.Background())
 	if !errors.Is(err, ErrBusy) || time.Since(started) > 2*time.Second {
 		t.Fatalf("err=%v after %s", err, time.Since(started))
+	}
+}
+
+func TestGoToAimedInsideMap(t *testing.T) {
+	var got commandRequest
+	commands := 0
+	socket := broker(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rooms":
+			w.Write([]byte(mapRooms))
+		case "/command":
+			commands++
+			json.NewDecoder(r.Body).Decode(&got)
+			w.Write([]byte(`{"accepted":true,"message":"Driving there"}`))
+		}
+	})
+	client := newClient(t, socket)
+	if _, err := client.Command(context.Background(), CommandInput{Action: "go_to", Point: &[2]int{1500, 1200}}); err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != "go_to" || got.Point == nil || got.Repeats != 0 || got.Suction != -1 {
+		t.Fatalf("got=%#v", got)
+	}
+	for _, in := range []CommandInput{
+		{Action: "go_to"},
+		{Action: "go_to", Point: &[2]int{9000, 0}},
+		{Action: "go_to", Point: &[2]int{0, 0}, Repeats: 2},
+		{Action: "go_to", Point: &[2]int{0, 0}, Suction: "turbo"},
+	} {
+		if _, err := client.Command(context.Background(), in); !errors.Is(err, ErrInput) {
+			t.Errorf("%#v: err=%v", in, err)
+		}
+	}
+	if commands != 1 {
+		t.Fatalf("%d commands reached the vacuum", commands)
+	}
+}
+
+func TestMoveStepChecked(t *testing.T) {
+	var got moveRequest
+	moves := 0
+	socket := broker(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/move" {
+			t.Errorf("path %s", r.URL.Path)
+		}
+		moves++
+		json.NewDecoder(r.Body).Decode(&got)
+		w.Write([]byte(`{"accepted":true,"message":"Moved"}`))
+	})
+	client := newClient(t, socket)
+	if _, err := client.Move(context.Background(), MoveInput{Turn: -90, Speed: 0}); err != nil || got.Rotation != -90 || got.Velocity != 0 {
+		t.Fatalf("got=%#v err=%v", got, err)
+	}
+	for _, in := range []MoveInput{{}, {Turn: 400}, {Speed: 700}} {
+		if _, err := client.Move(context.Background(), in); !errors.Is(err, ErrInput) {
+			t.Errorf("%#v: err=%v", in, err)
+		}
+	}
+	if moves != 1 {
+		t.Fatalf("%d moves reached the vacuum", moves)
+	}
+}
+
+func tinyJPEG(t *testing.T, w, h int) string {
+	t.Helper()
+	var out bytes.Buffer
+	if err := jpeg.Encode(&out, image.NewRGBA(image.Rect(0, 0, w, h)), nil); err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(out.Bytes())
+}
+
+func TestObstaclesAndPhotos(t *testing.T) {
+	var asked obstacleRequest
+	photos := 0
+	data := tinyJPEG(t, 5, 4)
+	socket := broker(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/obstacles":
+			w.Write([]byte(`{"obstacles":[{"index":2,"type":"sock","x":120,"y":-40,"confidence":87,"has_photo":true},{"index":4,"type":"wire","x":0,"y":0,"confidence":60,"has_photo":false}]}`))
+		case "/obstacle_photo":
+			photos++
+			json.NewDecoder(r.Body).Decode(&asked)
+			w.Write([]byte(`{"mime_type":"image/jpeg","data":"` + data + `"}`))
+		}
+	})
+	client := newClient(t, socket)
+	list, err := client.Obstacles(context.Background())
+	if err != nil || len(list.Obstacles) != 2 || list.Obstacles[0].Type != "sock" || !list.Obstacles[0].HasPhoto {
+		t.Fatalf("list=%#v err=%v", list, err)
+	}
+	photo, err := client.ObstaclePhoto(context.Background(), ObstaclePhotoInput{Index: 2})
+	if err != nil || photo.MIMEType != "image/jpeg" || asked.Index != 2 {
+		t.Fatalf("photo=%#v asked=%#v err=%v", photo, asked, err)
+	}
+	config, err := jpeg.DecodeConfig(bytes.NewReader(photo.Data))
+	if err != nil || config.Width != 5 {
+		t.Fatalf("config=%#v err=%v", config, err)
+	}
+	for _, index := range []int{4, 9} {
+		if _, err := client.ObstaclePhoto(context.Background(), ObstaclePhotoInput{Index: index}); !errors.Is(err, ErrInput) {
+			t.Errorf("index %d: err=%v", index, err)
+		}
+	}
+	if photos != 1 {
+		t.Fatalf("%d photo requests reached the vacuum", photos)
 	}
 }

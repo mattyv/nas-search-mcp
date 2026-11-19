@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"image"
+	"image/jpeg"
 	"image/png"
 	"net"
 	"net/http"
@@ -91,6 +92,18 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 			w.Write([]byte(`{"consumables":{"filter":64},"station":{"dust_bag":"installed"},"settings":{"volume":"40"}}`))
 		case "/history":
 			w.Write([]byte(`{"entries":[{"time":1795000000,"minutes":30,"area_m2":40}]}`))
+		case "/obstacles":
+			w.Write([]byte(`{"obstacles":[{"index":2,"type":"sock","x":10,"y":20,"confidence":90,"has_photo":true}]}`))
+		case "/obstacle_photo":
+			var picture bytes.Buffer
+			jpeg.Encode(&picture, image.NewRGBA(image.Rect(0, 0, 3, 2)), nil)
+			w.Write([]byte(`{"mime_type":"image/jpeg","data":"` + base64.StdEncoding.EncodeToString(picture.Bytes()) + `"}`))
+		case "/move":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			body["path"] = r.URL.Path
+			commands = append(commands, body)
+			w.Write([]byte(`{"accepted":true,"message":"Moved"}`))
 		case "/map":
 			var picture bytes.Buffer
 			png.Encode(&picture, image.NewRGBA(image.Rect(0, 0, 3, 2)))
@@ -104,9 +117,9 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 
 	session, ctx := vacuumSession(t)
 	found := vacuumTools(t, session, ctx)
-	readOnly := []string{"vacuum_status", "vacuum_rooms", "vacuum_details", "vacuum_history", "vacuum_map"}
-	acting := []string{"vacuum_control", "vacuum_settings"}
-	if len(found) != len(readOnly)+len(acting) {
+	readOnly := []string{"vacuum_status", "vacuum_rooms", "vacuum_details", "vacuum_history", "vacuum_map", "vacuum_obstacles"}
+	acting := []string{"vacuum_control", "vacuum_settings", "vacuum_drive"}
+	if len(found) != len(readOnly)+len(acting)+1 {
 		t.Fatalf("tools=%v", found)
 	}
 	for _, name := range readOnly {
@@ -125,6 +138,16 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 		if err != nil || result.IsError || len(result.Content) == 0 {
 			t.Fatalf("%s: result=%#v err=%v", name, result, err)
 		}
+	}
+	if found["vacuum_obstacle_photo"] == nil || !found["vacuum_obstacle_photo"].Annotations.ReadOnlyHint {
+		t.Fatal("vacuum_obstacle_photo missing or not read-only")
+	}
+	shot, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_obstacle_photo", Arguments: map[string]any{"index": 2}})
+	if err != nil || shot.IsError {
+		t.Fatalf("shot=%#v err=%v", shot, err)
+	}
+	if _, ok := shot.Content[0].(*mcp.ImageContent); !ok {
+		t.Fatalf("obstacle photo content=%#v", shot.Content)
 	}
 	picture, _ := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_map", Arguments: map[string]any{}})
 	if _, ok := picture.Content[0].(*mcp.ImageContent); !ok {
@@ -151,6 +174,10 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 	if err != nil || !bad.IsError || len(commands) != 2 {
 		t.Fatalf("unknown setting reached vacuum: bad=%#v err=%v", bad, err)
 	}
+	moved, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_drive", Arguments: map[string]any{"turn": 90}})
+	if err != nil || moved.IsError || len(commands) != 3 || commands[2]["path"] != "/move" {
+		t.Fatalf("moved=%#v commands=%v err=%v", moved, commands, err)
+	}
 }
 
 func TestVacuumConfigurationNeedsSwitchAndAbsoluteSocket(t *testing.T) {
@@ -167,5 +194,16 @@ func TestVacuumConfigurationNeedsSwitchAndAbsoluteSocket(t *testing.T) {
 	t.Setenv("NAS_VACUUM_SOCKET", "/data/vacuum-ipc/vacuum.sock")
 	if client, err := configuredVacuum(); client != nil || err != nil {
 		t.Fatal("disabled vacuum must not register tools")
+	}
+}
+
+func TestVacuumCameraSwitchHidesObstacleTools(t *testing.T) {
+	t.Setenv("NAS_VACUUM_ENABLED", "true")
+	t.Setenv("NAS_VACUUM_SOCKET", "/tmp/vacuum-test-unused/vacuum.sock")
+	t.Setenv("NAS_VACUUM_CAMERA", "false")
+	session, ctx := vacuumSession(t)
+	found := vacuumTools(t, session, ctx)
+	if found["vacuum_obstacles"] != nil || found["vacuum_obstacle_photo"] != nil || found["vacuum_status"] == nil {
+		t.Fatalf("camera switch ignored: %v", found)
 	}
 }

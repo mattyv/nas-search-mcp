@@ -72,3 +72,18 @@ func ValidVacuumHistoryLimit(limit int) bool {
 func VacuumTargetsMatch(action string, rooms, zones int, point bool) bool {
 	return core.Companion_Default___.VacuumTargetsMatch(dafny.UnicodeSeqOfUtf8Bytes(action), dafny.IntOf(rooms), dafny.IntOf(zones), point)
 }
+
+// ValidVacuumGoTo checks a drive-to point against the map bounds.
+func ValidVacuumGoTo(x, y int, bounds [4]int, repeats, suction int) bool {
+	return core.Companion_Default___.ValidVacuumGoTo(dafny.IntOf(x), dafny.IntOf(y), box(bounds), dafny.IntOf(repeats), dafny.IntOf(suction))
+}
+
+// ValidVacuumMove checks one remote-control step against the vendor limits.
+func ValidVacuumMove(rotation, velocity int) bool {
+	return core.Companion_Default___.ValidVacuumMove(dafny.IntOf(rotation), dafny.IntOf(velocity))
+}
+
+// ValidVacuumObstacle checks that a photo request names a reported obstacle.
+func ValidVacuumObstacle(index int, known []int) bool {
+	return core.Companion_Default___.ValidVacuumObstacle(dafny.IntOf(index), intSeq(known))
+}
