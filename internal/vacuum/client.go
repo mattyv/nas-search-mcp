@@ -296,6 +296,39 @@ type roomOptionRequest struct {
 	Value int    `json:"value"`
 }
 
+// MapElements maps each editable kind (no_go_zones, virtual_walls, ...) to its
+// current items: [x0, y0, x1, y1] rectangles or lines, or [x, y] points.
+type MapElements map[string][][]int
+
+type MapEditInput struct {
+	Element string  `json:"element" jsonschema:"no_go_zones, no_mop_zones, ramps, low_lying_areas, carpets (rectangles [x0, y0, x1, y1]); virtual_walls, virtual_thresholds, passable_thresholds, impassable_thresholds, curtains (lines [x0, y0, x1, y1]); predefined_points (points [x, y]); router_position (one point [x, y])"`
+	Items   [][]int `json:"items" jsonschema:"the complete new list for that kind, replacing the current one; read vacuum_map_elements first and include the items to keep; empty removes them all"`
+}
+
+type mapEditRequest struct {
+	Element string  `json:"element"`
+	Items   [][]int `json:"items"`
+}
+
+type PatrolInput struct {
+	Points [][2]int `json:"points" jsonschema:"1-20 points [x, y] inside the map, visited in order"`
+}
+
+type pathRequest struct {
+	Points [][2]int `json:"points"`
+}
+
+type IgnoreObstacleInput struct {
+	Index  int  `json:"index" jsonschema:"obstacle index from vacuum_obstacles"`
+	Ignore bool `json:"ignore" jsonschema:"true to stop avoiding it; false to avoid it again"`
+}
+
+type ignoreRequest struct {
+	X      int  `json:"x"`
+	Y      int  `json:"y"`
+	Ignore bool `json:"ignore"`
+}
+
 type commandRequest struct {
 	Action  string   `json:"action"`
 	Rooms   []int    `json:"rooms"`
@@ -1005,6 +1038,98 @@ func (c *Client) SetRoomOption(ctx context.Context, in SetRoomOptionInput) (Comm
 	return c.accepted(ctx, "/set_room_option", roomOptionRequest{Room: in.Room, Name: in.Name, Value: value})
 }
 
+var elementName = regexp.MustCompile(`^[a-z_]{1,40}$`)
+
+func (c *Client) MapElements(ctx context.Context) (MapElements, error) {
+	out := MapElements{}
+	if err := c.post(ctx, "/map_elements", struct{}{}, &out); err != nil {
+		return nil, err
+	}
+	if len(out) > 20 {
+		return nil, errReply
+	}
+	for name, items := range out {
+		if !elementName.MatchString(name) || len(items) > 200 {
+			return nil, errReply
+		}
+		for _, item := range items {
+			if len(item) != 2 && len(item) != 4 {
+				return nil, errReply
+			}
+		}
+	}
+	return out, nil
+}
+
+// EditMap replaces one kind of map element after the verified core checks
+// every item's shape and that it lies inside the saved map.
+func (c *Client) EditMap(ctx context.Context, in MapEditInput) (CommandResult, error) {
+	if len(in.Items) > 30 {
+		return CommandResult{}, ErrInput
+	}
+	items := make([][4]int, 0, len(in.Items))
+	for _, item := range in.Items {
+		switch len(item) {
+		case 2:
+			items = append(items, [4]int{item[0], item[1], item[0], item[1]})
+		case 4:
+			items = append(items, [4]int{item[0], item[1], item[2], item[3]})
+		default:
+			return CommandResult{}, ErrInput
+		}
+	}
+	rooms, err := c.Rooms(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if rooms.Bounds == nil {
+		return CommandResult{}, ErrNoMap
+	}
+	if !policy.ValidVacuumMapEdit(in.Element, items, *rooms.Bounds) {
+		return CommandResult{}, ErrInput
+	}
+	request := mapEditRequest{Element: in.Element, Items: in.Items}
+	if request.Items == nil {
+		request.Items = [][]int{}
+	}
+	return c.accepted(ctx, "/edit_map", request)
+}
+
+// Patrol sends the vacuum along points inside the map (camera models).
+func (c *Client) Patrol(ctx context.Context, in PatrolInput) (CommandResult, error) {
+	rooms, err := c.Rooms(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if rooms.Bounds == nil {
+		return CommandResult{}, ErrNoMap
+	}
+	if !policy.ValidVacuumPath(in.Points, *rooms.Bounds) {
+		return CommandResult{}, ErrInput
+	}
+	return c.accepted(ctx, "/patrol", pathRequest{Points: in.Points})
+}
+
+// IgnoreObstacle stops (or resumes) avoiding one reported obstacle.
+func (c *Client) IgnoreObstacle(ctx context.Context, in IgnoreObstacleInput) (CommandResult, error) {
+	list, err := c.Obstacles(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	known := make([]int, 0, len(list.Obstacles))
+	var target *Obstacle
+	for i, o := range list.Obstacles {
+		known = append(known, o.Index)
+		if o.Index == in.Index {
+			target = &list.Obstacles[i]
+		}
+	}
+	if !policy.ValidVacuumObstacle(in.Index, known) || target == nil {
+		return CommandResult{}, ErrInput
+	}
+	return c.accepted(ctx, "/ignore_obstacle", ignoreRequest{X: target.X, Y: target.Y, Ignore: in.Ignore})
+}
+
 func validBox(box [4]int) bool {
 	const limit = 1000000
 	return box[0] < box[2] && box[1] < box[3] && box[0] > -limit && box[1] > -limit && box[2] < limit && box[3] < limit
@@ -1031,7 +1156,7 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 		return ErrInput
 	}
 	limit := c.quick
-	if path == "/map" || path == "/command" || path == "/setting" || path == "/move" || path == "/obstacle_photo" || path == "/shortcut" || path == "/set_option" || path == "/press" || path == "/manage_map" || path == "/manage_rooms" || path == "/set_room_option" {
+	if path == "/map" || path == "/command" || path == "/setting" || path == "/move" || path == "/obstacle_photo" || path == "/shortcut" || path == "/set_option" || path == "/press" || path == "/manage_map" || path == "/manage_rooms" || path == "/set_room_option" || path == "/edit_map" || path == "/patrol" || path == "/ignore_obstacle" {
 		limit = c.slow
 	}
 	parent := ctx

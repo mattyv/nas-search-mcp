@@ -97,3 +97,13 @@ func TestVacuumMapAndRoomPolicyBridgesCore(t *testing.T) {
 		t.Fatal("room option mismatch")
 	}
 }
+
+func TestVacuumMapEditPolicyBridgesCore(t *testing.T) {
+	bounds := [4]int{-50, -50, 50, 50}
+	if !ValidVacuumMapEdit("no_go_zones", [][4]int{{0, 0, 10, 10}}, bounds) || ValidVacuumMapEdit("no_go_zones", [][4]int{{0, 0, 90, 10}}, bounds) {
+		t.Fatal("map edit mismatch")
+	}
+	if !ValidVacuumPath([][2]int{{0, 0}}, bounds) || ValidVacuumPath(nil, bounds) {
+		t.Fatal("path mismatch")
+	}
+}

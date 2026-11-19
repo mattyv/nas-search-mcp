@@ -81,7 +81,7 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 		case "/status":
 			w.Write([]byte(`{"name":"Robo","connected":true,"state":"charging","battery":87,"docked":true,"error":"","suction":"standard","current_room":"","cleaned_area_m2":0,"cleaning_minutes":0}`))
 		case "/rooms":
-			w.Write([]byte(`{"rooms":[{"id":3,"name":"Kitchen"}]}`))
+			w.Write([]byte(`{"rooms":[{"id":3,"name":"Kitchen"}],"bounds":[-5000,-5000,5000,5000]}`))
 		case "/command", "/setting":
 			var body map[string]any
 			json.NewDecoder(r.Body).Decode(&body)
@@ -124,6 +124,14 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 			body["path"] = r.URL.Path
 			commands = append(commands, body)
 			w.Write([]byte(`{"accepted":true,"message":"Done"}`))
+		case "/map_elements":
+			w.Write([]byte(`{"no_go_zones":[[0,0,500,500]]}`))
+		case "/edit_map", "/patrol", "/ignore_obstacle":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			body["path"] = r.URL.Path
+			commands = append(commands, body)
+			w.Write([]byte(`{"accepted":true,"message":"Done"}`))
 		case "/buttons":
 			w.Write([]byte(`{"buttons":[{"name":"reset_filter","kind":"reset"}]}`))
 		case "/move":
@@ -145,12 +153,15 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 
 	session, ctx := vacuumSession(t)
 	found := vacuumTools(t, session, ctx)
-	readOnly := []string{"vacuum_status", "vacuum_rooms", "vacuum_details", "vacuum_history", "vacuum_map", "vacuum_obstacles", "vacuum_shortcuts", "vacuum_options", "vacuum_buttons", "vacuum_maps"}
-	acting := []string{"vacuum_control", "vacuum_settings", "vacuum_drive", "vacuum_shortcut", "vacuum_set_option", "vacuum_press", "vacuum_manage_map", "vacuum_manage_rooms", "vacuum_set_room_option"}
+	readOnly := []string{"vacuum_status", "vacuum_rooms", "vacuum_details", "vacuum_history", "vacuum_map", "vacuum_obstacles", "vacuum_shortcuts", "vacuum_options", "vacuum_buttons", "vacuum_maps", "vacuum_map_elements"}
+	acting := []string{"vacuum_control", "vacuum_settings", "vacuum_drive", "vacuum_shortcut", "vacuum_set_option", "vacuum_press", "vacuum_manage_map", "vacuum_manage_rooms", "vacuum_set_room_option", "vacuum_edit_map", "vacuum_patrol"}
 	if found["vacuum_room_options"] == nil || !found["vacuum_room_options"].Annotations.ReadOnlyHint {
 		t.Fatal("vacuum_room_options missing or not read-only")
 	}
-	if len(found) != len(readOnly)+len(acting)+2 {
+	if found["vacuum_ignore_obstacle"] == nil || found["vacuum_ignore_obstacle"].Annotations.ReadOnlyHint {
+		t.Fatal("vacuum_ignore_obstacle missing or marked read-only")
+	}
+	if len(found) != len(readOnly)+len(acting)+3 {
 		t.Fatalf("tools=%v", found)
 	}
 	for _, name := range readOnly {
@@ -213,6 +224,11 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 	if err != nil || ran.IsError || len(commands) != 4 || commands[3]["path"] != "/shortcut" {
 		t.Fatalf("ran=%#v commands=%v err=%v", ran, commands, err)
 	}
+	edited, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_edit_map", Arguments: map[string]any{"element": "no_go_zones", "items": [][]int{{0, 0, 1000, 1000}}}})
+	if err != nil || edited.IsError {
+		t.Fatalf("edited=%#v err=%v", edited, err)
+	}
+	commands = commands[:len(commands)-1]
 	renamed, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_manage_rooms", Arguments: map[string]any{"action": "rename", "rooms": []int{3}, "name": "Galley"}})
 	if err != nil || renamed.IsError {
 		t.Fatalf("renamed=%#v err=%v", renamed, err)
@@ -249,5 +265,15 @@ func TestVacuumCameraSwitchHidesObstacleTools(t *testing.T) {
 	found := vacuumTools(t, session, ctx)
 	if found["vacuum_obstacles"] != nil || found["vacuum_obstacle_photo"] != nil || found["vacuum_status"] == nil {
 		t.Fatalf("camera switch ignored: %v", found)
+	}
+}
+
+func TestVacuumCameraSwitchAlsoHidesObstacleIgnore(t *testing.T) {
+	t.Setenv("NAS_VACUUM_ENABLED", "true")
+	t.Setenv("NAS_VACUUM_SOCKET", "/tmp/vacuum-test-unused/vacuum.sock")
+	t.Setenv("NAS_VACUUM_CAMERA", "false")
+	session, ctx := vacuumSession(t)
+	if found := vacuumTools(t, session, ctx); found["vacuum_ignore_obstacle"] != nil {
+		t.Fatal("obstacle ignore listed with the camera switched off")
 	}
 }

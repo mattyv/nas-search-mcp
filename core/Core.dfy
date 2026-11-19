@@ -1066,6 +1066,51 @@ module Core {
     ensures !ValidVacuumMapAction(action, mapId, known, nameLength, backup, backups)
   {}
 
+  // Map editing. Each edit replaces one kind of element on the saved map with
+  // a new list, every item inside the map: rectangles with positive size,
+  // lines with distinct ends, or points (x, y, x, y). The router position is
+  // exactly one point. At most 30 items per kind.
+  const MapRectElements: seq<string> := ["no_go_zones", "no_mop_zones", "ramps", "low_lying_areas", "carpets"]
+  const MapLineElements: seq<string> := ["virtual_walls", "virtual_thresholds", "passable_thresholds",
+                                         "impassable_thresholds", "curtains"]
+  const MapPointElements: seq<string> := ["predefined_points", "router_position"]
+
+  predicate ItemInside(item: (int, int, int, int), bounds: (int, int, int, int)) {
+    bounds.0 <= item.0 <= bounds.2 && bounds.0 <= item.2 <= bounds.2 &&
+    bounds.1 <= item.1 <= bounds.3 && bounds.1 <= item.3 <= bounds.3
+  }
+
+  predicate ItemShape(element: string, item: (int, int, int, int)) {
+    if element in MapRectElements then item.0 < item.2 && item.1 < item.3
+    else if element in MapLineElements then item.0 != item.2 || item.1 != item.3
+    else item.0 == item.2 && item.1 == item.3
+  }
+
+  function ValidVacuumMapEdit(element: string, items: seq<(int, int, int, int)>, bounds: (int, int, int, int)): bool
+    ensures ValidVacuumMapEdit(element, items, bounds) ==>
+      element in MapRectElements + MapLineElements + MapPointElements &&
+      forall item <- items :: ItemInside(item, bounds)
+  {
+    element in MapRectElements + MapLineElements + MapPointElements &&
+    |items| <= 30 && (element == "router_position" ==> |items| == 1) &&
+    forall item <- items :: ItemInside(item, bounds) && ItemShape(element, item)
+  }
+
+  // A patrol path: 1-20 points, all inside the map.
+  function ValidVacuumPath(points: seq<(int, int)>, bounds: (int, int, int, int)): bool
+    ensures ValidVacuumPath(points, bounds) ==>
+      forall p <- points :: bounds.0 <= p.0 <= bounds.2 && bounds.1 <= p.1 <= bounds.3
+  {
+    1 <= |points| <= 20 &&
+    forall p <- points :: bounds.0 <= p.0 <= bounds.2 && bounds.1 <= p.1 <= bounds.3
+  }
+
+  lemma VacuumMapEditNeverLeavesMap(element: string, items: seq<(int, int, int, int)>, bounds: (int, int, int, int),
+                                    item: (int, int, int, int))
+    requires item in items && !ItemInside(item, bounds)
+    ensures !ValidVacuumMapEdit(element, items, bounds)
+  {}
+
   // App shortcuts: start, rename, or delete only a shortcut the vacuum listed.
   // Renames carry a 1-32 character name; other actions carry none.
   function ValidVacuumShortcut(action: string, id: int, known: seq<int>, nameLength: int): bool

@@ -121,6 +121,33 @@ ROOM_CHOICES = {
 READ_FROM = {'camera_light_brightness_auto': 'camera_light_brightness'}
 
 
+# Editable map elements and where the library keeps each on the current map.
+MAP_ELEMENT_FIELDS = {
+    'no_go_zones': 'no_go_areas', 'no_mop_zones': 'no_mopping_areas', 'virtual_walls': 'virtual_walls',
+    'virtual_thresholds': 'virtual_thresholds', 'passable_thresholds': 'passable_thresholds',
+    'impassable_thresholds': 'impassable_thresholds', 'ramps': 'ramps', 'curtains': 'curtains',
+    'low_lying_areas': 'low_lying_areas', 'carpets': 'carpets', 'deleted_carpets': 'deleted_carpets',
+    'predefined_points': 'predefined_points', 'router_position': 'router_position',
+}
+
+
+# Deleted carpets are only read, to be sent back unchanged with carpet edits.
+EDITABLE_ELEMENTS = set(MAP_ELEMENT_FIELDS) - {'deleted_carpets'}
+
+
+def _shape(item):
+    """Library area -> [x0, y0, x1, y1] box; line -> [x0, y0, x1, y1]; point -> [x, y]."""
+    if hasattr(item, 'x3'):
+        xs = [item.x0, item.x1, item.x2, item.x3]
+        ys = [item.y0, item.y1, item.y2, item.y3]
+        return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
+    if hasattr(item, 'x1'):
+        return [int(item.x0), int(item.y0), int(item.x1), int(item.y1)]
+    if hasattr(item, 'x'):
+        return [int(item.x), int(item.y)]
+    return None
+
+
 def _on(value):
     return 'on' if value else 'off'
 
@@ -697,6 +724,76 @@ class Broker:
         self._run(lambda: setter(body['room'], value))
         return {'accepted': True, 'message': _text(f'Room {entry["name"].replace("_", " ")} set', 512)}
 
+    # --- Map editing ---
+
+    def _current_map(self, device):
+        current = getattr(device.status, 'current_map', None)
+        if current is None:
+            raise Refused('the vacuum has no saved map yet')
+        return current
+
+    def _items(self, current, element):
+        stored = getattr(current, MAP_ELEMENT_FIELDS[element], None)
+        if stored is None:
+            return []
+        if isinstance(stored, dict):
+            stored = list(stored.values())
+        elif not isinstance(stored, (list, tuple)):
+            stored = [stored]
+        return [shape for shape in (_shape(item) for item in stored) if shape][:200]
+
+    def map_elements(self):
+        current = self._current_map(self._device())
+        return {element: self._items(current, element) for element in MAP_ELEMENT_FIELDS}
+
+    def edit_map(self, body):
+        if not isinstance(body, dict) or set(body) != {'element', 'items'} or body['element'] not in EDITABLE_ELEMENTS \
+                or not isinstance(body['items'], list) or len(body['items']) > 30:
+            raise BadRequest('edit_map needs a known element and items')
+        element, items = body['element'], body['items']
+        size = 2 if element in ('predefined_points', 'router_position') else 4
+        if not all(isinstance(i, list) and len(i) == size and all(_is_int(c) for c in i) for i in items) \
+                or (element == 'router_position' and len(items) != 1):
+            raise BadRequest('items have the wrong shape for this element')
+        device = self._device()
+        current = self._current_map(device)
+        # The library clears any kind that is left out of a combined call, so
+        # the current items of the other kinds are always sent back unchanged.
+        now = lambda kind: items if kind == element else self._items(current, kind)
+        calls = {
+            'no_go_zones': lambda: device.set_restricted_zone(now('virtual_walls'), now('no_go_zones'), now('no_mop_zones')),
+            'no_mop_zones': lambda: device.set_restricted_zone(now('virtual_walls'), now('no_go_zones'), now('no_mop_zones')),
+            'virtual_walls': lambda: device.set_restricted_zone(now('virtual_walls'), now('no_go_zones'), now('no_mop_zones')),
+            'passable_thresholds': lambda: device.set_threshold(now('passable_thresholds'), now('impassable_thresholds'), now('ramps')),
+            'impassable_thresholds': lambda: device.set_threshold(now('passable_thresholds'), now('impassable_thresholds'), now('ramps')),
+            'ramps': lambda: device.set_threshold(now('passable_thresholds'), now('impassable_thresholds'), now('ramps')),
+            'virtual_thresholds': lambda: device.set_virtual_threshold(items),
+            'curtains': lambda: device.set_curtain(items),
+            'low_lying_areas': lambda: device.set_low_lying_area(items),
+            'carpets': lambda: device.set_carpet_area(items, self._items(current, 'deleted_carpets')),
+            'predefined_points': lambda: device.set_predefined_points(items),
+            'router_position': lambda: device.set_router_position(items[0][0], items[0][1]),
+        }
+        self._run(calls[element])
+        return {'accepted': True, 'message': _text(f'Updated {element.replace("_", " ")}', 512)}
+
+    def patrol(self, body):
+        points = body.get('points') if isinstance(body, dict) else None
+        if not isinstance(points, list) or not 1 <= len(points) <= 20 \
+                or not all(isinstance(p, list) and len(p) == 2 and all(_is_int(c) for c in p) for p in points):
+            raise BadRequest('patrol needs 1-20 points')
+        device = self._device()
+        self._run(lambda: device.follow_path(points))
+        return {'accepted': True, 'message': f'Patrolling {len(points)} point' + ('s' if len(points) > 1 else '')}
+
+    def ignore_obstacle(self, body):
+        if not isinstance(body, dict) or set(body) != {'x', 'y', 'ignore'} or not _is_int(body['x']) \
+                or not _is_int(body['y']) or not isinstance(body['ignore'], bool):
+            raise BadRequest('ignore_obstacle needs x, y and ignore')
+        device = self._device()
+        self._run(lambda: device.set_obstacle_ignore(body['x'], body['y'], body['ignore']))
+        return {'accepted': True, 'message': 'Ignoring that obstacle' if body['ignore'] else 'Avoiding that obstacle again'}
+
     def map(self):
         import base64
         import io
@@ -753,7 +850,9 @@ def make_server(path, holder):
               '/maps': lambda b, _: b.maps(), '/manage_map': lambda b, body: b.manage_map(body),
               '/manage_rooms': lambda b, body: b.manage_rooms(body),
               '/room_options': lambda b, body: b.room_options(body),
-              '/set_room_option': lambda b, body: b.set_room_option(body)}
+              '/set_room_option': lambda b, body: b.set_room_option(body),
+              '/map_elements': lambda b, _: b.map_elements(), '/edit_map': lambda b, body: b.edit_map(body),
+              '/patrol': lambda b, body: b.patrol(body), '/ignore_obstacle': lambda b, body: b.ignore_obstacle(body)}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):

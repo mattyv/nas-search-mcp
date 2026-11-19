@@ -350,6 +350,19 @@ module CoreTests {
     expect !ValidVacuumLine((0, 0, 9000, 0), (-5000, -5000, 5000, 5000));
     expect ValidVacuumRoomOption(3, [3], "mop_pressure", 2, [("mop_pressure", 0, 0, 0, [1, 2, 3])]);
     expect !ValidVacuumRoomOption(4, [3], "mop_pressure", 2, [("mop_pressure", 0, 0, 0, [1, 2, 3])]);
+    expect ValidVacuumMapEdit("no_go_zones", [(0, 0, 1000, 1000)], (-5000, -5000, 5000, 5000));
+    expect ValidVacuumMapEdit("no_go_zones", [], (-5000, -5000, 5000, 5000));
+    expect !ValidVacuumMapEdit("no_go_zones", [(1000, 0, 0, 1000)], (-5000, -5000, 5000, 5000));
+    expect !ValidVacuumMapEdit("no_go_zones", [(0, 0, 9000, 1000)], (-5000, -5000, 5000, 5000));
+    expect ValidVacuumMapEdit("virtual_walls", [(0, 0, 1000, 0)], (-5000, -5000, 5000, 5000));
+    expect !ValidVacuumMapEdit("virtual_walls", [(5, 5, 5, 5)], (-5000, -5000, 5000, 5000));
+    expect ValidVacuumMapEdit("predefined_points", [(10, 20, 10, 20)], (-5000, -5000, 5000, 5000));
+    expect !ValidVacuumMapEdit("predefined_points", [(10, 20, 30, 20)], (-5000, -5000, 5000, 5000));
+    expect ValidVacuumMapEdit("router_position", [(10, 20, 10, 20)], (-5000, -5000, 5000, 5000));
+    expect !ValidVacuumMapEdit("router_position", [], (-5000, -5000, 5000, 5000));
+    expect !ValidVacuumMapEdit("furniture", [(0, 0, 10, 10)], (-5000, -5000, 5000, 5000));
+    expect ValidVacuumPath([(0, 0), (100, 100)], (-5000, -5000, 5000, 5000));
+    expect !ValidVacuumPath([], (-5000, -5000, 5000, 5000)) && !ValidVacuumPath([(0, 9000)], (-5000, -5000, 5000, 5000));
     print "Dafny core executable tests passed\n";
   }
 }
