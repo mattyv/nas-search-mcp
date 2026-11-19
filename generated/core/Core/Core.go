@@ -593,6 +593,20 @@ func (_static *CompanionStruct_Default___) ValidVacuumMove(rotation _dafny.Int, 
 func (_static *CompanionStruct_Default___) ValidVacuumObstacle(index _dafny.Int, known _dafny.Sequence) bool {
 	return ((index).Sign() == 1) && (_dafny.Companion_Sequence_.Contains(known, index))
 }
+func (_static *CompanionStruct_Default___) OptionAccepts(o _dafny.Tuple, value _dafny.Int) bool {
+	if (_dafny.IntOfUint32(((*(o).IndexInt(4)).(_dafny.Sequence)).Cardinality())).Sign() == 1 {
+		return _dafny.Companion_Sequence_.Contains((*(o).IndexInt(4)).(_dafny.Sequence), value)
+	} else {
+		return ((((*(o).IndexInt(3)).(_dafny.Int)).Sign() == 1) && ((((*(o).IndexInt(1)).(_dafny.Int)).Cmp(value) <= 0) && ((value).Cmp((*(o).IndexInt(2)).(_dafny.Int)) <= 0))) && ((((value).Minus((*(o).IndexInt(1)).(_dafny.Int))).Modulo((*(o).IndexInt(3)).(_dafny.Int))).Sign() == 0)
+	}
+}
+func (_static *CompanionStruct_Default___) ValidVacuumOption(name _dafny.Sequence, value _dafny.Int, options _dafny.Sequence) bool {
+	return _dafny.Quantifier((options).UniqueElements(), false, func(_exists_var_0 _dafny.Tuple) bool {
+		var _0_o _dafny.Tuple
+		_0_o = interface{}(_exists_var_0).(_dafny.Tuple)
+		return (_dafny.Companion_Sequence_.Contains(options, _0_o)) && ((_dafny.Companion_Sequence_.Equal((*(_0_o).IndexInt(0)).(_dafny.Sequence), name)) && (Companion_Default___.OptionAccepts(_0_o, value)))
+	})
+}
 func (_static *CompanionStruct_Default___) ValidVacuumShortcut(action _dafny.Sequence, id _dafny.Int, known _dafny.Sequence, nameLength _dafny.Int) bool {
 	return ((_dafny.Companion_Sequence_.Contains(_dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("start"), _dafny.UnicodeSeqOfUtf8Bytes("rename"), _dafny.UnicodeSeqOfUtf8Bytes("delete")), action)) && (_dafny.Companion_Sequence_.Contains(known, id))) && ((func() bool {
 		if _dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("rename")) {

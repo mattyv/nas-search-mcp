@@ -578,3 +578,105 @@ def test_malformed_shortcut_rejected(body):
     with pytest.raises(broker.BadRequest):
         make(device).shortcut(body)
     assert device.calls == []
+
+
+spec_cat = importlib.util.spec_from_file_location('vacuum_catalogue_b', ROOT / 'vacuum/catalogue.py')
+catalogue = importlib.util.module_from_spec(spec_cat)
+spec_cat.loader.exec_module(catalogue)
+FIXTURES = Path(__file__).resolve().parent / 'fixtures'
+
+
+class OptionVendor(FakeVendor):
+    """Stands in for the library's property tables."""
+
+    def __init__(self, values):
+        super().__init__()
+        self.values = values
+
+    def prop_present(self, device, family, prop):
+        return (family, prop) in self.values
+
+    def prop_value(self, device, family, prop):
+        return self.values.get((family, prop))
+
+    def set_prop(self, device, family, prop, value):
+        device.calls.append(('set_property', family, prop, value))
+
+
+class OptionDevice(FakeDevice):
+    def set_carpet_avoidance(self, value):
+        self.calls.append(('set_carpet_avoidance', value))
+
+    def set_off_peak_charging_start(self, value):
+        self.calls.append(('set_off_peak_charging_start', value))
+
+
+def option_broker():
+    device = OptionDevice()
+    device.status.mop_pressure_list = {'light': 1, 'medium': 2, 'strong': 3}
+    device.status.mop_pressure_name = 'medium'
+    device.status.mop_cleaning_remainder = 30
+    device.status.self_clean_time = 20
+    device.status.self_clean_time_min = 10
+    device.status.self_clean_time_max = 50
+    device.status.off_peak_charging_start = '22:00'
+    device.status.battery_charge_level = 90
+    vendor = OptionVendor({('property', 'CHILD_LOCK'): 0, ('auto_switch', 'STAIN_AVOIDANCE'): 2,
+                           ('property', 'MOP_PRESSURE'): 2, ('property', 'BATTERY_CHARGE_LEVEL'): 90,
+                           ('property', 'MOP_CLEANING_REMAINDER'): 30})
+    b = broker.Broker(device, vendor=vendor, catalogue=catalogue.load(FIXTURES))
+    return b, device
+
+
+def test_options_report_only_settings_this_vacuum_has():
+    b, _ = option_broker()
+    found = {o['name']: o for o in b.options()['options']}
+    assert 'ai_pet_detection' not in found
+    assert found['child_lock'] == {'name': 'child_lock', 'kind': 'switch', 'current': 'off',
+                                   'choices': [{'label': 'off', 'value': 0}, {'label': 'on', 'value': 1}]}
+    assert found['stain_avoidance']['current'] == 'on'
+    assert found['stain_avoidance']['choices'] == [{'label': 'off', 'value': 1}, {'label': 'on', 'value': 2}]
+    assert found['carpet_avoidance']['current'] == 'off'
+    assert found['mop_pressure']['current'] == 'medium'
+    assert [c['label'] for c in found['mop_pressure']['choices']] == ['light', 'medium', 'strong']
+    assert found['battery_charge_level']['choices'] == [{'label': '80%', 'value': 80}, {'label': '90%', 'value': 90},
+                                                       {'label': '100%', 'value': 100}]
+    assert found['mop_cleaning_remainder'] == {'name': 'mop_cleaning_remainder', 'kind': 'number', 'current': '30',
+                                               'min': 0, 'max': 180, 'step': 15}
+    assert (found['self_clean_time']['min'], found['self_clean_time']['max'], found['self_clean_time']['step']) == (10, 50, 5)
+    assert found['off_peak_charging_start'] == {'name': 'off_peak_charging_start', 'kind': 'time', 'current': '22:00'}
+
+
+@pytest.mark.parametrize('name,value,call', [
+    ('child_lock', 1, ('set_property', 'property', 'CHILD_LOCK', 1)),
+    ('stain_avoidance', 1, ('set_property', 'auto_switch', 'STAIN_AVOIDANCE', 1)),
+    ('carpet_avoidance', 1, ('set_carpet_avoidance', 1)),
+    ('mop_pressure', 3, ('set_property', 'property', 'MOP_PRESSURE', 3)),
+    ('mop_cleaning_remainder', 45, ('set_property', 'property', 'MOP_CLEANING_REMAINDER', 45)),
+    ('off_peak_charging_start', 1410, ('set_off_peak_charging_start', '23:30')),
+])
+def test_set_option_follows_the_original(name, value, call):
+    b, device = option_broker()
+    out = b.set_option({'name': name, 'value': value})
+    assert device.calls == [call] and out['accepted'] and out['message']
+
+
+@pytest.mark.parametrize('body', [{'name': 'ai_pet_detection', 'value': 1}, {'name': 'nope', 'value': 1},
+                                  {'name': 'child_lock', 'value': '1'}, {'name': 'child_lock'}])
+def test_set_option_rejects_unknown_or_malformed(body):
+    b, device = option_broker()
+    with pytest.raises(broker.BadRequest):
+        b.set_option(body)
+    assert device.calls == []
+
+
+def test_camera_light_auto_reads_and_writes_brightness():
+    b, device = option_broker()
+    b.catalogue['camera_light_brightness_auto'] = {'name': 'camera_light_brightness_auto', 'kind': 'switch',
+                                                    'family': None, 'prop': None}
+    device.status.camera_light_brightness = 101
+    device.set_camera_light_brightness = lambda v: device.calls.append(('set_camera_light_brightness', v))
+    found = {o['name']: o for o in b.options()['options']}
+    assert found['camera_light_brightness_auto']['current'] == 'on'
+    b.set_option({'name': 'camera_light_brightness_auto', 'value': 40})
+    assert device.calls == [('set_camera_light_brightness', 40)]

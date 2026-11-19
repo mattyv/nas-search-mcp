@@ -573,3 +573,63 @@ func TestStatusTrimsName(t *testing.T) {
 		t.Fatalf("name=%q err=%v", out.Name, err)
 	}
 }
+
+const optionsJSON = `{"options":[
+ {"name":"carpet_boost","kind":"switch","current":"off","choices":[{"label":"off","value":0},{"label":"on","value":1}]},
+ {"name":"mop_pressure","kind":"select","current":"medium","choices":[{"label":"light","value":1},{"label":"medium","value":2},{"label":"strong","value":3}]},
+ {"name":"mop_cleaning_remainder","kind":"number","current":"30","min":0,"max":180,"step":15},
+ {"name":"off_peak_charging_start","kind":"time","current":"22:00"}
+]}`
+
+func TestOptionsListedAndChangesChecked(t *testing.T) {
+	var got optionRequest
+	sent := 0
+	socket := broker(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/options":
+			w.Write([]byte(optionsJSON))
+		case "/set_option":
+			sent++
+			json.NewDecoder(r.Body).Decode(&got)
+			w.Write([]byte(`{"accepted":true,"message":"Done"}`))
+		}
+	})
+	client := newClient(t, socket)
+	list, err := client.Options(context.Background(), OptionsInput{})
+	if err != nil || len(list.Options) != 4 || list.Options[1].Choices[2].Label != "strong" {
+		t.Fatalf("list=%#v err=%v", list, err)
+	}
+	filtered, _ := client.Options(context.Background(), OptionsInput{Search: "MOP"})
+	if len(filtered.Options) != 2 {
+		t.Fatalf("filter returned %d", len(filtered.Options))
+	}
+	cases := []struct {
+		in   SetOptionInput
+		want optionRequest
+	}{
+		{SetOptionInput{Name: "carpet_boost", Value: "on"}, optionRequest{"carpet_boost", 1}},
+		{SetOptionInput{Name: "mop_pressure", Value: "Strong"}, optionRequest{"mop_pressure", 3}},
+		{SetOptionInput{Name: "mop_cleaning_remainder", Value: "45"}, optionRequest{"mop_cleaning_remainder", 45}},
+		{SetOptionInput{Name: "off_peak_charging_start", Value: "23:30"}, optionRequest{"off_peak_charging_start", 1410}},
+	}
+	for _, c := range cases {
+		if _, err := client.SetOption(context.Background(), c.in); err != nil || got != c.want {
+			t.Fatalf("%#v: got=%#v err=%v", c.in, got, err)
+		}
+	}
+	for _, in := range []SetOptionInput{
+		{Name: "firmware_update", Value: "on"},
+		{Name: "carpet_boost", Value: "maybe"},
+		{Name: "mop_pressure", Value: "extreme"},
+		{Name: "mop_cleaning_remainder", Value: "40"},
+		{Name: "mop_cleaning_remainder", Value: "200"},
+		{Name: "off_peak_charging_start", Value: "25:00"},
+	} {
+		if _, err := client.SetOption(context.Background(), in); !errors.Is(err, ErrInput) {
+			t.Errorf("%#v: err=%v", in, err)
+		}
+	}
+	if sent != len(cases) {
+		t.Fatalf("%d invalid changes reached the vacuum", sent-len(cases))
+	}
+}

@@ -1,0 +1,90 @@
+"""Read the original integration's settings tables without importing Home Assistant.
+
+The pinned Dreame integration describes every vacuum-wide setting in its
+switch, select, number and time platform files. Parsing them with ``ast`` keeps
+the NAS's settings list exactly in step with the pinned library version.
+"""
+
+import ast
+from pathlib import Path
+
+TABLES = {'switch': 'SWITCHES', 'select': 'SELECTS', 'number': 'NUMBERS', 'time': 'TIMES'}
+FAMILIES = {
+    'DreameVacuumProperty': 'property',
+    'DreameVacuumAutoSwitchProperty': 'auto_switch',
+    'DreameVacuumAIProperty': 'ai',
+    'DreameVacuumStrAIProperty': 'ai',
+}
+
+
+def _literal_int(node):
+    try:
+        value = ast.literal_eval(node)
+    except (ValueError, SyntaxError):
+        return None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _literal_options(node):
+    """Options written as `lambda entity: ["a", "b"]`; anything computed is read from the vacuum instead."""
+    if isinstance(node, ast.Lambda):
+        try:
+            value = ast.literal_eval(node.body)
+        except (ValueError, SyntaxError):
+            return None
+        if isinstance(value, list) and all(isinstance(v, str) for v in value):
+            return value
+    return None
+
+
+def _entry(kind, call):
+    keywords = {k.arg: k.value for k in call.keywords}
+    family = prop = name = None
+    key = keywords.get('property_key')
+    if isinstance(key, ast.Attribute) and isinstance(key.value, ast.Name) and key.value.id in FAMILIES:
+        family, prop = FAMILIES[key.value.id], key.attr
+        name = prop.lower()
+    if 'key' in keywords:
+        node = keywords['key']
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            name = node.value
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'lower'
+              and isinstance(node.func.value, ast.Attribute) and node.func.value.attr == 'name'
+              and isinstance(node.func.value.value, ast.Attribute)):
+            # key=DreameVacuumProperty.X.name.lower()
+            name = node.func.value.value.attr.lower()
+    if not name:
+        return None
+    entry = {'name': name, 'kind': kind, 'family': family, 'prop': prop}
+    if kind == 'select' and 'options' in keywords:
+        options = _literal_options(keywords['options'])
+        if options:
+            entry['options'] = options
+    if kind == 'number':
+        entry['range'] = [_literal_int(keywords['native_min_value']) if 'native_min_value' in keywords else None,
+                          _literal_int(keywords['native_max_value']) if 'native_max_value' in keywords else None,
+                          _literal_int(keywords['native_step']) if 'native_step' in keywords else 1]
+    return entry
+
+
+def load(folder):
+    """Return the vacuum-wide settings described in the integration's platform files."""
+    entries, seen = [], set()
+    for kind, table in TABLES.items():
+        path = Path(folder) / f'{kind}.py'
+        if not path.is_file():
+            continue
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+        for node in tree.body:
+            target = node.target if isinstance(node, ast.AnnAssign) else (
+                node.targets[0] if isinstance(node, ast.Assign) and len(node.targets) == 1 else None)
+            if getattr(target, 'id', None) != table or not isinstance(node.value, ast.Tuple):
+                continue
+            for call in node.value.elts:
+                if not isinstance(call, ast.Call):
+                    continue
+                entry = _entry(kind, call)
+                if entry and entry['name'] not in seen:
+                    seen.add(entry['name'])
+                    entries.append(entry)
+    return entries

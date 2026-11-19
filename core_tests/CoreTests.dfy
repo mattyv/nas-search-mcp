@@ -319,6 +319,16 @@ module CoreTests {
     expect ValidVacuumShortcut("rename", 32, [32], 12) && !ValidVacuumShortcut("rename", 32, [32], 0) && !ValidVacuumShortcut("rename", 32, [32], 33);
     expect !ValidVacuumShortcut("start", 33, [32], 0) && !ValidVacuumShortcut("start", 32, [32], 5);
     expect !ValidVacuumShortcut("edit", 32, [32], 0);
+    // (name, lowest, highest, step, allowed); allowed empty means any step in the range.
+    expect ValidVacuumOption("carpet_boost", 1, [("carpet_boost", 0, 1, 1, [0, 1])]);
+    expect !ValidVacuumOption("carpet_boost", 2, [("carpet_boost", 0, 1, 1, [0, 1])]);
+    expect ValidVacuumOption("stain_avoidance", 2, [("stain_avoidance", 1, 2, 1, [1, 2])]);
+    expect !ValidVacuumOption("stain_avoidance", 0, [("stain_avoidance", 1, 2, 1, [1, 2])]);
+    expect ValidVacuumOption("mop_cleaning_remainder", 45, [("mop_cleaning_remainder", 0, 180, 15, [])]);
+    expect !ValidVacuumOption("mop_cleaning_remainder", 40, [("mop_cleaning_remainder", 0, 180, 15, [])]);
+    expect !ValidVacuumOption("mop_cleaning_remainder", 195, [("mop_cleaning_remainder", 0, 180, 15, [])]);
+    expect !ValidVacuumOption("firmware", 1, [("carpet_boost", 0, 1, 1, [0, 1])]);
+    expect !ValidVacuumOption("broken", 0, [("broken", 0, 10, 0, [])]);
     print "Dafny core executable tests passed\n";
   }
 }

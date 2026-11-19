@@ -13,7 +13,10 @@ FROM docker.io/library/golang:1.25-bookworm AS dreame
 ARG DREAME_COMMIT=fec086caf064f2681e8bcc7be20a0d0ef54f444d
 RUN git init -q /src && cd /src && git fetch -q --depth 1 https://github.com/Tasshack/dreame-vacuum.git "$DREAME_COMMIT" \
     && git checkout -q FETCH_HEAD && [ "$(git rev-parse HEAD)" = "$DREAME_COMMIT" ] \
-    && mkdir -p /out && cp -R custom_components/dreame_vacuum/dreame /out/dreame && cp LICENSE /out/LICENSE
+    && mkdir -p /out/entities && cp -R custom_components/dreame_vacuum/dreame /out/dreame && cp LICENSE /out/LICENSE \
+    && cp custom_components/dreame_vacuum/switch.py custom_components/dreame_vacuum/select.py \
+          custom_components/dreame_vacuum/number.py custom_components/dreame_vacuum/time.py \
+          custom_components/dreame_vacuum/button.py /out/entities/
 
 # Build the vacuum environment where a compiler exists (netifaces ships no
 # Python 3.12 wheel); the runtime image receives only the finished venv.
@@ -32,7 +35,7 @@ COPY --from=dreame /out/ /opt/dreame/
 RUN /opt/vacuum-venv/bin/python -I -W ignore -c "import sys; sys.path.insert(0, '/opt/dreame'); import dreame, py_mini_racer; py_mini_racer.MiniRacer().eval('1+1'); print('vacuum library', dreame.VERSION)"
 COPY --from=build /out/nas-search /app/nas-search
 COPY worker/ /app/worker/
-COPY vacuum/broker.py /app/vacuum/broker.py
+COPY vacuum/broker.py vacuum/catalogue.py /app/vacuum/
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 NAS_WORKER=/app/worker/worker.py NAS_VEC_EXTENSION=/opt/vec0.so
 EXPOSE 8080
 ENTRYPOINT ["/app/nas-search"]

@@ -92,3 +92,20 @@ func ValidVacuumObstacle(index int, known []int) bool {
 func ValidVacuumShortcut(action string, id int, known []int, nameLength int) bool {
 	return core.Companion_Default___.ValidVacuumShortcut(dafny.UnicodeSeqOfUtf8Bytes(action), dafny.IntOf(id), intSeq(known), dafny.IntOf(nameLength))
 }
+
+// VacuumOption is one setting the vacuum reported: either a list of allowed
+// values, or a range with a step.
+type VacuumOption struct {
+	Name                  string
+	Lowest, Highest, Step int
+	Allowed               []int
+}
+
+// ValidVacuumOption checks a setting change against what the vacuum reported.
+func ValidVacuumOption(name string, value int, options []VacuumOption) bool {
+	values := make([]interface{}, len(options))
+	for i, o := range options {
+		values[i] = dafny.TupleOf(dafny.UnicodeSeqOfUtf8Bytes(o.Name), dafny.IntOf(o.Lowest), dafny.IntOf(o.Highest), dafny.IntOf(o.Step), intSeq(o.Allowed))
+	}
+	return core.Companion_Default___.ValidVacuumOption(dafny.UnicodeSeqOfUtf8Bytes(name), dafny.IntOf(value), dafny.SeqOf(values...))
+}

@@ -68,6 +68,14 @@ func addVacuumTools(server *mcp.Server) {
 		out, err := client.Shortcut(ctx, in)
 		return nil, out, err
 	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_options", Description: "List every setting this robot vacuum model has, as the vendor app and the original integration expose them (about 100 on/off switches, choices, numbers and times: carpet boost, AI detection, hot washing, mop pressure, water temperature, cleaning route, drying time, off-peak charging hours and more), with the current value and allowed choices or range. search filters by words in the setting name, for example mop or carpet. Use vacuum_set_option to change one.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false), IdempotentHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.OptionsInput) (*mcp.CallToolResult, vacuum.OptionsResult, error) {
+		out, err := client.Options(ctx, in)
+		return nil, out, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_set_option", Description: "Change one setting listed by vacuum_options. value: on or off for switches, one of the listed labels for choices, a number on the listed step within the range for numbers, or HH:MM for times. Only settings the vacuum listed, with allowed values, are accepted. Only use when the user asks.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(false), IdempotentHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.SetOptionInput) (*mcp.CallToolResult, vacuum.CommandResult, error) {
+		out, err := client.SetOption(ctx, in)
+		return nil, out, err
+	})
 	if !enabled("NAS_VACUUM_CAMERA", true) {
 		return
 	}

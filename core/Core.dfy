@@ -965,6 +965,27 @@ module Core {
     ensures !ValidVacuumObstacle(index, known)
   {}
 
+  // Generic vacuum settings. The vacuum reports each setting it has as
+  // (name, lowest, highest, step, allowed values). A change is forwarded only
+  // for a reported setting: one of its allowed values when it has a list, or
+  // a value on its step grid within its range otherwise.
+  predicate OptionAccepts(o: (string, int, int, int, seq<int>), value: int) {
+    if |o.4| > 0 then value in o.4
+    else o.3 > 0 && o.1 <= value <= o.2 && (value - o.1) % o.3 == 0
+  }
+
+  function ValidVacuumOption(name: string, value: int, options: seq<(string, int, int, int, seq<int>)>): bool
+    ensures ValidVacuumOption(name, value, options) ==>
+      exists o :: o in options && o.0 == name && OptionAccepts(o, value)
+  {
+    exists o | o in options :: o.0 == name && OptionAccepts(o, value)
+  }
+
+  lemma VacuumUnreportedOptionRejected(name: string, value: int, options: seq<(string, int, int, int, seq<int>)>)
+    requires forall o | o in options :: o.0 != name
+    ensures !ValidVacuumOption(name, value, options)
+  {}
+
   // App shortcuts: start, rename, or delete only a shortcut the vacuum listed.
   // Renames carry a 1-32 character name; other actions carry none.
   function ValidVacuumShortcut(action: string, id: int, known: seq<int>, nameLength: int): bool

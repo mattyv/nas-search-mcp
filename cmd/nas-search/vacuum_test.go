@@ -106,6 +106,14 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 			body["path"] = r.URL.Path
 			commands = append(commands, body)
 			w.Write([]byte(`{"accepted":true,"message":"Started After dinner"}`))
+		case "/options":
+			w.Write([]byte(`{"options":[{"name":"carpet_boost","kind":"switch","current":"off","choices":[{"label":"off","value":0},{"label":"on","value":1}]}]}`))
+		case "/set_option":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			body["path"] = r.URL.Path
+			commands = append(commands, body)
+			w.Write([]byte(`{"accepted":true,"message":"Carpet boost set to 1"}`))
 		case "/move":
 			var body map[string]any
 			json.NewDecoder(r.Body).Decode(&body)
@@ -125,8 +133,8 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 
 	session, ctx := vacuumSession(t)
 	found := vacuumTools(t, session, ctx)
-	readOnly := []string{"vacuum_status", "vacuum_rooms", "vacuum_details", "vacuum_history", "vacuum_map", "vacuum_obstacles", "vacuum_shortcuts"}
-	acting := []string{"vacuum_control", "vacuum_settings", "vacuum_drive", "vacuum_shortcut"}
+	readOnly := []string{"vacuum_status", "vacuum_rooms", "vacuum_details", "vacuum_history", "vacuum_map", "vacuum_obstacles", "vacuum_shortcuts", "vacuum_options"}
+	acting := []string{"vacuum_control", "vacuum_settings", "vacuum_drive", "vacuum_shortcut", "vacuum_set_option"}
 	if len(found) != len(readOnly)+len(acting)+1 {
 		t.Fatalf("tools=%v", found)
 	}
@@ -189,6 +197,10 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 	ran, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_shortcut", Arguments: map[string]any{"action": "start", "id": 32}})
 	if err != nil || ran.IsError || len(commands) != 4 || commands[3]["path"] != "/shortcut" {
 		t.Fatalf("ran=%#v commands=%v err=%v", ran, commands, err)
+	}
+	opt, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_set_option", Arguments: map[string]any{"name": "carpet_boost", "value": "on"}})
+	if err != nil || opt.IsError || len(commands) != 5 || commands[4]["value"] != float64(1) {
+		t.Fatalf("opt=%#v commands=%v err=%v", opt, commands, err)
 	}
 }
 

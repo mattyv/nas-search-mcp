@@ -172,6 +172,41 @@ type shortcutRequest struct {
 	Name   string `json:"name"`
 }
 
+type Choice struct {
+	Label string `json:"label"`
+	Value int    `json:"value"`
+}
+
+// Option is one setting the vacuum has on this model, as the original
+// integration exposes it: an on/off switch, a choice, a number, or a time.
+type Option struct {
+	Name    string   `json:"name"`
+	Kind    string   `json:"kind"`
+	Current string   `json:"current"`
+	Choices []Choice `json:"choices,omitempty"`
+	Min     int      `json:"min,omitempty"`
+	Max     int      `json:"max,omitempty"`
+	Step    int      `json:"step,omitempty"`
+}
+
+type OptionsResult struct {
+	Options []Option `json:"options"`
+}
+
+type OptionsInput struct {
+	Search string `json:"search,omitempty" jsonschema:"optional words to filter setting names, for example mop or carpet"`
+}
+
+type SetOptionInput struct {
+	Name  string `json:"name" jsonschema:"setting name from vacuum_options"`
+	Value string `json:"value" jsonschema:"for switches on or off; for choices one of the listed labels; for numbers a number on the step; for times HH:MM"`
+}
+
+type optionRequest struct {
+	Name  string `json:"name"`
+	Value int    `json:"value"`
+}
+
 type commandRequest struct {
 	Action  string   `json:"action"`
 	Rooms   []int    `json:"rooms"`
@@ -572,6 +607,129 @@ func (c *Client) Shortcut(ctx context.Context, in ShortcutInput) (CommandResult,
 	return c.accepted(ctx, "/shortcut", shortcutRequest{Action: in.Action, ID: in.ID, Name: in.Name})
 }
 
+var optionName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+
+func (c *Client) allOptions(ctx context.Context) (OptionsResult, error) {
+	var out OptionsResult
+	if err := c.post(ctx, "/options", struct{}{}, &out); err != nil {
+		return OptionsResult{}, err
+	}
+	if out.Options == nil || len(out.Options) > 400 {
+		return OptionsResult{}, errReply
+	}
+	for _, o := range out.Options {
+		if !optionName.MatchString(o.Name) || !boundedText(o.Current, 64) || len(o.Choices) > 64 {
+			return OptionsResult{}, errReply
+		}
+		switch o.Kind {
+		case "switch", "select":
+			if len(o.Choices) == 0 {
+				return OptionsResult{}, errReply
+			}
+		case "number":
+			if o.Step < 1 || o.Min > o.Max {
+				return OptionsResult{}, errReply
+			}
+		case "time":
+		default:
+			return OptionsResult{}, errReply
+		}
+		for _, choice := range o.Choices {
+			if !boundedText(choice.Label, 64) || choice.Label == "" {
+				return OptionsResult{}, errReply
+			}
+		}
+	}
+	return out, nil
+}
+
+// Options lists every setting the vacuum has, optionally filtered by words.
+func (c *Client) Options(ctx context.Context, in OptionsInput) (OptionsResult, error) {
+	if !boundedText(in.Search, 64) {
+		return OptionsResult{}, ErrInput
+	}
+	all, err := c.allOptions(ctx)
+	if err != nil {
+		return OptionsResult{}, err
+	}
+	words := strings.Fields(strings.ToLower(in.Search))
+	out := OptionsResult{Options: []Option{}}
+	for _, o := range all.Options {
+		keep := true
+		for _, word := range words {
+			if !strings.Contains(o.Name, word) {
+				keep = false
+			}
+		}
+		if keep {
+			out.Options = append(out.Options, o)
+		}
+	}
+	return out, nil
+}
+
+var switchWords = map[string]string{"true": "on", "enable": "on", "enabled": "on", "false": "off", "disable": "off", "disabled": "off"}
+
+// parseOptionValue turns the assistant's words into the integer the core checks.
+func parseOptionValue(o Option, value string) (int, bool) {
+	value = strings.TrimSpace(value)
+	switch o.Kind {
+	case "switch", "select":
+		lowered := strings.ToLower(value)
+		if synonym, ok := switchWords[lowered]; ok && o.Kind == "switch" {
+			lowered = synonym
+		}
+		for _, choice := range o.Choices {
+			if strings.ToLower(choice.Label) == lowered {
+				return choice.Value, true
+			}
+		}
+		return 0, false
+	case "number":
+		number, err := strconv.Atoi(value)
+		return number, err == nil
+	case "time":
+		parts := clockTime.FindStringSubmatch(value)
+		if parts == nil {
+			return 0, false
+		}
+		hours, _ := strconv.Atoi(parts[1])
+		minutes, _ := strconv.Atoi(parts[2])
+		return hours*60 + minutes, true
+	}
+	return 0, false
+}
+
+// SetOption changes one reported setting after the verified core accepts the
+// value against the setting's allowed values or range.
+func (c *Client) SetOption(ctx context.Context, in SetOptionInput) (CommandResult, error) {
+	all, err := c.allOptions(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	reported := make([]policy.VacuumOption, 0, len(all.Options))
+	value, parsed := 0, false
+	for _, o := range all.Options {
+		entry := policy.VacuumOption{Name: o.Name, Lowest: o.Min, Highest: o.Max, Step: o.Step}
+		switch o.Kind {
+		case "switch", "select":
+			for _, choice := range o.Choices {
+				entry.Allowed = append(entry.Allowed, choice.Value)
+			}
+		case "time":
+			entry.Lowest, entry.Highest, entry.Step = 0, 1439, 1
+		}
+		reported = append(reported, entry)
+		if o.Name == in.Name {
+			value, parsed = parseOptionValue(o, in.Value)
+		}
+	}
+	if !parsed || !policy.ValidVacuumOption(in.Name, value, reported) {
+		return CommandResult{}, ErrInput
+	}
+	return c.accepted(ctx, "/set_option", optionRequest{Name: in.Name, Value: value})
+}
+
 func validBox(box [4]int) bool {
 	const limit = 1000000
 	return box[0] < box[2] && box[1] < box[3] && box[0] > -limit && box[1] > -limit && box[2] < limit && box[3] < limit
@@ -598,7 +756,7 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 		return ErrInput
 	}
 	limit := c.quick
-	if path == "/map" || path == "/command" || path == "/setting" || path == "/move" || path == "/obstacle_photo" || path == "/shortcut" {
+	if path == "/map" || path == "/command" || path == "/setting" || path == "/move" || path == "/obstacle_photo" || path == "/shortcut" || path == "/set_option" {
 		limit = c.slow
 	}
 	parent := ctx

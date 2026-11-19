@@ -66,3 +66,13 @@ func TestVacuumShortcutPolicyBridgesCore(t *testing.T) {
 		t.Fatal("shortcut rule mismatch")
 	}
 }
+
+func TestVacuumOptionPolicyBridgesCore(t *testing.T) {
+	options := []VacuumOption{{Name: "carpet_boost", Allowed: []int{0, 1}}, {Name: "drying", Lowest: 0, Highest: 180, Step: 15}}
+	if !ValidVacuumOption("carpet_boost", 1, options) || ValidVacuumOption("carpet_boost", 5, options) {
+		t.Fatal("allowed-list mismatch")
+	}
+	if !ValidVacuumOption("drying", 30, options) || ValidVacuumOption("drying", 31, options) || ValidVacuumOption("other", 0, options) {
+		t.Fatal("range mismatch")
+	}
+}
