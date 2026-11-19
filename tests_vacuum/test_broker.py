@@ -718,3 +718,105 @@ def test_press_rejects_unknown(body):
     with pytest.raises(broker.BadRequest):
         b.press(body)
     assert device.calls == []
+
+
+class RoomDevice(OptionDevice):
+    def set_segment_mop_pressure(self, room, value):
+        self.calls.append(('set_segment_mop_pressure', room, value))
+
+    def set_segment_cleaning_times(self, room, value):
+        self.calls.append(('set_segment_cleaning_times', room, value))
+
+    def set_segment_mop_type(self, room, value):
+        self.calls.append(('set_segment_mop_type', room, value))
+
+    def set_segment_wetness_level(self, room, value):
+        self.calls.append(('set_segment_wetness_level', room, value))
+
+
+def room_broker():
+    device = RoomDevice()
+    kitchen = device.status.current_segments[3]
+    kitchen.mop_pressure, kitchen.cleaning_times, kitchen.mop_type, kitchen.wetness_level = 2, 1, 'B', 10
+    device.status.mop_pressure_list = {'light': 1, 'medium': 2}
+    ground = SimpleNamespace(map_id=1, custom_name='Ground', map_name=None, recovery_map_list=[
+        SimpleNamespace(date='2026-11-01 09:00'), SimpleNamespace(date='2026-11-10 09:00')])
+    upstairs = SimpleNamespace(map_id=2, custom_name=None, map_name='Map 2', recovery_map_list=None)
+    device.status.map_data_list = {1: ground, 2: upstairs}
+    device.status.selected_map = ground
+    device.status.has_temporary_map = False
+    vendor = OptionVendor({})
+    vendor.room_types = lambda: {0: 'Room', 4: 'Kitchen'}
+    b = broker.Broker(device, vendor=vendor, room_catalogue=catalogue.load(FIXTURES, rooms=True))
+    return b, device
+
+
+def test_maps_listed_with_backups():
+    b, _ = room_broker()
+    assert b.maps() == {'maps': [
+        {'id': 1, 'name': 'Ground', 'selected': True, 'backups': [{'index': 1, 'date': '2026-11-01 09:00'},
+                                                                   {'index': 2, 'date': '2026-11-10 09:00'}]},
+        {'id': 2, 'name': 'Map 2', 'selected': False, 'backups': []}], 'temporary_map': False}
+
+
+@pytest.mark.parametrize('body,call', [
+    ({'action': 'select', 'map_id': 2, 'name': '', 'backup': 0}, ('set_selected_map', 2)),
+    ({'action': 'rename', 'map_id': 1, 'name': 'Down', 'backup': 0}, ('rename_map', 1, 'Down')),
+    ({'action': 'delete', 'map_id': 2, 'name': '', 'backup': 0}, ('delete_map', 2)),
+    ({'action': 'backup', 'map_id': 1, 'name': '', 'backup': 0}, ('backup_map', 1)),
+    ({'action': 'restore', 'map_id': 1, 'name': '', 'backup': 2}, ('restore_map', 2, 1)),
+    ({'action': 'request', 'map_id': 0, 'name': '', 'backup': 0}, ('request_map',)),
+    ({'action': 'save_temporary', 'map_id': 0, 'name': '', 'backup': 0}, ('save_temporary_map',)),
+    ({'action': 'discard_temporary', 'map_id': 0, 'name': '', 'backup': 0}, ('discard_temporary_map',)),
+    ({'action': 'replace_temporary', 'map_id': 1, 'name': '', 'backup': 0}, ('replace_temporary_map', 1)),
+])
+def test_map_actions_dispatch(body, call):
+    b, device = room_broker()
+    for method in ('set_selected_map', 'rename_map', 'delete_map', 'backup_map', 'restore_map', 'request_map',
+                   'save_temporary_map', 'discard_temporary_map', 'replace_temporary_map'):
+        setattr(device, method, (lambda m: lambda *a: device.calls.append((m, *a)))(method))
+    assert b.manage_map(body)['accepted'] and device.calls == [call]
+
+
+@pytest.mark.parametrize('body,call', [
+    ({'action': 'rename', 'rooms': [3], 'name': 'Galley', 'type': 0, 'line': None}, ('set_segment_name', 3, 0, 'Galley')),
+    ({'action': 'set_type', 'rooms': [3], 'name': '', 'type': 4, 'line': None}, ('set_segment_name', 3, 4)),
+    ({'action': 'merge', 'rooms': [3, 5], 'name': '', 'type': 0, 'line': None}, ('merge_segments', None, [3, 5])),
+    ({'action': 'split', 'rooms': [3], 'name': '', 'type': 0, 'line': [0, 0, 10, 0]}, ('split_segments', None, 3, [0, 0, 10, 0])),
+    ({'action': 'order', 'rooms': [5, 3], 'name': '', 'type': 0, 'line': None}, ('set_cleaning_sequence', [5, 3])),
+    ({'action': 'hide', 'rooms': [5], 'name': '', 'type': 0, 'line': None}, ('set_hidden_segments', [5])),
+])
+def test_room_actions_dispatch(body, call):
+    b, device = room_broker()
+    for method in ('set_segment_name', 'merge_segments', 'split_segments', 'set_cleaning_sequence', 'set_hidden_segments'):
+        setattr(device, method, (lambda m: lambda *a: device.calls.append((m, *a)))(method))
+    assert b.manage_rooms(body)['accepted'] and device.calls == [call]
+
+
+def test_room_options_and_types():
+    b, _ = room_broker()
+    out = b.room_options({'room': 3})
+    found = {o['name']: o for o in out['options']}
+    assert set(found) == {'mop_pressure', 'cleaning_times', 'mop_type', 'wetness_level'}
+    assert found['mop_pressure']['current'] == 'medium'
+    assert found['cleaning_times']['choices'] == [{'label': '1x', 'value': 1}, {'label': '2x', 'value': 2}, {'label': '3x', 'value': 3}]
+    assert found['mop_type']['current'] == 'b' and found['mop_type']['choices'][1] == {'label': 'b', 'value': 2}
+    assert (found['wetness_level']['min'], found['wetness_level']['max']) == (1, 32)
+    assert out['types'] == [{'label': 'Room', 'value': 0}, {'label': 'Kitchen', 'value': 4}]
+
+
+@pytest.mark.parametrize('name,value,call', [
+    ('mop_pressure', 1, ('set_segment_mop_pressure', 3, 1)),
+    ('cleaning_times', 2, ('set_segment_cleaning_times', 3, 2)),
+    ('mop_type', 3, ('set_segment_mop_type', 3, 'C')),
+    ('wetness_level', 20, ('set_segment_wetness_level', 3, 20)),
+])
+def test_set_room_option_dispatch(name, value, call):
+    b, device = room_broker()
+    assert b.set_room_option({'room': 3, 'name': name, 'value': value})['accepted'] and device.calls == [call]
+
+
+def test_room_option_for_unknown_room_rejected():
+    b, device = room_broker()
+    with pytest.raises(broker.BadRequest):
+        b.set_room_option({'room': 9, 'name': 'mop_pressure', 'value': 1})

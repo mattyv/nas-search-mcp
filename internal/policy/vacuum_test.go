@@ -82,3 +82,18 @@ func TestVacuumButtonPolicyBridgesCore(t *testing.T) {
 		t.Fatal("button rule mismatch")
 	}
 }
+
+func TestVacuumMapAndRoomPolicyBridgesCore(t *testing.T) {
+	if !ValidVacuumMapAction("restore", 1, []int{1}, 0, 2, 3) || ValidVacuumMapAction("select", 9, []int{1}, 0, 0, 0) {
+		t.Fatal("map rule mismatch")
+	}
+	if !ValidVacuumRoomAction("merge", []int{3, 5}, []int{3, 5}, 0, 0, nil, false) || ValidVacuumRoomAction("merge", []int{3}, []int{3, 5}, 0, 0, nil, false) || ValidVacuumRoomAction("split", []int{3}, []int{3}, 0, 0, nil, false) {
+		t.Fatal("room rule mismatch")
+	}
+	if !ValidVacuumLine([4]int{0, 0, 10, 10}, [4]int{-50, -50, 50, 50}) || ValidVacuumLine([4]int{0, 0, 90, 0}, [4]int{-50, -50, 50, 50}) {
+		t.Fatal("line rule mismatch")
+	}
+	if !ValidVacuumRoomOption(3, []int{3}, "x", 1, []VacuumOption{{Name: "x", Allowed: []int{1}}}) || ValidVacuumRoomOption(4, []int{3}, "x", 1, []VacuumOption{{Name: "x", Allowed: []int{1}}}) {
+		t.Fatal("room option mismatch")
+	}
+}

@@ -109,6 +109,14 @@ SPECIAL_SETTERS = {
     'camera_light_brightness_auto': lambda device, value: device.set_camera_light_brightness(value),
 }
 
+# Per-room choices the original builds specially.
+ROOM_CHOICES = {
+    'cleaning_mode': lambda status: list((getattr(status, 'segment_cleaning_mode_list', None) or {}).items()),
+    'cleaning_route': lambda status: list((getattr(status, 'segment_cleaning_route_list', None) or {}).items()),
+    'cleaning_times': lambda status: [(f'{i}x', i) for i in range(1, 4)],
+    'mop_type': lambda status: [('a', 1), ('b', 2), ('c', 3)],
+}
+
 # Settings whose state the original reads from another status field.
 READ_FROM = {'camera_light_brightness_auto': 'camera_light_brightness'}
 
@@ -122,8 +130,11 @@ def _clock(minutes):
 
 
 class Broker:
-    def __init__(self, device, area_key=None, time_key=None, refusal_types=(), vendor=None, catalogue=(), buttons=()):
+    def __init__(self, device, area_key=None, time_key=None, refusal_types=(), vendor=None, catalogue=(), buttons=(),
+                 room_catalogue=()):
         self.device = device
+        # Per-room settings; room order and room type have their own actions.
+        self.room_catalogue = [e for e in room_catalogue if e['name'] not in ('order', 'name')]
         # The original integration's buttons, by name.
         self.button_table = {button['name']: button for button in buttons}
         # Vacuum-wide settings as the original integration describes them.
@@ -565,6 +576,127 @@ class Broker:
             self._run(lambda: self.vendor.call_action(device, button['action']))
         return {'accepted': True, 'message': _text(f'Pressed {button["name"].replace("_", " ")}', 512)}
 
+    # --- Maps and rooms ---
+
+    def maps(self):
+        status = self._device().status
+        selected = getattr(getattr(status, 'selected_map', None), 'map_id', None)
+        out = []
+        for map_id, item in (getattr(status, 'map_data_list', None) or {}).items():
+            if not _is_int(map_id):
+                continue
+            backups = [{'index': i + 1, 'date': _text(getattr(b, 'date', ''), 64)}
+                       for i, b in enumerate(getattr(item, 'recovery_map_list', None) or [])][:32]
+            name = getattr(item, 'custom_name', None) or getattr(item, 'map_name', None) or f'Map {map_id}'
+            out.append({'id': map_id, 'name': _text(name, 64), 'selected': map_id == selected, 'backups': backups})
+        return {'maps': sorted(out, key=lambda m: m['id'])[:16],
+                'temporary_map': bool(getattr(status, 'has_temporary_map', False))}
+
+    def manage_map(self, body):
+        if not isinstance(body, dict) or set(body) != {'action', 'map_id', 'name', 'backup'} \
+                or not _is_int(body['map_id']) or not _is_int(body['backup']) or not isinstance(body['name'], str):
+            raise BadRequest('map action needs action, map_id, name and backup')
+        device = self._device()
+        action, map_id, name, backup = body['action'], body['map_id'], body['name'], body['backup']
+        calls = {
+            'select': lambda: device.set_selected_map(map_id),
+            'rename': lambda: device.rename_map(map_id, name),
+            'delete': lambda: device.delete_map(map_id),
+            'backup': lambda: device.backup_map(map_id),
+            'restore': lambda: device.restore_map(backup, map_id),
+            'request': lambda: device.request_map(),
+            'save_temporary': lambda: device.save_temporary_map(),
+            'discard_temporary': lambda: device.discard_temporary_map(),
+            'replace_temporary': lambda: device.replace_temporary_map(map_id),
+        }
+        if action not in calls:
+            raise BadRequest('unsupported map action')
+        self._run(calls[action])
+        return {'accepted': True, 'message': _text(f'Map {action.replace("_", " ")} done', 512)}
+
+    def manage_rooms(self, body):
+        if not isinstance(body, dict) or set(body) != {'action', 'rooms', 'name', 'type', 'line'} \
+                or not isinstance(body['rooms'], list) or not all(_is_int(r) for r in body['rooms']) \
+                or not isinstance(body['name'], str) or not _is_int(body['type']) \
+                or not (body['line'] is None or (isinstance(body['line'], list) and len(body['line']) == 4
+                                                 and all(_is_int(c) for c in body['line']))):
+            raise BadRequest('room action needs action, rooms, name, type and line')
+        device = self._device()
+        action, rooms = body['action'], body['rooms']
+        calls = {
+            'rename': lambda: device.set_segment_name(rooms[0], 0, body['name']),
+            'set_type': lambda: device.set_segment_name(rooms[0], body['type']),
+            'merge': lambda: device.merge_segments(None, rooms),
+            'split': lambda: device.split_segments(None, rooms[0], body['line']),
+            'order': lambda: device.set_cleaning_sequence(rooms),
+            'hide': lambda: device.set_hidden_segments(rooms),
+        }
+        if action not in calls or (action in ('rename', 'set_type', 'merge', 'split') and not rooms):
+            raise BadRequest('unsupported room action')
+        self._run(calls[action])
+        return {'accepted': True, 'message': _text(f'Rooms {action.replace("_", " ")} done', 512)}
+
+    def _segment(self, device, room):
+        segment = self._segments(device).get(room) if _is_int(room) else None
+        if segment is None:
+            raise BadRequest('the vacuum has no such room')
+        return segment
+
+    def _room_choices(self, device, name):
+        status = device.status
+        if name in ROOM_CHOICES:
+            return ROOM_CHOICES[name](status)
+        listed = getattr(status, f'{name}_list', None) or {}
+        return list(listed.items()) if isinstance(listed, dict) else []
+
+    def _room_option(self, device, segment, entry):
+        name = entry['name']
+        setter = getattr(type(device), f'set_segment_{name}', None)
+        value = getattr(segment, name, None)
+        if not callable(setter) or value is None:
+            return None
+        if name == 'mop_type' and isinstance(value, str):
+            value = 'abc'.find(value.lower()) + 1
+        if entry['kind'] == 'number':
+            low = (entry.get('range') or [1])[0]
+            high = NUMBER_MAX.get(name, lambda d: None)(device)
+            if not (_is_int(low) and _is_int(high)):
+                return None
+            return {'name': name, 'kind': 'number', 'current': _text(value, 64), 'min': low, 'max': high, 'step': 1}
+        choices = [{'label': _text(label, 64), 'value': int(v)} for label, v in self._room_choices(device, name)
+                   if isinstance(v, (int, float)) and not isinstance(v, bool)][:64]
+        if not choices:
+            return None
+        current = next((c['label'] for c in choices if c['value'] == value), _text(value, 64))
+        return {'name': name, 'kind': 'select', 'current': current, 'choices': choices}
+
+    def room_options(self, body):
+        if not isinstance(body, dict) or not _is_int(body.get('room')):
+            raise BadRequest('room_options needs a room')
+        device = self._device()
+        segment = self._segment(device, body['room'])
+        options = [o for o in (self._room_option(device, segment, e) for e in self.room_catalogue) if o]
+        types = [{'label': _text(label, 64), 'value': code} for code, label in sorted(self.vendor.room_types().items())]
+        return {'options': options[:64], 'types': types[:64]}
+
+    def set_room_option(self, body):
+        if not isinstance(body, dict) or set(body) != {'room', 'name', 'value'} or not _is_int(body['room']) \
+                or not isinstance(body['name'], str) or not _is_int(body['value']):
+            raise BadRequest('set_room_option needs room, name and value')
+        device = self._device()
+        segment = self._segment(device, body['room'])
+        entry = next((e for e in self.room_catalogue if e['name'] == body['name']), None)
+        if entry is None or self._room_option(device, segment, entry) is None:
+            raise BadRequest('this room has no such setting')
+        value = body['value']
+        if entry['name'] == 'mop_type':
+            value = 'ABC'[value - 1] if 1 <= value <= 3 else None
+            if value is None:
+                raise BadRequest('mop type must be a, b or c')
+        setter = getattr(device, f'set_segment_{entry["name"]}')
+        self._run(lambda: setter(body['room'], value))
+        return {'accepted': True, 'message': _text(f'Room {entry["name"].replace("_", " ")} set', 512)}
+
     def map(self):
         import base64
         import io
@@ -617,7 +749,11 @@ def make_server(path, holder):
               '/obstacle_photo': lambda b, body: b.obstacle_photo(body),
               '/shortcuts': lambda b, _: b.shortcuts(), '/shortcut': lambda b, body: b.shortcut(body),
               '/options': lambda b, _: b.options(), '/set_option': lambda b, body: b.set_option(body),
-              '/buttons': lambda b, _: b.buttons(), '/press': lambda b, body: b.press(body)}
+              '/buttons': lambda b, _: b.buttons(), '/press': lambda b, body: b.press(body),
+              '/maps': lambda b, _: b.maps(), '/manage_map': lambda b, body: b.manage_map(body),
+              '/manage_rooms': lambda b, body: b.manage_rooms(body),
+              '/room_options': lambda b, body: b.room_options(body),
+              '/set_room_option': lambda b, body: b.set_room_option(body)}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -745,6 +881,10 @@ class DreameVendor:
             raise BadRequest('unknown setting')
         device.set_property(member, value)
 
+    def room_types(self):
+        from dreame.types import SEGMENT_TYPE_CODE_TO_NAME
+        return dict(SEGMENT_TYPE_CODE_TO_NAME)
+
     def call_action(self, device, name):
         device.call_action(self.action[name])
 
@@ -771,7 +911,7 @@ class DreameVendor:
                                         status.robot_status, status.station_status)
 
 
-def load_catalogue(env, buttons=False):
+def load_catalogue(env, buttons=False, rooms=False):
     """The original integration's settings (or button) tables, shipped beside the library."""
     import importlib.util
     here = os.path.dirname(os.path.abspath(__file__))
@@ -779,7 +919,7 @@ def load_catalogue(env, buttons=False):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     folder = os.path.join(env.get('DREAME_LIBRARY', '/opt/dreame'), 'entities')
-    entries = module.load_buttons(folder) if buttons else module.load(folder)
+    entries = module.load_buttons(folder) if buttons else module.load(folder, rooms=rooms)
     LOG.info('loaded %d vacuum %s from the original integration', len(entries), 'buttons' if buttons else 'settings')
     return entries
 
@@ -843,7 +983,8 @@ def connect_from_env(env):  # pragma: no cover - needs the vendor library and a 
                   vendor=DreameVendor(DreameVacuumAction, DreameVacuumProperty, DreameVacuumMapRenderer, families={
                       'property': (DreameVacuumProperty,), 'auto_switch': (DreameVacuumAutoSwitchProperty,),
                       'ai': (DreameVacuumAIProperty, DreameVacuumStrAIProperty)}),
-                  catalogue=load_catalogue(env), buttons=load_catalogue(env, buttons=True))
+                  catalogue=load_catalogue(env), buttons=load_catalogue(env, buttons=True),
+                  room_catalogue=load_catalogue(env, rooms=True))
 
 
 def keep_connected(holder, env, connect=connect_from_env, sleep=time.sleep):

@@ -118,3 +118,27 @@ func ValidVacuumButton(name string, known []string) bool {
 	}
 	return core.Companion_Default___.ValidVacuumButton(dafny.UnicodeSeqOfUtf8Bytes(name), dafny.SeqOf(values...))
 }
+
+// ValidVacuumMapAction checks a map-management action against the maps the vacuum listed.
+func ValidVacuumMapAction(action string, mapID int, known []int, nameLength, backup, backups int) bool {
+	return core.Companion_Default___.ValidVacuumMapAction(dafny.UnicodeSeqOfUtf8Bytes(action), dafny.IntOf(mapID), intSeq(known), dafny.IntOf(nameLength), dafny.IntOf(backup), dafny.IntOf(backups))
+}
+
+// ValidVacuumRoomAction checks a room-management action against the reported rooms and room types.
+func ValidVacuumRoomAction(action string, rooms, known []int, nameLength, roomType int, types []int, hasLine bool) bool {
+	return core.Companion_Default___.ValidVacuumRoomAction(dafny.UnicodeSeqOfUtf8Bytes(action), intSeq(rooms), intSeq(known), dafny.IntOf(nameLength), dafny.IntOf(roomType), intSeq(types), hasLine)
+}
+
+// ValidVacuumLine checks a room-splitting line against the map bounds.
+func ValidVacuumLine(line, bounds [4]int) bool {
+	return core.Companion_Default___.ValidVacuumLine(box(line), box(bounds))
+}
+
+// ValidVacuumRoomOption checks a per-room setting for a reported room.
+func ValidVacuumRoomOption(room int, known []int, name string, value int, options []VacuumOption) bool {
+	values := make([]interface{}, len(options))
+	for i, o := range options {
+		values[i] = dafny.TupleOf(dafny.UnicodeSeqOfUtf8Bytes(o.Name), dafny.IntOf(o.Lowest), dafny.IntOf(o.Highest), dafny.IntOf(o.Step), intSeq(o.Allowed))
+	}
+	return core.Companion_Default___.ValidVacuumRoomOption(dafny.IntOf(room), intSeq(known), dafny.UnicodeSeqOfUtf8Bytes(name), dafny.IntOf(value), dafny.SeqOf(values...))
+}

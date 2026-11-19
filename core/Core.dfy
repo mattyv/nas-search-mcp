@@ -993,6 +993,79 @@ module Core {
     name in known
   }
 
+  // Map management. Map-specific actions name a map the vacuum listed;
+  // restore names one of that map's backups (1-based); renames carry a
+  // 1-32 character name. Whole-vacuum actions carry no map.
+  function ValidVacuumMapAction(action: string, mapId: int, known: seq<int>, nameLength: int,
+                                backup: int, backups: int): bool
+    ensures ValidVacuumMapAction(action, mapId, known, nameLength, backup, backups) ==>
+      (action in ["request", "save_temporary", "discard_temporary"] ==> mapId == 0) &&
+      (action in ["select", "rename", "delete", "backup", "restore", "replace_temporary"] ==> mapId in known)
+  {
+    if action in ["request", "save_temporary", "discard_temporary"] then
+      mapId == 0 && nameLength == 0 && backup == 0
+    else if action == "rename" then
+      mapId in known && 1 <= nameLength <= 32 && backup == 0
+    else if action == "restore" then
+      mapId in known && nameLength == 0 && 1 <= backup <= backups
+    else if action in ["select", "delete", "backup", "replace_temporary"] then
+      mapId in known && nameLength == 0 && backup == 0
+    else false
+  }
+
+  predicate DistinctKnown(rooms: seq<int>, known: seq<int>) {
+    DistinctInts(rooms) && forall r <- rooms :: r in known
+  }
+
+  // Room management against the rooms the vacuum reported. Cleaning order
+  // lists every room once, or nothing to clear it.
+  function ValidVacuumRoomAction(action: string, rooms: seq<int>, known: seq<int>, nameLength: int,
+                                 roomType: int, types: seq<int>, hasLine: bool): bool
+    ensures ValidVacuumRoomAction(action, rooms, known, nameLength, roomType, types, hasLine) ==>
+      (forall r <- rooms :: r in known) && (hasLine <==> action == "split")
+  {
+    DistinctKnown(rooms, known) && (hasLine <==> action == "split") &&
+    match action
+    case "rename" => |rooms| == 1 && 1 <= nameLength <= 32 && roomType == 0
+    case "set_type" => |rooms| == 1 && nameLength == 0 && roomType in types
+    case "merge" => |rooms| == 2 && nameLength == 0 && roomType == 0
+    case "split" => |rooms| == 1 && nameLength == 0 && roomType == 0
+    case "order" => (|rooms| == 0 || |rooms| == |known|) && nameLength == 0 && roomType == 0
+    case "hide" => nameLength == 0 && roomType == 0
+    case _ => false
+  }
+
+  // A dividing line (x0, y0, x1, y1) with distinct ends inside the map.
+  function ValidVacuumLine(line: (int, int, int, int), bounds: (int, int, int, int)): bool
+    ensures ValidVacuumLine(line, bounds) ==>
+      bounds.0 <= line.0 <= bounds.2 && bounds.0 <= line.2 <= bounds.2 &&
+      bounds.1 <= line.1 <= bounds.3 && bounds.1 <= line.3 <= bounds.3
+  {
+    bounds.0 <= line.0 <= bounds.2 && bounds.0 <= line.2 <= bounds.2 &&
+    bounds.1 <= line.1 <= bounds.3 && bounds.1 <= line.3 <= bounds.3 &&
+    (line.0 != line.2 || line.1 != line.3)
+  }
+
+  // A per-room setting for a reported room, checked like a vacuum setting.
+  function ValidVacuumRoomOption(room: int, known: seq<int>, name: string, value: int,
+                                 options: seq<(string, int, int, int, seq<int>)>): bool
+    ensures ValidVacuumRoomOption(room, known, name, value, options) ==> room in known
+  {
+    room in known && ValidVacuumOption(name, value, options)
+  }
+
+  lemma VacuumRoomActionNeverTouchesUnknownRoom(action: string, rooms: seq<int>, known: seq<int>,
+                                                nameLength: int, roomType: int, types: seq<int>, hasLine: bool, r: int)
+    requires r in rooms && r !in known
+    ensures !ValidVacuumRoomAction(action, rooms, known, nameLength, roomType, types, hasLine)
+  {}
+
+  lemma VacuumMapActionNeverTouchesUnknownMap(action: string, mapId: int, known: seq<int>, nameLength: int,
+                                              backup: int, backups: int)
+    requires mapId != 0 && mapId !in known
+    ensures !ValidVacuumMapAction(action, mapId, known, nameLength, backup, backups)
+  {}
+
   // App shortcuts: start, rename, or delete only a shortcut the vacuum listed.
   // Renames carry a 1-32 character name; other actions carry none.
   function ValidVacuumShortcut(action: string, id: int, known: seq<int>, nameLength: int): bool

@@ -659,3 +659,109 @@ func TestButtonsListedAndPressChecked(t *testing.T) {
 		t.Fatalf("unknown button reached vacuum: err=%v sent=%d", err, sent)
 	}
 }
+
+const mapsJSON = `{"maps":[{"id":1,"name":"Ground","selected":true,"backups":[{"index":1,"date":"2026-11-01 09:00"},{"index":2,"date":"2026-11-10 09:00"}]},{"id":2,"name":"Upstairs","selected":false,"backups":[]}],"temporary_map":false}`
+
+func TestMapsListedAndActionsChecked(t *testing.T) {
+	var got mapActionRequest
+	sent := 0
+	socket := broker(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/maps":
+			w.Write([]byte(mapsJSON))
+		case "/manage_map":
+			sent++
+			json.NewDecoder(r.Body).Decode(&got)
+			w.Write([]byte(`{"accepted":true,"message":"Done"}`))
+		}
+	})
+	client := newClient(t, socket)
+	list, err := client.Maps(context.Background())
+	if err != nil || len(list.Maps) != 2 || len(list.Maps[0].Backups) != 2 {
+		t.Fatalf("list=%#v err=%v", list, err)
+	}
+	for _, in := range []MapActionInput{
+		{Action: "select", MapID: 2}, {Action: "rename", MapID: 1, Name: "Downstairs"},
+		{Action: "restore", MapID: 1, Backup: 2}, {Action: "request"},
+	} {
+		if _, err := client.ManageMap(context.Background(), in); err != nil || got.Action != in.Action || got.MapID != in.MapID {
+			t.Fatalf("%#v: got=%#v err=%v", in, got, err)
+		}
+	}
+	for _, in := range []MapActionInput{
+		{Action: "select", MapID: 7}, {Action: "restore", MapID: 2, Backup: 1}, {Action: "rename", MapID: 1},
+		{Action: "request", MapID: 1}, {Action: "wipe", MapID: 1},
+	} {
+		if _, err := client.ManageMap(context.Background(), in); !errors.Is(err, ErrInput) {
+			t.Errorf("%#v: err=%v", in, err)
+		}
+	}
+	if sent != 4 {
+		t.Fatalf("%d map actions reached the vacuum", sent)
+	}
+}
+
+func TestRoomActionsAndOptionsChecked(t *testing.T) {
+	var gotAction roomActionRequest
+	var gotOption roomOptionRequest
+	sent := 0
+	socket := broker(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rooms":
+			w.Write([]byte(mapRooms[:len(mapRooms)-len(`],"bounds":[-5000,-5000,5000,5000]}`)] + `,{"id":5,"name":"Hall"}],"bounds":[-5000,-5000,5000,5000]}`))
+		case "/room_options":
+			w.Write([]byte(`{"options":[{"name":"mop_pressure","kind":"select","current":"medium","choices":[{"label":"light","value":1},{"label":"medium","value":2}]}],"types":[{"label":"Room","value":0},{"label":"Kitchen","value":4}]}`))
+		case "/manage_rooms":
+			sent++
+			json.NewDecoder(r.Body).Decode(&gotAction)
+			w.Write([]byte(`{"accepted":true,"message":"Done"}`))
+		case "/set_room_option":
+			sent++
+			json.NewDecoder(r.Body).Decode(&gotOption)
+			w.Write([]byte(`{"accepted":true,"message":"Done"}`))
+		}
+	})
+	client := newClient(t, socket)
+	ok := []RoomActionInput{
+		{Action: "rename", Rooms: []int{3}, Name: "Kitchen"},
+		{Action: "set_type", Rooms: []int{3}, Type: "kitchen"},
+		{Action: "merge", Rooms: []int{3, 5}},
+		{Action: "split", Rooms: []int{3}, Line: &[4]int{0, 0, 1000, 0}},
+		{Action: "order", Rooms: []int{5, 3}},
+		{Action: "hide", Rooms: []int{5}},
+	}
+	for _, in := range ok {
+		if _, err := client.ManageRooms(context.Background(), in); err != nil || gotAction.Action != in.Action {
+			t.Fatalf("%#v: got=%#v err=%v", in, gotAction, err)
+		}
+	}
+	if gotAction.Action != "hide" || len(gotAction.Rooms) != 1 {
+		t.Fatalf("got=%#v", gotAction)
+	}
+	bad := []RoomActionInput{
+		{Action: "rename", Rooms: []int{9}, Name: "X"},
+		{Action: "set_type", Rooms: []int{3}, Type: "garage"},
+		{Action: "split", Rooms: []int{3}},
+		{Action: "split", Rooms: []int{3}, Line: &[4]int{0, 0, 9000, 0}},
+		{Action: "merge", Rooms: []int{3}, Line: &[4]int{0, 0, 10, 0}},
+		{Action: "order", Rooms: []int{3}},
+	}
+	for _, in := range bad {
+		if _, err := client.ManageRooms(context.Background(), in); !errors.Is(err, ErrInput) {
+			t.Errorf("%#v: err=%v", in, err)
+		}
+	}
+	options, err := client.RoomOptions(context.Background(), RoomOptionsInput{Room: 3})
+	if err != nil || len(options.Options) != 1 || len(options.Types) != 2 {
+		t.Fatalf("options=%#v err=%v", options, err)
+	}
+	if _, err := client.SetRoomOption(context.Background(), SetRoomOptionInput{Room: 3, Name: "mop_pressure", Value: "light"}); err != nil || gotOption != (roomOptionRequest{3, "mop_pressure", 1}) {
+		t.Fatalf("got=%#v err=%v", gotOption, err)
+	}
+	if _, err := client.SetRoomOption(context.Background(), SetRoomOptionInput{Room: 9, Name: "mop_pressure", Value: "light"}); !errors.Is(err, ErrInput) {
+		t.Fatalf("unknown room accepted: %v", err)
+	}
+	if sent != len(ok)+1 {
+		t.Fatalf("%d room changes reached the vacuum", sent)
+	}
+}

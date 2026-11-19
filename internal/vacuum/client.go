@@ -224,6 +224,78 @@ type pressRequest struct {
 	Name string `json:"name"`
 }
 
+type MapBackup struct {
+	Index int    `json:"index"`
+	Date  string `json:"date"`
+}
+
+type MapInfo struct {
+	ID       int         `json:"id"`
+	Name     string      `json:"name"`
+	Selected bool        `json:"selected"`
+	Backups  []MapBackup `json:"backups"`
+}
+
+type MapsResult struct {
+	Maps         []MapInfo `json:"maps"`
+	TemporaryMap bool      `json:"temporary_map"`
+}
+
+type MapActionInput struct {
+	Action string `json:"action" jsonschema:"select, rename, delete, backup, restore, request, save_temporary, discard_temporary, or replace_temporary"`
+	MapID  int    `json:"map_id,omitempty" jsonschema:"map ID from vacuum_maps; not used for request, save_temporary or discard_temporary"`
+	Name   string `json:"name,omitempty" jsonschema:"new map name, 1-32 characters; only for rename"`
+	Backup int    `json:"backup,omitempty" jsonschema:"backup index from vacuum_maps; only for restore"`
+}
+
+type mapActionRequest struct {
+	Action string `json:"action"`
+	MapID  int    `json:"map_id"`
+	Name   string `json:"name"`
+	Backup int    `json:"backup"`
+}
+
+type RoomActionInput struct {
+	Action string  `json:"action" jsonschema:"rename, set_type, merge, split, order, or hide"`
+	Rooms  []int   `json:"rooms" jsonschema:"room IDs from vacuum_rooms: one for rename, set_type and split; two for merge; every room in cleaning order for order (empty clears it); rooms to hide for hide (empty shows all)"`
+	Name   string  `json:"name,omitempty" jsonschema:"new room name, 1-32 characters; only for rename"`
+	Type   string  `json:"type,omitempty" jsonschema:"room type label from vacuum_room_options types; only for set_type"`
+	Line   *[4]int `json:"line,omitempty" jsonschema:"[x0, y0, x1, y1] dividing line inside the map; only for split"`
+}
+
+type roomActionRequest struct {
+	Action string  `json:"action"`
+	Rooms  []int   `json:"rooms"`
+	Name   string  `json:"name"`
+	Type   int     `json:"type"`
+	Line   *[4]int `json:"line"`
+}
+
+type RoomOptionsInput struct {
+	Room int `json:"room" jsonschema:"room ID from vacuum_rooms"`
+}
+
+type RoomOptionsResult struct {
+	Options []Option `json:"options"`
+	Types   []Choice `json:"types"`
+}
+
+type roomOptionsRequest struct {
+	Room int `json:"room"`
+}
+
+type SetRoomOptionInput struct {
+	Room  int    `json:"room" jsonschema:"room ID from vacuum_rooms"`
+	Name  string `json:"name" jsonschema:"setting name from vacuum_room_options"`
+	Value string `json:"value" jsonschema:"one of the listed labels, or a number on the step within the range"`
+}
+
+type roomOptionRequest struct {
+	Room  int    `json:"room"`
+	Name  string `json:"name"`
+	Value int    `json:"value"`
+}
+
 type commandRequest struct {
 	Action  string   `json:"action"`
 	Rooms   []int    `json:"rooms"`
@@ -634,30 +706,37 @@ func (c *Client) allOptions(ctx context.Context) (OptionsResult, error) {
 	if out.Options == nil || len(out.Options) > 400 {
 		return OptionsResult{}, errReply
 	}
-	for _, o := range out.Options {
+	if _, err := validOptions(out.Options); err != nil {
+		return OptionsResult{}, err
+	}
+	return out, nil
+}
+
+func validOptions(options []Option) ([]Option, error) {
+	for _, o := range options {
 		if !optionName.MatchString(o.Name) || !boundedText(o.Current, 64) || len(o.Choices) > 64 {
-			return OptionsResult{}, errReply
+			return nil, errReply
 		}
 		switch o.Kind {
 		case "switch", "select":
 			if len(o.Choices) == 0 {
-				return OptionsResult{}, errReply
+				return nil, errReply
 			}
 		case "number":
 			if o.Step < 1 || o.Min > o.Max {
-				return OptionsResult{}, errReply
+				return nil, errReply
 			}
 		case "time":
 		default:
-			return OptionsResult{}, errReply
+			return nil, errReply
 		}
 		for _, choice := range o.Choices {
 			if !boundedText(choice.Label, 64) || choice.Label == "" {
-				return OptionsResult{}, errReply
+				return nil, errReply
 			}
 		}
 	}
-	return out, nil
+	return options, nil
 }
 
 // Options lists every setting the vacuum has, optionally filtered by words.
@@ -717,16 +796,12 @@ func parseOptionValue(o Option, value string) (int, bool) {
 	return 0, false
 }
 
-// SetOption changes one reported setting after the verified core accepts the
-// value against the setting's allowed values or range.
-func (c *Client) SetOption(ctx context.Context, in SetOptionInput) (CommandResult, error) {
-	all, err := c.allOptions(ctx)
-	if err != nil {
-		return CommandResult{}, err
-	}
-	reported := make([]policy.VacuumOption, 0, len(all.Options))
+// reportedOptions converts reported settings into the core's form and parses
+// the requested value for the named one.
+func reportedOptions(options []Option, name, raw string) ([]policy.VacuumOption, int, bool) {
+	reported := make([]policy.VacuumOption, 0, len(options))
 	value, parsed := 0, false
-	for _, o := range all.Options {
+	for _, o := range options {
 		entry := policy.VacuumOption{Name: o.Name, Lowest: o.Min, Highest: o.Max, Step: o.Step}
 		switch o.Kind {
 		case "switch", "select":
@@ -737,10 +812,21 @@ func (c *Client) SetOption(ctx context.Context, in SetOptionInput) (CommandResul
 			entry.Lowest, entry.Highest, entry.Step = 0, 1439, 1
 		}
 		reported = append(reported, entry)
-		if o.Name == in.Name {
-			value, parsed = parseOptionValue(o, in.Value)
+		if o.Name == name {
+			value, parsed = parseOptionValue(o, raw)
 		}
 	}
+	return reported, value, parsed
+}
+
+// SetOption changes one reported setting after the verified core accepts the
+// value against the setting's allowed values or range.
+func (c *Client) SetOption(ctx context.Context, in SetOptionInput) (CommandResult, error) {
+	all, err := c.allOptions(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	reported, value, parsed := reportedOptions(all.Options, in.Name, in.Value)
 	if !parsed || !policy.ValidVacuumOption(in.Name, value, reported) {
 		return CommandResult{}, ErrInput
 	}
@@ -779,6 +865,146 @@ func (c *Client) Press(ctx context.Context, in PressInput) (CommandResult, error
 	return c.accepted(ctx, "/press", pressRequest{Name: in.Name})
 }
 
+func (c *Client) Maps(ctx context.Context) (MapsResult, error) {
+	var out MapsResult
+	if err := c.post(ctx, "/maps", struct{}{}, &out); err != nil {
+		return MapsResult{}, err
+	}
+	if out.Maps == nil || len(out.Maps) > 16 {
+		return MapsResult{}, errReply
+	}
+	for _, m := range out.Maps {
+		if m.ID < 1 || m.ID > 1000000 || !boundedText(m.Name, 64) || len(m.Backups) > 32 {
+			return MapsResult{}, errReply
+		}
+		for _, b := range m.Backups {
+			if b.Index < 1 || b.Index > 32 || !boundedText(b.Date, 64) {
+				return MapsResult{}, errReply
+			}
+		}
+	}
+	return out, nil
+}
+
+// ManageMap selects, renames, deletes, backs up or restores a listed map,
+// after the verified core checks the map and backup against vacuum_maps.
+func (c *Client) ManageMap(ctx context.Context, in MapActionInput) (CommandResult, error) {
+	in.Name = strings.TrimSpace(in.Name)
+	if !boundedText(in.Name, 64) {
+		return CommandResult{}, ErrInput
+	}
+	maps, err := c.Maps(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	known, backups := []int{}, 0
+	for _, m := range maps.Maps {
+		known = append(known, m.ID)
+		if m.ID == in.MapID {
+			backups = len(m.Backups)
+		}
+	}
+	if !policy.ValidVacuumMapAction(in.Action, in.MapID, known, utf8.RuneCountInString(in.Name), in.Backup, backups) {
+		return CommandResult{}, ErrInput
+	}
+	return c.accepted(ctx, "/manage_map", mapActionRequest{Action: in.Action, MapID: in.MapID, Name: in.Name, Backup: in.Backup})
+}
+
+func (c *Client) roomOptions(ctx context.Context, room int) (RoomOptionsResult, error) {
+	var out RoomOptionsResult
+	if err := c.post(ctx, "/room_options", roomOptionsRequest{Room: room}, &out); err != nil {
+		return RoomOptionsResult{}, err
+	}
+	if out.Options == nil || len(out.Options) > 64 || len(out.Types) > 64 {
+		return RoomOptionsResult{}, errReply
+	}
+	if _, err := validOptions(out.Options); err != nil {
+		return RoomOptionsResult{}, err
+	}
+	for _, t := range out.Types {
+		if !boundedText(t.Label, 64) || t.Label == "" {
+			return RoomOptionsResult{}, errReply
+		}
+	}
+	return out, nil
+}
+
+// reportedRoom asks the core whether room is one the vacuum reported.
+func reportedRoom(room int, known []int) bool {
+	return policy.ValidVacuumCommand("clean_rooms", []int{room}, known, 1, -1)
+}
+
+// RoomOptions lists the per-room settings and room types for one reported room.
+func (c *Client) RoomOptions(ctx context.Context, in RoomOptionsInput) (RoomOptionsResult, error) {
+	rooms, err := c.Rooms(ctx)
+	if err != nil {
+		return RoomOptionsResult{}, err
+	}
+	if !reportedRoom(in.Room, roomIDs(rooms)) {
+		return RoomOptionsResult{}, ErrInput
+	}
+	return c.roomOptions(ctx, in.Room)
+}
+
+// ManageRooms renames, retypes, merges, splits, orders or hides rooms after
+// the verified core checks every room, type and line against the vacuum.
+func (c *Client) ManageRooms(ctx context.Context, in RoomActionInput) (CommandResult, error) {
+	in.Name = strings.TrimSpace(in.Name)
+	if !boundedText(in.Name, 64) || !boundedText(in.Type, 64) || len(in.Rooms) > 64 {
+		return CommandResult{}, ErrInput
+	}
+	rooms, err := c.Rooms(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	request := roomActionRequest{Action: in.Action, Rooms: in.Rooms, Name: in.Name, Line: in.Line}
+	if request.Rooms == nil {
+		request.Rooms = []int{}
+	}
+	var types []int
+	if in.Action == "set_type" && len(in.Rooms) == 1 {
+		options, err := c.roomOptions(ctx, in.Rooms[0])
+		if err != nil {
+			return CommandResult{}, err
+		}
+		request.Type = -1
+		for _, t := range options.Types {
+			types = append(types, t.Value)
+			if strings.EqualFold(t.Label, in.Type) {
+				request.Type = t.Value
+			}
+		}
+	}
+	if in.Line != nil && (rooms.Bounds == nil || !policy.ValidVacuumLine(*in.Line, *rooms.Bounds)) {
+		return CommandResult{}, ErrInput
+	}
+	if !policy.ValidVacuumRoomAction(in.Action, request.Rooms, roomIDs(rooms), utf8.RuneCountInString(in.Name), request.Type, types, in.Line != nil) {
+		return CommandResult{}, ErrInput
+	}
+	return c.accepted(ctx, "/manage_rooms", request)
+}
+
+// SetRoomOption changes one per-room setting for a reported room.
+func (c *Client) SetRoomOption(ctx context.Context, in SetRoomOptionInput) (CommandResult, error) {
+	rooms, err := c.Rooms(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	known := roomIDs(rooms)
+	if !reportedRoom(in.Room, known) {
+		return CommandResult{}, ErrInput
+	}
+	options, err := c.roomOptions(ctx, in.Room)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	reported, value, parsed := reportedOptions(options.Options, in.Name, in.Value)
+	if !parsed || !policy.ValidVacuumRoomOption(in.Room, known, in.Name, value, reported) {
+		return CommandResult{}, ErrInput
+	}
+	return c.accepted(ctx, "/set_room_option", roomOptionRequest{Room: in.Room, Name: in.Name, Value: value})
+}
+
 func validBox(box [4]int) bool {
 	const limit = 1000000
 	return box[0] < box[2] && box[1] < box[3] && box[0] > -limit && box[1] > -limit && box[2] < limit && box[3] < limit
@@ -805,7 +1031,7 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 		return ErrInput
 	}
 	limit := c.quick
-	if path == "/map" || path == "/command" || path == "/setting" || path == "/move" || path == "/obstacle_photo" || path == "/shortcut" || path == "/set_option" || path == "/press" {
+	if path == "/map" || path == "/command" || path == "/setting" || path == "/move" || path == "/obstacle_photo" || path == "/shortcut" || path == "/set_option" || path == "/press" || path == "/manage_map" || path == "/manage_rooms" || path == "/set_room_option" {
 		limit = c.slow
 	}
 	parent := ctx

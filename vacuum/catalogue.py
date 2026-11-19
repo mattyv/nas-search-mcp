@@ -9,6 +9,7 @@ import ast
 from pathlib import Path
 
 TABLES = {'switch': 'SWITCHES', 'select': 'SELECTS', 'number': 'NUMBERS', 'time': 'TIMES'}
+ROOM_TABLES = {'select': 'SEGMENT_SELECTS', 'number': 'SEGMENT_NUMBERS'}
 FAMILIES = {
     'DreameVacuumProperty': 'property',
     'DreameVacuumAutoSwitchProperty': 'auto_switch',
@@ -67,10 +68,10 @@ def _entry(kind, call):
     return entry
 
 
-def load(folder):
-    """Return the vacuum-wide settings described in the integration's platform files."""
+def load(folder, rooms=False):
+    """Return the vacuum-wide (or, with rooms=True, per-room) settings in the platform files."""
     entries, seen = [], set()
-    for kind, table in TABLES.items():
+    for kind, table in (ROOM_TABLES if rooms else TABLES).items():
         path = Path(folder) / f'{kind}.py'
         if not path.is_file():
             continue

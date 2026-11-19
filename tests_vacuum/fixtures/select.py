@@ -11,4 +11,9 @@ SELECTS: tuple[DreameVacuumSelectEntityDescription, ...] = (
 )
 SEGMENT_SELECTS: tuple[DreameVacuumSelectEntityDescription, ...] = (
     DreameVacuumSelectEntityDescription(key="ignored_segment_select"),
+    DreameVacuumSelectEntityDescription(key=DreameVacuumProperty.MOP_PRESSURE.name.lower()),
+    DreameVacuumSelectEntityDescription(key="cleaning_times", options=lambda entity: [f"{i}x" for i in range(1, 4)]),
+    DreameVacuumSelectEntityDescription(key="mop_type", options=lambda entity: ["a", "b", "c"]),
+    DreameVacuumSelectEntityDescription(key="order"),
+    DreameVacuumSelectEntityDescription(key="name"),
 )

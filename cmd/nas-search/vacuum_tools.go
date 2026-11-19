@@ -84,6 +84,26 @@ func addVacuumTools(server *mcp.Server) {
 		out, err := client.Press(ctx, in)
 		return nil, out, err
 	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_maps", Description: "List the robot vacuum's saved maps (for example one per floor): ID, name, which is selected, and its backups with dates. temporary_map is true when a freshly scanned map is waiting to be saved, discarded or used to replace a saved map.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false), IdempotentHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in VacuumEmptyInput) (*mcp.CallToolResult, vacuum.MapsResult, error) {
+		out, err := client.Maps(ctx)
+		return nil, out, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_manage_map", Description: "Manage the robot vacuum's saved maps. action: select (switch to map_id), rename (map_id, name), delete (map_id; permanent), backup (map_id), restore (map_id and backup index from vacuum_maps; replaces the current map), request (refresh the map), save_temporary, discard_temporary, or replace_temporary (map_id to overwrite with the new scan). Confirm delete, restore and replace with the user first. Only use when the user asks.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(true), IdempotentHint: false, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.MapActionInput) (*mcp.CallToolResult, vacuum.CommandResult, error) {
+		out, err := client.ManageMap(ctx, in)
+		return nil, out, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_manage_rooms", Description: "Manage rooms on the selected map, using IDs from vacuum_rooms. action: rename (one room, name), set_type (one room, type label from vacuum_room_options), merge (two neighbouring rooms into one), split (one room along line [x0, y0, x1, y1] inside the map; use the room's box from vacuum_rooms), order (every room in the order to clean them; empty clears the custom order), or hide (rooms to hide; empty shows all). Merge and split change the map, so confirm with the user first. Only use when the user asks.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(true), IdempotentHint: false, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.RoomActionInput) (*mcp.CallToolResult, vacuum.CommandResult, error) {
+		out, err := client.ManageRooms(ctx, in)
+		return nil, out, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_room_options", Description: "List one room's own cleaning settings (suction, water or mop wetness, cleaning mode, passes, mopping route, cleaning route, mop pressure and temperature, mop type, floor material and direction, visibility) with current values and allowed choices, plus the room types available for vacuum_manage_rooms set_type.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false), IdempotentHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.RoomOptionsInput) (*mcp.CallToolResult, vacuum.RoomOptionsResult, error) {
+		out, err := client.RoomOptions(ctx, in)
+		return nil, out, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_set_room_option", Description: "Change one room setting listed by vacuum_room_options, for example mop_pressure strong for the kitchen. Only listed settings with allowed values are accepted. Only use when the user asks.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(false), IdempotentHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.SetRoomOptionInput) (*mcp.CallToolResult, vacuum.CommandResult, error) {
+		out, err := client.SetRoomOption(ctx, in)
+		return nil, out, err
+	})
 	if !enabled("NAS_VACUUM_CAMERA", true) {
 		return
 	}

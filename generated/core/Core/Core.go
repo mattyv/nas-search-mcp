@@ -610,6 +610,71 @@ func (_static *CompanionStruct_Default___) ValidVacuumOption(name _dafny.Sequenc
 func (_static *CompanionStruct_Default___) ValidVacuumButton(name _dafny.Sequence, known _dafny.Sequence) bool {
 	return _dafny.Companion_Sequence_.Contains(known, name)
 }
+func (_static *CompanionStruct_Default___) ValidVacuumMapAction(action _dafny.Sequence, mapId _dafny.Int, known _dafny.Sequence, nameLength _dafny.Int, backup _dafny.Int, backups _dafny.Int) bool {
+	if _dafny.Companion_Sequence_.Contains(_dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("request"), _dafny.UnicodeSeqOfUtf8Bytes("save_temporary"), _dafny.UnicodeSeqOfUtf8Bytes("discard_temporary")), action) {
+		return (((mapId).Sign() == 0) && ((nameLength).Sign() == 0)) && ((backup).Sign() == 0)
+	} else if _dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("rename")) {
+		return ((_dafny.Companion_Sequence_.Contains(known, mapId)) && (((_dafny.One).Cmp(nameLength) <= 0) && ((nameLength).Cmp(_dafny.IntOfInt64(32)) <= 0))) && ((backup).Sign() == 0)
+	} else if _dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("restore")) {
+		return ((_dafny.Companion_Sequence_.Contains(known, mapId)) && ((nameLength).Sign() == 0)) && (((_dafny.One).Cmp(backup) <= 0) && ((backup).Cmp(backups) <= 0))
+	} else if _dafny.Companion_Sequence_.Contains(_dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("select"), _dafny.UnicodeSeqOfUtf8Bytes("delete"), _dafny.UnicodeSeqOfUtf8Bytes("backup"), _dafny.UnicodeSeqOfUtf8Bytes("replace_temporary")), action) {
+		return ((_dafny.Companion_Sequence_.Contains(known, mapId)) && ((nameLength).Sign() == 0)) && ((backup).Sign() == 0)
+	} else {
+		return false
+	}
+}
+func (_static *CompanionStruct_Default___) DistinctKnown(rooms _dafny.Sequence, known _dafny.Sequence) bool {
+	return (Companion_Default___.DistinctInts(rooms)) && (_dafny.Quantifier((rooms).UniqueElements(), true, func(_forall_var_0 _dafny.Int) bool {
+		var _0_r _dafny.Int
+		_0_r = interface{}(_forall_var_0).(_dafny.Int)
+		return !(_dafny.Companion_Sequence_.Contains(rooms, _0_r)) || (_dafny.Companion_Sequence_.Contains(known, _0_r))
+	}))
+}
+func (_static *CompanionStruct_Default___) ValidVacuumRoomAction(action _dafny.Sequence, rooms _dafny.Sequence, known _dafny.Sequence, nameLength _dafny.Int, roomType _dafny.Int, types _dafny.Sequence, hasLine bool) bool {
+	return ((Companion_Default___.DistinctKnown(rooms, known)) && ((hasLine) == (_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("split"))))) && (func() bool {
+		var _source0 _dafny.Sequence = action
+		_ = _source0
+		{
+			if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("rename")) {
+				return (((_dafny.IntOfUint32((rooms).Cardinality())).Cmp(_dafny.One) == 0) && (((_dafny.One).Cmp(nameLength) <= 0) && ((nameLength).Cmp(_dafny.IntOfInt64(32)) <= 0))) && ((roomType).Sign() == 0)
+			}
+		}
+		{
+			if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("set_type")) {
+				return (((_dafny.IntOfUint32((rooms).Cardinality())).Cmp(_dafny.One) == 0) && ((nameLength).Sign() == 0)) && (_dafny.Companion_Sequence_.Contains(types, roomType))
+			}
+		}
+		{
+			if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("merge")) {
+				return (((_dafny.IntOfUint32((rooms).Cardinality())).Cmp(_dafny.IntOfInt64(2)) == 0) && ((nameLength).Sign() == 0)) && ((roomType).Sign() == 0)
+			}
+		}
+		{
+			if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("split")) {
+				return (((_dafny.IntOfUint32((rooms).Cardinality())).Cmp(_dafny.One) == 0) && ((nameLength).Sign() == 0)) && ((roomType).Sign() == 0)
+			}
+		}
+		{
+			if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("order")) {
+				return ((((_dafny.IntOfUint32((rooms).Cardinality())).Sign() == 0) || ((_dafny.IntOfUint32((rooms).Cardinality())).Cmp(_dafny.IntOfUint32((known).Cardinality())) == 0)) && ((nameLength).Sign() == 0)) && ((roomType).Sign() == 0)
+			}
+		}
+		{
+			if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("hide")) {
+				return ((nameLength).Sign() == 0) && ((roomType).Sign() == 0)
+			}
+		}
+		{
+			return false
+		}
+	}())
+}
+func (_static *CompanionStruct_Default___) ValidVacuumLine(line _dafny.Tuple, bounds _dafny.Tuple) bool {
+	return (((((((*(bounds).IndexInt(0)).(_dafny.Int)).Cmp((*(line).IndexInt(0)).(_dafny.Int)) <= 0) && (((*(line).IndexInt(0)).(_dafny.Int)).Cmp((*(bounds).IndexInt(2)).(_dafny.Int)) <= 0)) && ((((*(bounds).IndexInt(0)).(_dafny.Int)).Cmp((*(line).IndexInt(2)).(_dafny.Int)) <= 0) && (((*(line).IndexInt(2)).(_dafny.Int)).Cmp((*(bounds).IndexInt(2)).(_dafny.Int)) <= 0))) && ((((*(bounds).IndexInt(1)).(_dafny.Int)).Cmp((*(line).IndexInt(1)).(_dafny.Int)) <= 0) && (((*(line).IndexInt(1)).(_dafny.Int)).Cmp((*(bounds).IndexInt(3)).(_dafny.Int)) <= 0))) && ((((*(bounds).IndexInt(1)).(_dafny.Int)).Cmp((*(line).IndexInt(3)).(_dafny.Int)) <= 0) && (((*(line).IndexInt(3)).(_dafny.Int)).Cmp((*(bounds).IndexInt(3)).(_dafny.Int)) <= 0))) && ((((*(line).IndexInt(0)).(_dafny.Int)).Cmp((*(line).IndexInt(2)).(_dafny.Int)) != 0) || (((*(line).IndexInt(1)).(_dafny.Int)).Cmp((*(line).IndexInt(3)).(_dafny.Int)) != 0))
+}
+func (_static *CompanionStruct_Default___) ValidVacuumRoomOption(room _dafny.Int, known _dafny.Sequence, name _dafny.Sequence, value _dafny.Int, options _dafny.Sequence) bool {
+	return (_dafny.Companion_Sequence_.Contains(known, room)) && (Companion_Default___.ValidVacuumOption(name, value, options))
+}
 func (_static *CompanionStruct_Default___) ValidVacuumShortcut(action _dafny.Sequence, id _dafny.Int, known _dafny.Sequence, nameLength _dafny.Int) bool {
 	return ((_dafny.Companion_Sequence_.Contains(_dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("start"), _dafny.UnicodeSeqOfUtf8Bytes("rename"), _dafny.UnicodeSeqOfUtf8Bytes("delete")), action)) && (_dafny.Companion_Sequence_.Contains(known, id))) && ((func() bool {
 		if _dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("rename")) {

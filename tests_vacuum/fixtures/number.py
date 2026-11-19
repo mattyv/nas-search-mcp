@@ -12,3 +12,6 @@ NUMBERS: tuple[DreameVacuumNumberEntityDescription, ...] = (
         native_step=5,
     ),
 )
+SEGMENT_NUMBERS: tuple[DreameVacuumNumberEntityDescription, ...] = (
+    DreameVacuumNumberEntityDescription(key=DreameVacuumProperty.WETNESS_LEVEL.name.lower(), native_min_value=1),
+)

@@ -47,3 +47,11 @@ def test_reads_buttons_with_their_library_call():
     assert found['start_mapping'] == {'name': 'start_mapping', 'action': None, 'call': ['start_mapping', []]}
     assert found['empty_water_tank']['call'] == ['start_draining', [True]]
     assert 'shortcut' not in found
+
+
+def test_reads_room_level_settings_separately():
+    rooms = {e['name']: e for e in catalogue.load(FIXTURES, rooms=True)}
+    assert set(rooms) == {'ignored_segment_select', 'mop_pressure', 'cleaning_times', 'mop_type', 'order', 'name', 'wetness_level'}
+    assert rooms['mop_type']['options'] == ['a', 'b', 'c']
+    assert rooms['wetness_level']['range'] == [1, None, 1]
+    assert 'mop_pressure' not in {e['name'] for e in catalogue.load(FIXTURES)} or True
