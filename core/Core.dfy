@@ -841,8 +841,13 @@ module Core {
 
   // Robot vacuum control. The adapter forwards only these commands to the
   // vacuum broker; everything else the vendor library can do stays unreachable.
-  const VacuumActions: seq<string> := ["start", "pause", "stop", "dock", "locate", "clean_rooms"]
+  const VacuumSimpleActions: seq<string> := ["start", "pause", "stop", "dock", "locate",
+    "empty_dustbin", "wash_mops", "dry_mops", "stop_drying"]
+  const VacuumActions: seq<string> := VacuumSimpleActions + ["clean_rooms", "clean_zones", "clean_spot"]
   const MaxVacuumRooms: nat := 32
+  const MaxVacuumZones: nat := 5
+  // Smallest zone side, in map millimetres; smaller zones are mis-aimed points.
+  const MinVacuumZoneSide: nat := 300
 
   function VacuumAction(action: string): bool
     ensures VacuumAction(action) <==> action in VacuumActions
@@ -856,27 +861,117 @@ module Core {
     action == "clean_rooms"
   }
 
+  function VacuumNeedsMap(action: string): bool
+    ensures VacuumNeedsMap(action) <==> action == "clean_zones" || action == "clean_spot"
+  {
+    action == "clean_zones" || action == "clean_spot"
+  }
+
   predicate DistinctInts(xs: seq<int>) {
     forall i, j | 0 <= i < j < |xs| :: xs[i] != xs[j]
   }
 
-  // Room cleaning names only rooms the vacuum reported, each once, with 1-3
-  // passes and suction -1 (keep current) or 0-3 (quiet..turbo). Other commands
-  // carry no room, pass, or suction arguments.
+  predicate ValidPassesAndSuction(repeats: int, suction: int) {
+    1 <= repeats <= 3 && -1 <= suction <= 3
+  }
+
+  // Simple commands carry no room, pass, or suction arguments. Room cleaning
+  // names only rooms the vacuum reported, each once, with 1-3 passes and
+  // suction -1 (keep current) or 0-3 (quiet..turbo). Zone and spot cleaning are
+  // checked by ValidVacuumZones and ValidVacuumSpot instead.
   function ValidVacuumCommand(action: string, rooms: seq<int>, known: seq<int>, repeats: int, suction: int): bool
-    ensures ValidVacuumCommand(action, rooms, known, repeats, suction) ==> VacuumAction(action)
+    ensures ValidVacuumCommand(action, rooms, known, repeats, suction) ==> VacuumAction(action) && !VacuumNeedsMap(action)
     ensures ValidVacuumCommand(action, rooms, known, repeats, suction) && VacuumNeedsRooms(action) ==>
       1 <= |rooms| <= MaxVacuumRooms && DistinctInts(rooms) && (forall r <- rooms :: r in known) &&
-      1 <= repeats <= 3 && -1 <= suction <= 3
+      ValidPassesAndSuction(repeats, suction)
     ensures ValidVacuumCommand(action, rooms, known, repeats, suction) && !VacuumNeedsRooms(action) ==>
-      |rooms| == 0 && repeats == 0 && suction == -1
+      action in VacuumSimpleActions && |rooms| == 0 && repeats == 0 && suction == -1
   {
-    VacuumAction(action) &&
     if VacuumNeedsRooms(action) then
       1 <= |rooms| <= MaxVacuumRooms && DistinctInts(rooms) && (forall r <- rooms :: r in known) &&
-      1 <= repeats <= 3 && -1 <= suction <= 3
+      ValidPassesAndSuction(repeats, suction)
     else
-      |rooms| == 0 && repeats == 0 && suction == -1
+      action in VacuumSimpleActions && |rooms| == 0 && repeats == 0 && suction == -1
+  }
+
+  // Each action carries only its own kind of target: rooms, zones, or a point.
+  function VacuumTargetsMatch(action: string, rooms: nat, zones: nat, point: bool): bool
+    ensures VacuumTargetsMatch(action, rooms, zones, point) && !VacuumNeedsMap(action) ==> zones == 0 && !point
+    ensures VacuumTargetsMatch(action, rooms, zones, point) && VacuumNeedsMap(action) ==> rooms == 0
+  {
+    (action == "clean_zones" ==> rooms == 0 && !point) &&
+    (action == "clean_spot" ==> rooms == 0 && zones == 0 && point) &&
+    (action != "clean_zones" ==> zones == 0) &&
+    (action != "clean_spot" ==> !point)
+  }
+
+  // A zone is (x0, y0, x1, y1); bounds is the map's extent in the same units.
+  predicate ZoneInside(zone: (int, int, int, int), bounds: (int, int, int, int)) {
+    bounds.0 <= zone.0 && zone.0 + MinVacuumZoneSide <= zone.2 && zone.2 <= bounds.2 &&
+    bounds.1 <= zone.1 && zone.1 + MinVacuumZoneSide <= zone.3 && zone.3 <= bounds.3
+  }
+
+  function ValidVacuumZones(zones: seq<(int, int, int, int)>, bounds: (int, int, int, int), repeats: int, suction: int): bool
+    ensures ValidVacuumZones(zones, bounds, repeats, suction) ==>
+      1 <= |zones| <= MaxVacuumZones && (forall z <- zones :: ZoneInside(z, bounds)) &&
+      ValidPassesAndSuction(repeats, suction)
+  {
+    1 <= |zones| <= MaxVacuumZones && (forall z <- zones :: ZoneInside(z, bounds)) &&
+    ValidPassesAndSuction(repeats, suction)
+  }
+
+  function ValidVacuumSpot(x: int, y: int, bounds: (int, int, int, int), repeats: int, suction: int): bool
+    ensures ValidVacuumSpot(x, y, bounds, repeats, suction) ==>
+      bounds.0 <= x <= bounds.2 && bounds.1 <= y <= bounds.3 && ValidPassesAndSuction(repeats, suction)
+  {
+    bounds.0 <= x <= bounds.2 && bounds.1 <= y <= bounds.3 && ValidPassesAndSuction(repeats, suction)
+  }
+
+  // Settings the assistant may change, each with its allowed integer range.
+  // Enumerated values are indexes the adapter maps from names.
+  datatype SettingRange = NoSetting | Range(lo: int, hi: int, perRoom: bool)
+
+  function VacuumSettingRange(name: string): SettingRange {
+    match name
+    case "cleaning_mode" => Range(0, 3, false)
+    case "suction" => Range(0, 3, false)
+    case "mop_wetness" => Range(0, 2, false)
+    case "volume" => Range(0, 100, false)
+    case "dnd" => Range(0, 1, false)
+    case "dnd_start" => Range(0, 1439, false)
+    case "dnd_end" => Range(0, 1439, false)
+    case "child_lock" => Range(0, 1, false)
+    case "carpet_avoidance" => Range(0, 1, false)
+    case "carpet_recognition" => Range(0, 1, false)
+    case "room_mode" => Range(0, 3, true)
+    case "room_suction" => Range(0, 3, true)
+    case "room_wetness" => Range(0, 2, true)
+    case "room_passes" => Range(1, 3, true)
+    case _ => NoSetting
+  }
+
+  function VacuumSettingNeedsRoom(name: string): bool {
+    VacuumSettingRange(name).Range? && VacuumSettingRange(name).perRoom
+  }
+
+  // Whole-vacuum settings use room 0; per-room settings name a reported room.
+  function ValidVacuumSetting(name: string, value: int, room: int, known: seq<int>): bool
+    ensures ValidVacuumSetting(name, value, room, known) ==>
+      VacuumSettingRange(name).Range? &&
+      VacuumSettingRange(name).lo <= value <= VacuumSettingRange(name).hi
+    ensures ValidVacuumSetting(name, value, room, known) && VacuumSettingNeedsRoom(name) ==> room in known && room > 0
+    ensures ValidVacuumSetting(name, value, room, known) && !VacuumSettingNeedsRoom(name) ==> room == 0
+  {
+    match VacuumSettingRange(name)
+    case NoSetting => false
+    case Range(lo, hi, perRoom) =>
+      lo <= value <= hi && (if perRoom then room > 0 && room in known else room == 0)
+  }
+
+  function ValidVacuumHistoryLimit(limit: int): bool
+    ensures ValidVacuumHistoryLimit(limit) <==> 1 <= limit <= 20
+  {
+    1 <= limit <= 20
   }
 
   lemma VacuumNeverCleansUnknownRoom(action: string, rooms: seq<int>, known: seq<int>, repeats: int, suction: int, room: int)
@@ -896,4 +991,19 @@ module Core {
       assert rooms[0] in rooms;
     }
   }
+
+  lemma VacuumZoneNeverLeavesMap(zones: seq<(int, int, int, int)>, bounds: (int, int, int, int), repeats: int, suction: int, z: (int, int, int, int))
+    requires z in zones && !ZoneInside(z, bounds)
+    ensures !ValidVacuumZones(zones, bounds, repeats, suction)
+  {}
+
+  lemma VacuumUnknownSettingRejected(name: string, value: int, room: int, known: seq<int>)
+    requires VacuumSettingRange(name) == NoSetting
+    ensures !ValidVacuumSetting(name, value, room, known)
+  {}
+
+  lemma VacuumRoomSettingNeverTargetsUnknownRoom(name: string, value: int, room: int, known: seq<int>)
+    requires VacuumSettingNeedsRoom(name) && room !in known
+    ensures !ValidVacuumSetting(name, value, room, known)
+  {}
 }

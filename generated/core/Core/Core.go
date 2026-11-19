@@ -537,6 +537,9 @@ func (_static *CompanionStruct_Default___) VacuumAction(action _dafny.Sequence) 
 func (_static *CompanionStruct_Default___) VacuumNeedsRooms(action _dafny.Sequence) bool {
 	return _dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_rooms"))
 }
+func (_static *CompanionStruct_Default___) VacuumNeedsMap(action _dafny.Sequence) bool {
+	return (_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_zones"))) || (_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_spot")))
+}
 func (_static *CompanionStruct_Default___) DistinctInts(xs _dafny.Sequence) bool {
 	return _dafny.Quantifier(_dafny.IntegerRange(_dafny.Zero, _dafny.IntOfUint32((xs).Cardinality())), true, func(_forall_var_0 _dafny.Int) bool {
 		var _0_i _dafny.Int
@@ -548,17 +551,141 @@ func (_static *CompanionStruct_Default___) DistinctInts(xs _dafny.Sequence) bool
 		})
 	})
 }
+func (_static *CompanionStruct_Default___) ValidPassesAndSuction(repeats _dafny.Int, suction _dafny.Int) bool {
+	return (((_dafny.One).Cmp(repeats) <= 0) && ((repeats).Cmp(_dafny.IntOfInt64(3)) <= 0)) && (((_dafny.IntOfInt64(-1)).Cmp(suction) <= 0) && ((suction).Cmp(_dafny.IntOfInt64(3)) <= 0))
+}
 func (_static *CompanionStruct_Default___) ValidVacuumCommand(action _dafny.Sequence, rooms _dafny.Sequence, known _dafny.Sequence, repeats _dafny.Int, suction _dafny.Int) bool {
-	return (Companion_Default___.VacuumAction(action)) && ((func() bool {
-		if Companion_Default___.VacuumNeedsRooms(action) {
-			return ((((((_dafny.One).Cmp(_dafny.IntOfUint32((rooms).Cardinality())) <= 0) && ((_dafny.IntOfUint32((rooms).Cardinality())).Cmp(Companion_Default___.MaxVacuumRooms()) <= 0)) && (Companion_Default___.DistinctInts(rooms))) && (_dafny.Quantifier((rooms).UniqueElements(), true, func(_forall_var_0 _dafny.Int) bool {
-				var _0_r _dafny.Int
-				_0_r = interface{}(_forall_var_0).(_dafny.Int)
-				return !(_dafny.Companion_Sequence_.Contains(rooms, _0_r)) || (_dafny.Companion_Sequence_.Contains(known, _0_r))
-			}))) && (((_dafny.One).Cmp(repeats) <= 0) && ((repeats).Cmp(_dafny.IntOfInt64(3)) <= 0))) && (((_dafny.IntOfInt64(-1)).Cmp(suction) <= 0) && ((suction).Cmp(_dafny.IntOfInt64(3)) <= 0))
+	if Companion_Default___.VacuumNeedsRooms(action) {
+		return (((((_dafny.One).Cmp(_dafny.IntOfUint32((rooms).Cardinality())) <= 0) && ((_dafny.IntOfUint32((rooms).Cardinality())).Cmp(Companion_Default___.MaxVacuumRooms()) <= 0)) && (Companion_Default___.DistinctInts(rooms))) && (_dafny.Quantifier((rooms).UniqueElements(), true, func(_forall_var_0 _dafny.Int) bool {
+			var _0_r _dafny.Int
+			_0_r = interface{}(_forall_var_0).(_dafny.Int)
+			return !(_dafny.Companion_Sequence_.Contains(rooms, _0_r)) || (_dafny.Companion_Sequence_.Contains(known, _0_r))
+		}))) && (Companion_Default___.ValidPassesAndSuction(repeats, suction))
+	} else {
+		return (((_dafny.Companion_Sequence_.Contains(Companion_Default___.VacuumSimpleActions(), action)) && ((_dafny.IntOfUint32((rooms).Cardinality())).Sign() == 0)) && ((repeats).Sign() == 0)) && ((suction).Cmp(_dafny.IntOfInt64(-1)) == 0)
+	}
+}
+func (_static *CompanionStruct_Default___) VacuumTargetsMatch(action _dafny.Sequence, rooms _dafny.Int, zones _dafny.Int, point bool) bool {
+	return (((!(_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_zones"))) || (((rooms).Sign() == 0) && (!(point)))) && (!(_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_spot"))) || ((((rooms).Sign() == 0) && ((zones).Sign() == 0)) && (point)))) && (!(!_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_zones"))) || ((zones).Sign() == 0))) && (!(!_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_spot"))) || (!(point)))
+}
+func (_static *CompanionStruct_Default___) ZoneInside(zone _dafny.Tuple, bounds _dafny.Tuple) bool {
+	return (((((((*(bounds).IndexInt(0)).(_dafny.Int)).Cmp((*(zone).IndexInt(0)).(_dafny.Int)) <= 0) && ((((*(zone).IndexInt(0)).(_dafny.Int)).Plus(Companion_Default___.MinVacuumZoneSide())).Cmp((*(zone).IndexInt(2)).(_dafny.Int)) <= 0)) && (((*(zone).IndexInt(2)).(_dafny.Int)).Cmp((*(bounds).IndexInt(2)).(_dafny.Int)) <= 0)) && (((*(bounds).IndexInt(1)).(_dafny.Int)).Cmp((*(zone).IndexInt(1)).(_dafny.Int)) <= 0)) && ((((*(zone).IndexInt(1)).(_dafny.Int)).Plus(Companion_Default___.MinVacuumZoneSide())).Cmp((*(zone).IndexInt(3)).(_dafny.Int)) <= 0)) && (((*(zone).IndexInt(3)).(_dafny.Int)).Cmp((*(bounds).IndexInt(3)).(_dafny.Int)) <= 0)
+}
+func (_static *CompanionStruct_Default___) ValidVacuumZones(zones _dafny.Sequence, bounds _dafny.Tuple, repeats _dafny.Int, suction _dafny.Int) bool {
+	return ((((_dafny.One).Cmp(_dafny.IntOfUint32((zones).Cardinality())) <= 0) && ((_dafny.IntOfUint32((zones).Cardinality())).Cmp(Companion_Default___.MaxVacuumZones()) <= 0)) && (_dafny.Quantifier((zones).UniqueElements(), true, func(_forall_var_0 _dafny.Tuple) bool {
+		var _0_z _dafny.Tuple
+		_0_z = interface{}(_forall_var_0).(_dafny.Tuple)
+		return !(_dafny.Companion_Sequence_.Contains(zones, _0_z)) || (Companion_Default___.ZoneInside(_0_z, bounds))
+	}))) && (Companion_Default___.ValidPassesAndSuction(repeats, suction))
+}
+func (_static *CompanionStruct_Default___) ValidVacuumSpot(x _dafny.Int, y _dafny.Int, bounds _dafny.Tuple, repeats _dafny.Int, suction _dafny.Int) bool {
+	return (((((*(bounds).IndexInt(0)).(_dafny.Int)).Cmp(x) <= 0) && ((x).Cmp((*(bounds).IndexInt(2)).(_dafny.Int)) <= 0)) && ((((*(bounds).IndexInt(1)).(_dafny.Int)).Cmp(y) <= 0) && ((y).Cmp((*(bounds).IndexInt(3)).(_dafny.Int)) <= 0))) && (Companion_Default___.ValidPassesAndSuction(repeats, suction))
+}
+func (_static *CompanionStruct_Default___) VacuumSettingRange(name _dafny.Sequence) SettingRange {
+	var _source0 _dafny.Sequence = name
+	_ = _source0
+	{
+		if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("cleaning_mode")) {
+			return Companion_SettingRange_.Create_Range_(_dafny.Zero, _dafny.IntOfInt64(3), false)
 		}
-		return (((_dafny.IntOfUint32((rooms).Cardinality())).Sign() == 0) && ((repeats).Sign() == 0)) && ((suction).Cmp(_dafny.IntOfInt64(-1)) == 0)
-	})())
+	}
+	{
+		if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("suction")) {
+			return Companion_SettingRange_.Create_Range_(_dafny.Zero, _dafny.IntOfInt64(3), false)
+		}
+	}
+	{
+		if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("mop_wetness")) {
+			return Companion_SettingRange_.Create_Range_(_dafny.Zero, _dafny.IntOfInt64(2), false)
+		}
+	}
+	{
+		if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("volume")) {
+			return Companion_SettingRange_.Create_Range_(_dafny.Zero, _dafny.IntOfInt64(100), false)
+		}
+	}
+	{
+		if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("dnd")) {
+			return Companion_SettingRange_.Create_Range_(_dafny.Zero, _dafny.One, false)
+		}
+	}
+	{
+		if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("dnd_start")) {
+			return Companion_SettingRange_.Create_Range_(_dafny.Zero, _dafny.IntOfInt64(1439), false)
+		}
+	}
+	{
+		if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("dnd_end")) {
+			return Companion_SettingRange_.Create_Range_(_dafny.Zero, _dafny.IntOfInt64(1439), false)
+		}
+	}
+	{
+		if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("child_lock")) {
+			return Companion_SettingRange_.Create_Range_(_dafny.Zero, _dafny.One, false)
+		}
+	}
+	{
+		if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("carpet_avoidance")) {
+			return Companion_SettingRange_.Create_Range_(_dafny.Zero, _dafny.One, false)
+		}
+	}
+	{
+		if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("carpet_recognition")) {
+			return Companion_SettingRange_.Create_Range_(_dafny.Zero, _dafny.One, false)
+		}
+	}
+	{
+		if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("room_mode")) {
+			return Companion_SettingRange_.Create_Range_(_dafny.Zero, _dafny.IntOfInt64(3), true)
+		}
+	}
+	{
+		if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("room_suction")) {
+			return Companion_SettingRange_.Create_Range_(_dafny.Zero, _dafny.IntOfInt64(3), true)
+		}
+	}
+	{
+		if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("room_wetness")) {
+			return Companion_SettingRange_.Create_Range_(_dafny.Zero, _dafny.IntOfInt64(2), true)
+		}
+	}
+	{
+		if (_source0).Equals(_dafny.UnicodeSeqOfUtf8Bytes("room_passes")) {
+			return Companion_SettingRange_.Create_Range_(_dafny.One, _dafny.IntOfInt64(3), true)
+		}
+	}
+	{
+		return Companion_SettingRange_.Create_NoSetting_()
+	}
+}
+func (_static *CompanionStruct_Default___) VacuumSettingNeedsRoom(name _dafny.Sequence) bool {
+	return ((Companion_Default___.VacuumSettingRange(name)).Is_Range()) && ((Companion_Default___.VacuumSettingRange(name)).Dtor_perRoom())
+}
+func (_static *CompanionStruct_Default___) ValidVacuumSetting(name _dafny.Sequence, value _dafny.Int, room _dafny.Int, known _dafny.Sequence) bool {
+	var _source0 SettingRange = Companion_Default___.VacuumSettingRange(name)
+	_ = _source0
+	{
+		if _source0.Is_NoSetting() {
+			return false
+		}
+	}
+	{
+		var _0_lo _dafny.Int = _source0.Get_().(SettingRange_Range).Lo
+		_ = _0_lo
+		var _1_hi _dafny.Int = _source0.Get_().(SettingRange_Range).Hi
+		_ = _1_hi
+		var _2_perRoom bool = _source0.Get_().(SettingRange_Range).PerRoom
+		_ = _2_perRoom
+		return (((_0_lo).Cmp(value) <= 0) && ((value).Cmp(_1_hi) <= 0)) && ((func() bool {
+			if _2_perRoom {
+				return ((room).Sign() == 1) && (_dafny.Companion_Sequence_.Contains(known, room))
+			}
+			return (room).Sign() == 0
+		})())
+	}
+}
+func (_static *CompanionStruct_Default___) ValidVacuumHistoryLimit(limit _dafny.Int) bool {
+	return ((_dafny.One).Cmp(limit) <= 0) && ((limit).Cmp(_dafny.IntOfInt64(20)) <= 0)
 }
 func (_static *CompanionStruct_Default___) InlineTypes() _dafny.Set {
 	return _dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("application/pdf"), _dafny.UnicodeSeqOfUtf8Bytes("image/jpeg"), _dafny.UnicodeSeqOfUtf8Bytes("image/png"), _dafny.UnicodeSeqOfUtf8Bytes("image/gif"), _dafny.UnicodeSeqOfUtf8Bytes("image/webp"), _dafny.UnicodeSeqOfUtf8Bytes("text/plain"))
@@ -566,11 +693,150 @@ func (_static *CompanionStruct_Default___) InlineTypes() _dafny.Set {
 func (_static *CompanionStruct_Default___) ClipFlavour() _dafny.Sequence {
 	return _dafny.UnicodeSeqOfUtf8Bytes(";clip")
 }
+func (_static *CompanionStruct_Default___) VacuumSimpleActions() _dafny.Sequence {
+	return _dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("start"), _dafny.UnicodeSeqOfUtf8Bytes("pause"), _dafny.UnicodeSeqOfUtf8Bytes("stop"), _dafny.UnicodeSeqOfUtf8Bytes("dock"), _dafny.UnicodeSeqOfUtf8Bytes("locate"), _dafny.UnicodeSeqOfUtf8Bytes("empty_dustbin"), _dafny.UnicodeSeqOfUtf8Bytes("wash_mops"), _dafny.UnicodeSeqOfUtf8Bytes("dry_mops"), _dafny.UnicodeSeqOfUtf8Bytes("stop_drying"))
+}
 func (_static *CompanionStruct_Default___) VacuumActions() _dafny.Sequence {
-	return _dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("start"), _dafny.UnicodeSeqOfUtf8Bytes("pause"), _dafny.UnicodeSeqOfUtf8Bytes("stop"), _dafny.UnicodeSeqOfUtf8Bytes("dock"), _dafny.UnicodeSeqOfUtf8Bytes("locate"), _dafny.UnicodeSeqOfUtf8Bytes("clean_rooms"))
+	return _dafny.Companion_Sequence_.Concatenate(Companion_Default___.VacuumSimpleActions(), _dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("clean_rooms"), _dafny.UnicodeSeqOfUtf8Bytes("clean_zones"), _dafny.UnicodeSeqOfUtf8Bytes("clean_spot")))
 }
 func (_static *CompanionStruct_Default___) MaxVacuumRooms() _dafny.Int {
 	return _dafny.IntOfInt64(32)
 }
+func (_static *CompanionStruct_Default___) MinVacuumZoneSide() _dafny.Int {
+	return _dafny.IntOfInt64(300)
+}
+func (_static *CompanionStruct_Default___) MaxVacuumZones() _dafny.Int {
+	return _dafny.IntOfInt64(5)
+}
 
 // End of class Default__
+
+// Definition of datatype SettingRange
+type SettingRange struct {
+	Data_SettingRange_
+}
+
+func (_this SettingRange) Get_() Data_SettingRange_ {
+	return _this.Data_SettingRange_
+}
+
+type Data_SettingRange_ interface {
+	isSettingRange()
+}
+
+type CompanionStruct_SettingRange_ struct {
+}
+
+var Companion_SettingRange_ = CompanionStruct_SettingRange_{}
+
+type SettingRange_NoSetting struct {
+}
+
+func (SettingRange_NoSetting) isSettingRange() {}
+
+func (CompanionStruct_SettingRange_) Create_NoSetting_() SettingRange {
+	return SettingRange{SettingRange_NoSetting{}}
+}
+
+func (_this SettingRange) Is_NoSetting() bool {
+	_, ok := _this.Get_().(SettingRange_NoSetting)
+	return ok
+}
+
+type SettingRange_Range struct {
+	Lo      _dafny.Int
+	Hi      _dafny.Int
+	PerRoom bool
+}
+
+func (SettingRange_Range) isSettingRange() {}
+
+func (CompanionStruct_SettingRange_) Create_Range_(Lo _dafny.Int, Hi _dafny.Int, PerRoom bool) SettingRange {
+	return SettingRange{SettingRange_Range{Lo, Hi, PerRoom}}
+}
+
+func (_this SettingRange) Is_Range() bool {
+	_, ok := _this.Get_().(SettingRange_Range)
+	return ok
+}
+
+func (CompanionStruct_SettingRange_) Default() SettingRange {
+	return Companion_SettingRange_.Create_NoSetting_()
+}
+
+func (_this SettingRange) Dtor_lo() _dafny.Int {
+	return _this.Get_().(SettingRange_Range).Lo
+}
+
+func (_this SettingRange) Dtor_hi() _dafny.Int {
+	return _this.Get_().(SettingRange_Range).Hi
+}
+
+func (_this SettingRange) Dtor_perRoom() bool {
+	return _this.Get_().(SettingRange_Range).PerRoom
+}
+
+func (_this SettingRange) String() string {
+	switch data := _this.Get_().(type) {
+	case nil:
+		return "null"
+	case SettingRange_NoSetting:
+		{
+			return "Core.SettingRange.NoSetting"
+		}
+	case SettingRange_Range:
+		{
+			return "Core.SettingRange.Range" + "(" + _dafny.String(data.Lo) + ", " + _dafny.String(data.Hi) + ", " + _dafny.String(data.PerRoom) + ")"
+		}
+	default:
+		{
+			return "<unexpected>"
+		}
+	}
+}
+
+func (_this SettingRange) Equals(other SettingRange) bool {
+	switch data1 := _this.Get_().(type) {
+	case SettingRange_NoSetting:
+		{
+			_, ok := other.Get_().(SettingRange_NoSetting)
+			return ok
+		}
+	case SettingRange_Range:
+		{
+			data2, ok := other.Get_().(SettingRange_Range)
+			return ok && data1.Lo.Cmp(data2.Lo) == 0 && data1.Hi.Cmp(data2.Hi) == 0 && data1.PerRoom == data2.PerRoom
+		}
+	default:
+		{
+			return false // unexpected
+		}
+	}
+}
+
+func (_this SettingRange) EqualsGeneric(other interface{}) bool {
+	typed, ok := other.(SettingRange)
+	return ok && _this.Equals(typed)
+}
+
+func Type_SettingRange_() _dafny.TypeDescriptor {
+	return type_SettingRange_{}
+}
+
+type type_SettingRange_ struct {
+}
+
+func (_this type_SettingRange_) Default() interface{} {
+	return Companion_SettingRange_.Default()
+}
+
+func (_this type_SettingRange_) String() string {
+	return "Core.SettingRange"
+}
+func (_this SettingRange) ParentTraits_() []*_dafny.TraitID {
+	return [](*_dafny.TraitID){}
+}
+
+var _ _dafny.TraitOffspring = SettingRange{}
+
+// End of datatype SettingRange

@@ -28,3 +28,47 @@ func intSeq(values []int) dafny.Sequence {
 	}
 	return dafny.SeqOf(out...)
 }
+
+// VacuumNeedsMap reports whether action is aimed by map coordinates.
+func VacuumNeedsMap(action string) bool {
+	return core.Companion_Default___.VacuumNeedsMap(dafny.UnicodeSeqOfUtf8Bytes(action))
+}
+
+func box(values [4]int) dafny.Tuple {
+	return dafny.TupleOf(dafny.IntOf(values[0]), dafny.IntOf(values[1]), dafny.IntOf(values[2]), dafny.IntOf(values[3]))
+}
+
+// ValidVacuumZones checks zones (x0, y0, x1, y1) against the map bounds.
+func ValidVacuumZones(zones [][4]int, bounds [4]int, repeats, suction int) bool {
+	values := make([]interface{}, len(zones))
+	for i, zone := range zones {
+		values[i] = box(zone)
+	}
+	return core.Companion_Default___.ValidVacuumZones(dafny.SeqOf(values...), box(bounds), dafny.IntOf(repeats), dafny.IntOf(suction))
+}
+
+// ValidVacuumSpot checks a spot-clean point against the map bounds.
+func ValidVacuumSpot(x, y int, bounds [4]int, repeats, suction int) bool {
+	return core.Companion_Default___.ValidVacuumSpot(dafny.IntOf(x), dafny.IntOf(y), box(bounds), dafny.IntOf(repeats), dafny.IntOf(suction))
+}
+
+// VacuumSettingNeedsRoom reports whether a setting applies to one room.
+func VacuumSettingNeedsRoom(name string) bool {
+	return core.Companion_Default___.VacuumSettingNeedsRoom(dafny.UnicodeSeqOfUtf8Bytes(name))
+}
+
+// ValidVacuumSetting checks a setting's value range and, for per-room
+// settings, that room is one the vacuum reported (room 0 means whole vacuum).
+func ValidVacuumSetting(name string, value, room int, known []int) bool {
+	return core.Companion_Default___.ValidVacuumSetting(dafny.UnicodeSeqOfUtf8Bytes(name), dafny.IntOf(value), dafny.IntOf(room), intSeq(known))
+}
+
+// ValidVacuumHistoryLimit bounds how many recent cleaning runs one call returns.
+func ValidVacuumHistoryLimit(limit int) bool {
+	return core.Companion_Default___.ValidVacuumHistoryLimit(dafny.IntOf(limit))
+}
+
+// VacuumTargetsMatch checks that an action carries only its own kind of target.
+func VacuumTargetsMatch(action string, rooms, zones int, point bool) bool {
+	return core.Companion_Default___.VacuumTargetsMatch(dafny.UnicodeSeqOfUtf8Bytes(action), dafny.IntOf(rooms), dafny.IntOf(zones), point)
+}

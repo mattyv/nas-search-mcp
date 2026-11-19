@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"image"
+	"image/png"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -77,11 +81,20 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 			w.Write([]byte(`{"name":"Robo","connected":true,"state":"charging","battery":87,"docked":true,"error":"","suction":"standard","current_room":"","cleaned_area_m2":0,"cleaning_minutes":0}`))
 		case "/rooms":
 			w.Write([]byte(`{"rooms":[{"id":3,"name":"Kitchen"}]}`))
-		case "/command":
+		case "/command", "/setting":
 			var body map[string]any
 			json.NewDecoder(r.Body).Decode(&body)
+			body["path"] = r.URL.Path
 			commands = append(commands, body)
 			w.Write([]byte(`{"accepted":true,"message":"Cleaning Kitchen"}`))
+		case "/details":
+			w.Write([]byte(`{"consumables":{"filter":64},"station":{"dust_bag":"installed"},"settings":{"volume":"40"}}`))
+		case "/history":
+			w.Write([]byte(`{"entries":[{"time":1795000000,"minutes":30,"area_m2":40}]}`))
+		case "/map":
+			var picture bytes.Buffer
+			png.Encode(&picture, image.NewRGBA(image.Rect(0, 0, 3, 2)))
+			w.Write([]byte(`{"mime_type":"image/png","data":"` + base64.StdEncoding.EncodeToString(picture.Bytes()) + `"}`))
 		}
 	})}
 	go broker.Serve(listener)
@@ -91,11 +104,31 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 
 	session, ctx := vacuumSession(t)
 	found := vacuumTools(t, session, ctx)
-	if len(found) != 3 || found["vacuum_status"] == nil || found["vacuum_rooms"] == nil || found["vacuum_control"] == nil {
+	readOnly := []string{"vacuum_status", "vacuum_rooms", "vacuum_details", "vacuum_history", "vacuum_map"}
+	acting := []string{"vacuum_control", "vacuum_settings"}
+	if len(found) != len(readOnly)+len(acting) {
 		t.Fatalf("tools=%v", found)
 	}
-	if !found["vacuum_status"].Annotations.ReadOnlyHint || found["vacuum_control"].Annotations.ReadOnlyHint {
-		t.Fatal("read-only hints wrong")
+	for _, name := range readOnly {
+		if found[name] == nil || !found[name].Annotations.ReadOnlyHint {
+			t.Fatalf("%s missing or not read-only", name)
+		}
+	}
+	for _, name := range acting {
+		if found[name] == nil || found[name].Annotations.ReadOnlyHint {
+			t.Fatalf("%s missing or marked read-only", name)
+		}
+	}
+	for _, name := range readOnly {
+		args := map[string]any{}
+		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+		if err != nil || result.IsError || len(result.Content) == 0 {
+			t.Fatalf("%s: result=%#v err=%v", name, result, err)
+		}
+	}
+	picture, _ := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_map", Arguments: map[string]any{}})
+	if _, ok := picture.Content[0].(*mcp.ImageContent); !ok {
+		t.Fatalf("vacuum_map content=%#v", picture.Content)
 	}
 
 	status, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_status", Arguments: map[string]any{}})
@@ -109,6 +142,14 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 	refused, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_control", Arguments: map[string]any{"action": "clean_rooms", "rooms": []int{99}}})
 	if err != nil || !refused.IsError || len(commands) != 1 {
 		t.Fatalf("unknown room reached vacuum: refused=%#v commands=%v err=%v", refused, commands, err)
+	}
+	set, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_settings", Arguments: map[string]any{"setting": "room_suction", "value": "turbo", "room": 3}})
+	if err != nil || set.IsError || len(commands) != 2 || commands[1]["path"] != "/setting" || commands[1]["value"] != float64(3) {
+		t.Fatalf("set=%#v commands=%v err=%v", set, commands, err)
+	}
+	bad, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_settings", Arguments: map[string]any{"setting": "firmware", "value": "1"}})
+	if err != nil || !bad.IsError || len(commands) != 2 {
+		t.Fatalf("unknown setting reached vacuum: bad=%#v err=%v", bad, err)
 	}
 }
 

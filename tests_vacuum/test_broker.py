@@ -4,7 +4,12 @@ import json
 import socket
 import threading
 from pathlib import Path
+import base64
+import io
+from datetime import datetime, timezone
 from types import SimpleNamespace
+
+from PIL import Image
 
 import pytest
 
@@ -23,14 +28,40 @@ class FakeDevice:
         self.name = 'Robo'
         self.available = True
         self.calls = []
-        kitchen = SimpleNamespace(id=3, name='Kitchen')
-        hall = SimpleNamespace(id=5, name='Hall')
+        # coords are map-grid cells; x0..y1 are the millimetre box that zones use.
+        kitchen = SimpleNamespace(id=3, name='Kitchen', coords=[80, 60, 140, 110], x0=0, y0=0, x1=3000, y1=2500)
+        hall = SimpleNamespace(id=5, name='Hall', coords=None, x0=None, y0=None, x1=None, y1=None)
+        dimensions = SimpleNamespace(left=-4000, top=-3000, width=160, height=120, grid_size=50)
         self.status = SimpleNamespace(
             state_name='charging', battery_level=87, docked=True, has_error=False,
             error_name='no_error', suction_level_name='standard', current_room=kitchen,
             current_segments={5: hall, 3: kitchen},
+            current_map=SimpleNamespace(dimensions=dimensions, empty_map=False),
+            main_brush_life=80, side_brush_life=None, filter_life=12, mop_life=55,
+            clean_water_tank_status_name='installed', dirty_water_tank_status_name='installed',
+            dust_bag_status_name=None, washing=False, drying=True, drying_left_time=95,
+            cleaning_mode_name='sweeping_and_mopping', mop_pad_humidity_name='moist',
+            volume=40, dnd=True, dnd_start='22:00', dnd_end='08:00',
+            carpet_avoidance=False, carpet_recognition=True, wetness_level=None,
+            _cleaning_history=[
+                SimpleNamespace(date=datetime(2026, 11, 1, 9, 0, tzinfo=timezone.utc), cleaning_time=30, cleaned_area=40, completed=True, status=None),
+                SimpleNamespace(date=datetime(2026, 11, 3, 9, 0, tzinfo=timezone.utc), cleaning_time=45, cleaned_area=52, completed=False, status=None),
+            ],
         )
+        self.capability = SimpleNamespace(wetness_level=False, self_wash_base=True, mop_clean_frequency=False)
         self.properties = {'cleaned_area': 12, 'cleaning_time': 20}
+
+    def __getattr__(self, name):
+        # Every library setter/action the broker may call is recorded.
+        if name.startswith(('set_', 'start_', 'stop_')):
+            return lambda *args, **kwargs: self.calls.append((name, *args))
+        raise AttributeError(name)
+
+    def clean_zone(self, zones, cleaning_times, suction_level, water_volume):
+        self.calls.append(('clean_zone', zones, cleaning_times, suction_level, water_volume))
+
+    def clean_spot(self, points, cleaning_times, suction_level, water_volume):
+        self.calls.append(('clean_spot', points, cleaning_times, suction_level, water_volume))
 
     def get_property(self, key):
         return self.properties.get(key)
@@ -45,8 +76,34 @@ class FakeDevice:
         self.calls.append(('clean_segment', rooms, cleaning_times, suction_level))
 
 
-def make(device=None):
-    return broker.Broker(device or FakeDevice(), area_key='cleaned_area', time_key='cleaning_time')
+class FakeVendor:
+    def __init__(self):
+        self.calls = []
+        self.lock = 0
+
+    def empty_dustbin(self, device):
+        self.calls.append('empty_dustbin')
+
+    def child_lock(self, device):
+        return self.lock
+
+    def set_child_lock(self, device, on):
+        self.calls.append(('child_lock', on))
+
+    def render_map(self, device):
+        picture = io.BytesIO()
+        Image.new('RGB', (3000, 1500), 'white').save(picture, 'PNG')
+        return picture.getvalue()
+
+
+def make(device=None, vendor=None):
+    return broker.Broker(device or FakeDevice(), area_key='cleaned_area', time_key='cleaning_time',
+                         vendor=vendor or FakeVendor())
+
+
+def cmd(action, rooms=(), zones=(), point=None, repeats=0, suction=-1):
+    return {'action': action, 'rooms': list(rooms), 'zones': list(zones), 'point': point,
+            'repeats': repeats, 'suction': suction}
 
 
 def test_status_maps_device_fields():
@@ -75,44 +132,49 @@ def test_not_connected_is_unavailable():
         broker.Broker(None).status()
 
 
-def test_rooms_sorted_by_id():
-    assert make().rooms() == {'rooms': [{'id': 3, 'name': 'Kitchen'}, {'id': 5, 'name': 'Hall'}]}
+def test_rooms_sorted_by_id_with_boxes_and_bounds():
+    assert make().rooms() == {
+        'rooms': [{'id': 3, 'name': 'Kitchen', 'box': [0, 0, 3000, 2500]}, {'id': 5, 'name': 'Hall'}],
+        'bounds': [-4000, -3000, 4000, 3000],
+    }
 
 
 def test_rooms_empty_without_map():
     device = FakeDevice()
     device.status.current_segments = None
+    device.status.current_map = None
     assert make(device).rooms() == {'rooms': []}
 
 
 @pytest.mark.parametrize('action,call', [
     ('start', ('start',)), ('pause', ('pause',)), ('stop', ('stop',)),
     ('locate', ('locate',)), ('dock', ('return_to_base',)),
+    ('wash_mops', ('start_washing',)), ('dry_mops', ('start_drying',)), ('stop_drying', ('stop_drying',)),
 ])
 def test_simple_commands_dispatch(action, call):
     device = FakeDevice()
-    out = make(device).command({'action': action, 'rooms': [], 'repeats': 0, 'suction': -1})
+    out = make(device).command(cmd(action))
     assert device.calls == [call] and out['accepted'] is True and out['message']
 
 
 def test_clean_rooms_dispatch_keeps_current_suction():
     device = FakeDevice()
-    make(device).command({'action': 'clean_rooms', 'rooms': [5, 3], 'repeats': 2, 'suction': -1})
+    make(device).command(cmd('clean_rooms', rooms=[5, 3], repeats=2))
     assert device.calls == [('clean_segment', [5, 3], 2, None)]
 
 
 def test_clean_rooms_dispatch_with_suction():
     device = FakeDevice()
-    out = make(device).command({'action': 'clean_rooms', 'rooms': [3], 'repeats': 1, 'suction': 3})
+    out = make(device).command(cmd('clean_rooms', rooms=[3], repeats=1, suction=3))
     assert device.calls == [('clean_segment', [3], 1, 3)]
     assert 'Kitchen' in out['message']
 
 
 @pytest.mark.parametrize('body', [
-    {'action': 'factory_reset', 'rooms': [], 'repeats': 0, 'suction': -1},
+    cmd('factory_reset'),
     {'action': 'start'},
-    {'action': 'clean_rooms', 'rooms': ['3'], 'repeats': 1, 'suction': -1},
-    {'action': 'clean_rooms', 'rooms': [3], 'repeats': True, 'suction': -1},
+    cmd('clean_rooms', rooms=['3'], repeats=1),
+    cmd('clean_rooms', rooms=[3], repeats=True),
     'start',
 ])
 def test_malformed_commands_rejected(body):
@@ -127,9 +189,9 @@ def test_vacuum_refusal_reported():
     def refuse():
         raise FakeDeviceError('Unavailable while draining')
     device.start = refuse
-    b = broker.Broker(device, refusal_types=(FakeDeviceError,))
+    b = broker.Broker(device, refusal_types=(FakeDeviceError,), vendor=FakeVendor())
     with pytest.raises(broker.Refused, match='draining'):
-        b.command({'action': 'start', 'rooms': [], 'repeats': 0, 'suction': -1})
+        b.command(cmd('start'))
 
 
 def test_select_device_by_configured_id_or_single():
@@ -182,7 +244,7 @@ def test_http_routes(served):
     assert status == 200 and body['battery'] == 87
     status, body = request(path, 'POST', '/rooms')
     assert status == 200 and len(body['rooms']) == 2
-    status, body = request(path, 'POST', '/command', json.dumps({'action': 'dock', 'rooms': [], 'repeats': 0, 'suction': -1}).encode())
+    status, body = request(path, 'POST', '/command', json.dumps(cmd('dock')).encode())
     assert status == 200 and body['accepted'] is True
     assert request(path, 'POST', '/nope')[0] == 404
     assert request(path, 'GET', '/status', None)[0] == 405
@@ -202,8 +264,8 @@ def test_http_refusal_is_conflict(served):
     def refuse():
         raise FakeDeviceError('Map not ready')
     device.locate = refuse
-    holder.set(broker.Broker(device, refusal_types=(FakeDeviceError,)))
-    status, body = request(path, 'POST', '/command', json.dumps({'action': 'locate', 'rooms': [], 'repeats': 0, 'suction': -1}).encode())
+    holder.set(broker.Broker(device, refusal_types=(FakeDeviceError,), vendor=FakeVendor()))
+    status, body = request(path, 'POST', '/command', json.dumps(cmd('locate')).encode())
     assert status == 409 and body == {'error': 'Map not ready'}
 
 
@@ -229,3 +291,163 @@ def test_empty_password_file_rejected(tmp_path):
     secret.write_text('\n')
     with pytest.raises(broker.ConfigError):
         broker.read_password({'DREAME_PASSWORD_FILE': str(secret)})
+
+
+def test_empty_dustbin_uses_vendor_action():
+    vendor = FakeVendor()
+    out = make(vendor=vendor).command(cmd('empty_dustbin'))
+    assert vendor.calls == ['empty_dustbin'] and out['accepted']
+
+
+def test_zone_and_spot_dispatch():
+    device = FakeDevice()
+    b = make(device)
+    b.command(cmd('clean_zones', zones=[[0, 0, 1000, 1000]], repeats=2, suction=1))
+    b.command(cmd('clean_spot', point=[100, 200], repeats=1))
+    assert device.calls == [('clean_zone', [[0, 0, 1000, 1000]], 2, 1, None),
+                            ('clean_spot', [[100, 200]], 1, None, None)]
+
+
+@pytest.mark.parametrize('body', [
+    cmd('clean_zones', zones=[[0, 0, 1000]]),
+    cmd('clean_zones', zones=[['0', 0, 1, 1]]),
+    cmd('clean_spot', point=[1]),
+    {'action': 'start', 'rooms': [], 'repeats': 0, 'suction': -1},
+])
+def test_malformed_targets_rejected(body):
+    device = FakeDevice()
+    with pytest.raises(broker.BadRequest):
+        make(device).command(body)
+    assert device.calls == []
+
+
+@pytest.mark.parametrize('name,value,room,call', [
+    ('cleaning_mode', 3, 0, ('set_cleaning_mode', 3)),
+    ('suction', 2, 0, ('set_suction_level', 2)),
+    ('mop_wetness', 2, 0, ('set_mop_pad_humidity', 3)),
+    ('volume', 40, 0, ('set_volume', 40)),
+    ('dnd', 1, 0, ('set_dnd', True)),
+    ('dnd_start', 1350, 0, ('set_dnd_start', '22:30')),
+    ('dnd_end', 485, 0, ('set_dnd_end', '08:05')),
+    ('carpet_avoidance', 0, 0, ('set_carpet_avoidance', False)),
+    ('carpet_recognition', 1, 0, ('set_carpet_recognition', 1)),
+    ('room_mode', 1, 3, ('set_segment_cleaning_mode', 3, 1)),
+    ('room_suction', 3, 3, ('set_segment_suction_level', 3, 3)),
+    ('room_wetness', 0, 3, ('set_segment_mop_pad_humidity', 3, 1)),
+    ('room_passes', 2, 3, ('set_segment_cleaning_times', 3, 2)),
+])
+def test_settings_dispatch(name, value, room, call):
+    device = FakeDevice()
+    out = make(device).setting({'name': name, 'value': value, 'room': room})
+    assert device.calls == [call] and out['accepted'] and out['message']
+
+
+def test_wetness_follows_model_capability():
+    device = FakeDevice()
+    device.capability.wetness_level = True
+    make(device).setting({'name': 'mop_wetness', 'value': 2, 'room': 0})
+    make(device).setting({'name': 'room_wetness', 'value': 0, 'room': 3})
+    device.capability.wetness_level = False
+    device.capability.self_wash_base = False
+    make(device).setting({'name': 'mop_wetness', 'value': 1, 'room': 0})
+    assert device.calls == [('set_wetness_level', 27), ('set_segment_wetness_level', 3, 6), ('set_water_volume', 2)]
+
+
+def test_child_lock_uses_vendor_property():
+    vendor = FakeVendor()
+    make(vendor=vendor).setting({'name': 'child_lock', 'value': 1, 'room': 0})
+    assert vendor.calls == [('child_lock', True)]
+
+
+@pytest.mark.parametrize('body', [
+    {'name': 'firmware', 'value': 1, 'room': 0},
+    {'name': 'volume', 'value': '40', 'room': 0},
+    {'name': 'volume', 'value': 40},
+    ['volume', 40],
+])
+def test_malformed_settings_rejected(body):
+    device = FakeDevice()
+    with pytest.raises(broker.BadRequest):
+        make(device).setting(body)
+    assert device.calls == []
+
+
+def test_details_report_present_fields_only():
+    out = make().details()
+    assert out['consumables'] == {'main_brush': 80, 'filter': 12, 'mop_pad': 55}
+    assert out['station']['clean_water_tank'] == 'installed' and out['station']['drying'] == 'yes'
+    assert out['station']['drying_minutes_left'] == '95' and 'dust_bag' not in out['station']
+    assert out['settings']['cleaning_mode'] == 'sweeping_and_mopping'
+    assert out['settings']['mop_wetness'] == 'moist' and out['settings']['volume'] == '40'
+    assert out['settings']['dnd'] == 'on' and out['settings']['dnd_start'] == '22:00'
+    assert out['settings']['child_lock'] == 'off' and out['settings']['carpet_recognition'] == 'on'
+
+
+def test_history_newest_first_and_limited():
+    out = make().history({'limit': 1})
+    assert out == {'entries': [{'time': int(datetime(2026, 11, 3, 9, 0, tzinfo=timezone.utc).timestamp()),
+                                'minutes': 45, 'area_m2': 52, 'completed': False}]}
+    with pytest.raises(broker.BadRequest):
+        make().history({'limit': 'ten'})
+
+
+def test_map_is_png_scaled_down():
+    out = make().map()
+    assert out['mime_type'] == 'image/png'
+    picture = Image.open(io.BytesIO(base64.b64decode(out['data'])))
+    assert picture.format == 'PNG' and max(picture.size) <= 1600
+
+
+def test_map_unavailable_without_saved_map():
+    device = FakeDevice()
+    device.status.current_map = None
+    with pytest.raises(broker.Refused):
+        make(device).map()
+
+
+def test_http_new_routes(served):
+    path, _ = served
+    assert request(path, 'POST', '/details')[0] == 200
+    status, body = request(path, 'POST', '/history', json.dumps({'limit': 5}).encode())
+    assert status == 200 and len(body['entries']) == 2
+    assert request(path, 'POST', '/map')[0] == 200
+    status, body = request(path, 'POST', '/setting', json.dumps({'name': 'volume', 'value': 30, 'room': 0}).encode())
+    assert status == 200 and body['accepted'] is True
+
+
+class StopLoop(Exception):
+    pass
+
+
+def stop_after_first(_delay):
+    raise StopLoop
+
+
+@pytest.mark.parametrize('error,expected', [
+    (broker.ConfigError('login failed: check the account, password, and country'), 'login failed: check the account, password, and country'),
+    (broker.VacuumOffline('no reply'), 'signed in, but the vacuum did not respond; check it is powered on and connected to Wi-Fi'),
+    (RuntimeError('socket secret-ish detail'), 'could not reach the vacuum or the Dreame cloud; retrying'),
+])
+def test_connection_problem_is_reported_plainly(error, expected):
+    holder = broker.Holder()
+    def connect(_env):
+        raise error
+    with pytest.raises(StopLoop):
+        broker.keep_connected(holder, {}, connect=connect, sleep=stop_after_first)
+    assert holder.problem() == expected
+    assert 'secret-ish' not in holder.problem()
+
+
+def test_problem_cleared_once_connected():
+    holder = broker.Holder()
+    holder.set_problem('login failed')
+    broker.keep_connected(holder, {}, connect=lambda _env: make(), sleep=stop_after_first)
+    assert holder.get() is not None and holder.problem() == ''
+
+
+def test_http_unavailable_explains_why(served):
+    path, holder = served
+    holder.set(None)
+    holder.set_problem('login failed: check the account, password, and country')
+    status, body = request(path, 'POST', '/status')
+    assert status == 503 and body == {'error': 'login failed: check the account, password, and country'}

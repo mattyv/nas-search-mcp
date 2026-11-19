@@ -6,11 +6,22 @@ This is off by default. It uses the open-source [Dreame vacuum library by Tassha
 
 ## What you get
 
-- `vacuum_status`: activity, battery, docked or not, errors, suction, current room, and progress of the current job.
-- `vacuum_rooms`: the rooms on the vacuum's saved map, with the IDs the assistant uses to clean them.
-- `vacuum_control`: start, pause, stop, dock, locate (play a sound), or clean chosen rooms with 1-3 passes and an optional suction level.
+Looking (never moves the vacuum):
 
-The assistant can do nothing else: no map edits, settings changes, schedules, firmware updates, or camera access. Room cleaning only accepts rooms the vacuum itself reported.
+- `vacuum_status`: activity, battery, docked or not, errors, suction, current room, and progress of the current job.
+- `vacuum_rooms`: the rooms on the saved map with their IDs, where each room sits, and the map's edges.
+- `vacuum_details`: how worn the brushes, filter, mop pads and other parts are; the base station (water tanks, dust bag, detergent, washing, drying); and current settings.
+- `vacuum_history`: the most recent cleaning runs, with time, minutes, area, and whether they finished.
+- `vacuum_map`: a picture of the map with rooms, the vacuum and its dock.
+
+Doing (only when you ask):
+
+- `vacuum_control`: start, pause, stop, dock, locate (play a sound); clean chosen rooms, up to five rectangles on the map, or one spot, each with 1-3 passes and an optional suction level; empty the dustbin; wash, dry, or stop drying the mops.
+- `vacuum_settings`: cleaning mode (vacuum, mop, both, or mop after vacuuming), suction, mop wetness (dry, moist, wet), volume, do-not-disturb on/off and hours, child lock, carpet avoidance and recognition; and per room: mode, suction, mop wetness, and passes.
+
+The assistant cannot drive the vacuum by hand, use its camera, edit the map, change schedules, or update firmware. Room, zone and spot cleaning only accept rooms the vacuum reported and areas inside its saved map. Settings only accept the listed values. A feature your model lacks is refused with the vacuum's own message.
+
+Try: "How worn are the vacuum's brushes?", "Show me the vacuum map", "Clean the area in front of the sofa", "Mop the kitchen only, wet", "Turn on do-not-disturb from 22:00 to 08:00".
 
 ## Turn it on
 
@@ -63,18 +74,23 @@ Nothing extra to set up. The vacuum tools ride on the same authenticated MCP con
 - **Needs the vendor cloud.** Sign-in and commands go through Dreame's (or Xiaomi's) servers, as the official app does. If their service is down, so is this.
 - **Xiaomi accounts with extra verification.** If Xiaomi asks for a captcha or a 2FA code on sign-in, the headless service cannot complete it. Use a Dreamehome account if your vacuum supports it.
 - **Status lags a little.** The library polls the vacuum; expect up to about a minute of delay.
-- **Rooms need a saved map.** Until the vacuum has mapped your home and saved the map, `vacuum_rooms` is empty and room cleaning is unavailable. Whole-home `start` still works.
-- **Memory.** The library uses about 170 MB just to load; the service is capped at 384 MB (`NAS_VACUUM_MEMORY`, 256m-1024m). Real use on a DS220+ has not been measured yet. If the container restarts with out-of-memory errors in Container Manager, raise the cap to `512m`.
+- **Rooms need a saved map.** Until the vacuum has mapped your home and saved the map, `vacuum_rooms` is empty and room, zone and spot cleaning are unavailable. Whole-home `start` still works.
+- **Zones and spots are aimed by coordinates.** The assistant works them out from room positions and the map picture, so describe the area clearly ("the third of the living room nearest the window"). Check the result with `vacuum_map` the first few times.
+- **Mop wetness is approximate.** Models with a fine wetness scale get dry, moist and wet mapped to roughly 20%, 50% and 85% of their range.
+- **Schedules stay in the app.** The library cannot create schedules.
+- **History depends on the vendor cloud** and may be empty until the vacuum has finished a run since the service started.
+- **Memory.** The library uses about 170 MB just to load, and drawing the map picture adds more; the service is capped at 384 MB (`NAS_VACUUM_MEMORY`, 256m-1024m). Real use on a DS220+ has not been measured yet. If the container restarts with out-of-memory errors in Container Manager, raise the cap to `512m`.
 - **Password storage.** The vendor password lives only in the `dreame_password` file. The installer makes it readable by the service's user alone and mounts it into the vacuum container only, so it does not appear in `.env`, in container settings, or in `docker inspect`. Anyone with full admin access to the NAS can still read it. Use a password you use nowhere else, so the worst case is someone controlling your vacuum. To change it, rewrite the file (step 1) and upgrade again.
 - **Untested models.** It supports what the pinned library supports. A model the library does not recognise shows as "no supported vacuum found" in the log.
 
 ## Troubleshooting
 
-Open Container Manager, select `nas-search-nas-vacuum-1`, and read the log:
+Ask your assistant for the vacuum status. When the vacuum is unavailable, the answer ends with the reason in brackets, such as a failed sign-in or a vacuum that did not respond. For more detail, open Container Manager, select `nas-search-nas-vacuum-1`, and read the log:
 
 | Log says | Fix |
 |---|---|
-| `login failed` | Check the username, account type, and region in `.env`, and the password in `dreame_password`. If those are right, try region `us`, then `eu`. |
+| `sign-in failed` | Check the username, account type, and region in `.env`, and the password in `dreame_password`. If those are right, try region `us`, then `eu`. |
 | `several vacuums found` | Add `DREAME_DEVICE_ID` with one of the listed IDs. |
 | `no supported vacuum found` | Check you used the account that owns the vacuum, and the right account type. |
 | `connection failed, retrying` | Temporary network or vendor issue; it retries on its own. |
+| `vacuum did not respond` | Signed in, but the vacuum is off, asleep without Wi-Fi, or out of range. Check it in the Dreamehome app. |

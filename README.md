@@ -29,7 +29,7 @@ Use a published commit whose CI passed; `latest` is deliberately rejected. Confi
 
 Optional [shared memory](docs/memory.md) lets your assistants keep and reuse notes about your projects. It is off by default.
 
-Optional [robot vacuum control](docs/vacuum.md) lets your assistants check on and run a Dreame robot vacuum (status, dock, clean chosen rooms) over the same connection, from home or remotely. It is off by default.
+Optional [robot vacuum control](docs/vacuum.md) lets your assistants check on and run a Dreame robot vacuum over the same connection, from home or remotely: status, parts wear, history and a map picture; cleaning rooms, zones or a spot; base-station washing, drying and emptying; and everyday settings. It is off by default.
 
 ## Use it
 

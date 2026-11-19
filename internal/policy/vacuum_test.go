@@ -22,3 +22,28 @@ func TestVacuumPolicyBridgesCore(t *testing.T) {
 		t.Fatal("non-room command arguments mismatch")
 	}
 }
+
+func TestVacuumZoneSpotAndSettingPolicyBridgesCore(t *testing.T) {
+	bounds := [4]int{-5000, -5000, 5000, 5000}
+	if !VacuumNeedsMap("clean_zones") || !VacuumNeedsMap("clean_spot") || VacuumNeedsMap("dock") {
+		t.Fatal("map requirement mismatch")
+	}
+	if !ValidVacuumZones([][4]int{{0, 0, 1000, 1000}}, bounds, 1, -1) {
+		t.Fatal("valid zone rejected")
+	}
+	if ValidVacuumZones([][4]int{{0, 0, 9000, 1000}}, bounds, 1, -1) || ValidVacuumZones(nil, bounds, 1, -1) {
+		t.Fatal("zone outside map or empty zone list accepted")
+	}
+	if !ValidVacuumSpot(0, 0, bounds, 2, 3) || ValidVacuumSpot(0, 6000, bounds, 1, -1) {
+		t.Fatal("spot bounds mismatch")
+	}
+	if !ValidVacuumSetting("volume", 40, 0, nil) || ValidVacuumSetting("volume", 400, 0, nil) {
+		t.Fatal("volume range mismatch")
+	}
+	if !ValidVacuumSetting("room_passes", 2, 3, []int{3}) || ValidVacuumSetting("room_passes", 2, 4, []int{3}) {
+		t.Fatal("room setting mismatch")
+	}
+	if !VacuumSettingNeedsRoom("room_mode") || VacuumSettingNeedsRoom("dnd") || ValidVacuumSetting("firmware", 1, 0, nil) {
+		t.Fatal("setting allowlist mismatch")
+	}
+}
