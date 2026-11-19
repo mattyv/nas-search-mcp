@@ -85,11 +85,12 @@ Nothing extra to set up. The vacuum tools ride on the same authenticated MCP con
 
 ## Troubleshooting
 
-Open Container Manager, select `nas-search-nas-vacuum-1`, and read the log:
+Ask your assistant for the vacuum status. When the vacuum is unavailable, the answer ends with the reason in brackets, such as a failed sign-in or a vacuum that did not respond. For more detail, open Container Manager, select `nas-search-nas-vacuum-1`, and read the log:
 
 | Log says | Fix |
 |---|---|
-| `login failed` | Check the username, account type, and region in `.env`, and the password in `dreame_password`. If those are right, try region `us`, then `eu`. |
+| `sign-in failed` | Check the username, account type, and region in `.env`, and the password in `dreame_password`. If those are right, try region `us`, then `eu`. |
 | `several vacuums found` | Add `DREAME_DEVICE_ID` with one of the listed IDs. |
 | `no supported vacuum found` | Check you used the account that owns the vacuum, and the right account type. |
 | `connection failed, retrying` | Temporary network or vendor issue; it retries on its own. |
+| `vacuum did not respond` | Signed in, but the vacuum is off, asleep without Wi-Fi, or out of range. Check it in the Dreamehome app. |

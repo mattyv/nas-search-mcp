@@ -36,6 +36,10 @@ class ConfigError(Exception):
     pass
 
 
+class VacuumOffline(Exception):
+    """Signed in to the vendor cloud, but the vacuum itself did not answer."""
+
+
 def _text(value, limit=256):
     text = '' if value is None else str(value)
     text = ''.join(ch for ch in text if ch.isprintable())
@@ -327,11 +331,22 @@ class Holder:
 
     def __init__(self):
         self._broker = None
+        self._problem = 'starting up and connecting to the vacuum'
         self._lock = threading.Lock()
 
     def set(self, value):
         with self._lock:
             self._broker = value
+            if value is not None:
+                self._problem = ''
+
+    def set_problem(self, text):
+        with self._lock:
+            self._problem = _text(text)
+
+    def problem(self):
+        with self._lock:
+            return self._problem
 
     def get(self):
         with self._lock:
@@ -386,7 +401,8 @@ def make_server(path, holder):
             except Refused as error:
                 return self._send(409, {'error': _text(error)})
             except Unavailable:
-                return self._send(503, {'error': 'vacuum unavailable'})
+                # A plain reason the owner can act on; never library internals.
+                return self._send(503, {'error': holder.problem() or 'vacuum unavailable'})
             except Exception:
                 LOG.exception('vacuum request failed')
                 return self._send(503, {'error': 'vacuum unavailable'})
@@ -484,8 +500,8 @@ def connect_from_env(env):  # pragma: no cover - needs the vendor library and a 
                                     prefer_cloud=True, account_type=account)
     protocol.cloud.login()
     if not protocol.cloud.logged_in:
-        reason = getattr(protocol.cloud, 'login_error', None) or 'check the account, password, and country'
-        raise ConfigError(f'login failed: {reason}')
+        reason = getattr(protocol.cloud, 'login_error', None) or 'check DREAME_USERNAME, the dreame_password file and DREAME_COUNTRY, and that the NAS can reach the internet'
+        raise ConfigError(f'Dreame sign-in failed: {reason}')
 
     info = json.loads(zlib.decompress(base64.b64decode(DEVICE_INFO), zlib.MAX_WBITS | 32))
     prefixes = {1: 'xiaomi', 2: 'mova', 3: 'trouver'}
@@ -507,7 +523,10 @@ def connect_from_env(env):  # pragma: no cover - needs the vendor library and a 
         host, token = chosen.get('bindDomain'), ' '
     device = DreameVacuumDevice(chosen['name'], host, token, chosen.get('mac'), username, password,
                                 country, True, account, chosen.get('did'), auth_key)
-    device.update()
+    try:
+        device.update()
+    except DeviceException as error:
+        raise VacuumOffline(str(error)) from error
     device.schedule_update()
     LOG.info('connected to vacuum (library %s)', dreame.VERSION)
     return Broker(device, area_key=DreameVacuumProperty.CLEANED_AREA,
@@ -515,7 +534,7 @@ def connect_from_env(env):  # pragma: no cover - needs the vendor library and a 
                   vendor=DreameVendor(DreameVacuumAction, DreameVacuumProperty, DreameVacuumMapRenderer))
 
 
-def keep_connected(holder, env, connect=connect_from_env, sleep=time.sleep):  # pragma: no cover
+def keep_connected(holder, env, connect=connect_from_env, sleep=time.sleep):
     delay = 30
     while True:
         try:
@@ -523,9 +542,14 @@ def keep_connected(holder, env, connect=connect_from_env, sleep=time.sleep):  # 
             return
         except ConfigError as error:
             LOG.error('vacuum setup problem: %s', error)
+            holder.set_problem(str(error))
             delay = 600
+        except VacuumOffline as error:
+            LOG.warning('vacuum did not respond, retrying: %s', _text(error))
+            holder.set_problem('signed in, but the vacuum did not respond; check it is powered on and connected to Wi-Fi')
         except Exception as error:
             LOG.warning('vacuum connection failed, retrying: %s', _text(error))
+            holder.set_problem('could not reach the vacuum or the Dreame cloud; retrying')
         sleep(delay)
         delay = min(delay * 2, 600)
 

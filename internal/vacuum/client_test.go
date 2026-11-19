@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -375,5 +376,23 @@ func TestMapReturnsCleanPNG(t *testing.T) {
 	})
 	if _, err := newClient(t, big).Map(context.Background()); !errors.Is(err, errReply) {
 		t.Fatalf("oversized map accepted: %v", err)
+	}
+}
+
+func TestUnavailableExplainsWhy(t *testing.T) {
+	socket := broker(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"error":"login failed: check the account, password, and country"}`))
+	})
+	_, err := newClient(t, socket).Status(context.Background())
+	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "login failed: check the account") {
+		t.Fatalf("err=%v", err)
+	}
+	silent := broker(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("\x00\x01 not json"))
+	})
+	if _, err := newClient(t, silent).Status(context.Background()); err != ErrUnavailable {
+		t.Fatalf("unreadable reason not dropped: %v", err)
 	}
 }

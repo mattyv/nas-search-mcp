@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image/png"
 	"io"
 	"net"
@@ -433,8 +434,13 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 		var failure struct {
 			Error string `json:"error"`
 		}
-		if response.StatusCode == http.StatusConflict && json.Unmarshal(data, &failure) == nil && failure.Error != "" && boundedText(failure.Error, 256) {
+		readable := json.Unmarshal(data, &failure) == nil && failure.Error != "" && boundedText(failure.Error, 256)
+		if response.StatusCode == http.StatusConflict && readable {
 			return errors.New("the robot vacuum refused: " + failure.Error)
+		}
+		if response.StatusCode == http.StatusServiceUnavailable && readable {
+			// The broker says why it is not connected, such as a failed sign-in.
+			return fmt.Errorf("%w (%s)", ErrUnavailable, failure.Error)
 		}
 		return ErrUnavailable
 	}

@@ -413,3 +413,41 @@ def test_http_new_routes(served):
     assert request(path, 'POST', '/map')[0] == 200
     status, body = request(path, 'POST', '/setting', json.dumps({'name': 'volume', 'value': 30, 'room': 0}).encode())
     assert status == 200 and body['accepted'] is True
+
+
+class StopLoop(Exception):
+    pass
+
+
+def stop_after_first(_delay):
+    raise StopLoop
+
+
+@pytest.mark.parametrize('error,expected', [
+    (broker.ConfigError('login failed: check the account, password, and country'), 'login failed: check the account, password, and country'),
+    (broker.VacuumOffline('no reply'), 'signed in, but the vacuum did not respond; check it is powered on and connected to Wi-Fi'),
+    (RuntimeError('socket secret-ish detail'), 'could not reach the vacuum or the Dreame cloud; retrying'),
+])
+def test_connection_problem_is_reported_plainly(error, expected):
+    holder = broker.Holder()
+    def connect(_env):
+        raise error
+    with pytest.raises(StopLoop):
+        broker.keep_connected(holder, {}, connect=connect, sleep=stop_after_first)
+    assert holder.problem() == expected
+    assert 'secret-ish' not in holder.problem()
+
+
+def test_problem_cleared_once_connected():
+    holder = broker.Holder()
+    holder.set_problem('login failed')
+    broker.keep_connected(holder, {}, connect=lambda _env: make(), sleep=stop_after_first)
+    assert holder.get() is not None and holder.problem() == ''
+
+
+def test_http_unavailable_explains_why(served):
+    path, holder = served
+    holder.set(None)
+    holder.set_problem('login failed: check the account, password, and country')
+    status, body = request(path, 'POST', '/status')
+    assert status == 503 and body == {'error': 'login failed: check the account, password, and country'}
