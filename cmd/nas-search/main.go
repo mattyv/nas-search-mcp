@@ -177,6 +177,9 @@ func main() {
 	if _, err := configuredPhotos(); err != nil {
 		log.Fatal("Synology Photos configuration invalid; set NAS_SYNOLOGY_PHOTOS_SOCKET to an absolute Unix socket path")
 	}
+	if _, err := configuredVacuum(); err != nil {
+		log.Fatal("robot vacuum configuration invalid; NAS_VACUUM_SOCKET must be an absolute Unix socket path")
+	}
 	a, err := app.New(env("NAS_ROOT", "/files"), env("NAS_DATA", "/data"), env("NAS_PYTHON", "python3"), env("NAS_WORKER", "/app/worker/worker.py"), os.Getenv("NAS_VEC_EXTENSION"), enabled("NAS_SEMANTIC", true), enabled("NAS_PHOTOS", false))
 	if err != nil {
 		log.Fatal(err)
@@ -354,6 +357,7 @@ func configuredPhotos() (*photos.Client, error) {
 
 func buildMCPServer(a *app.App, approval *upgradeApproval, uploads ...*uploadPage) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "nas-search", Version: "0.1.0"}, nil)
+	addVacuumTools(server)
 	if client, configErr := configuredPhotos(); client != nil || configErr != nil {
 		mcp.AddTool(server, &mcp.Tool{Name: "photos_people", Description: "Find named People albums in Synology Photos. query filters the existing labels; omit it to browse. This uses Synology's saved face groups and names, not new face recognition. Results contain person IDs for photos_for_person. offset defaults to 0 (maximum 100000); limit defaults to 20 (maximum 100). Follow next_offset for another page; truncated means more results may exist. Names and recognition can be incomplete or incorrect. Read-only metadata lookup; it does not rename, merge, share, or delete anything.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false), IdempotentHint: true}}, func(ctx context.Context, req *mcp.CallToolRequest, in PhotosPeopleInput) (*mcp.CallToolResult, photos.PeopleResult, error) {
 			if !a.SynologyPhotosAllowed() {

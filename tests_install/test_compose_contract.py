@@ -162,3 +162,55 @@ def test_memory_service_exists_only_with_its_profile():
 
 def test_memory_network_is_declared_at_top_level():
     assert '\nnetworks:\n  memory: {}' in COMPOSE.read_text()
+
+
+def vacuum_block():
+    return COMPOSE.read_text().split('\n  nas-vacuum:\n', 1)[1].split('\n  nas-', 1)[0].split('\nnetworks:', 1)[0]
+
+
+def test_vacuum_service_is_bounded_isolated_and_opt_in():
+    block = vacuum_block()
+    for line in ['profiles: [vacuum]', 'image: nas-search-mcp:local',
+                 'entrypoint: [/opt/vacuum-venv/bin/python, -I, /app/vacuum/broker.py]',
+                 'restart: unless-stopped', 'init: true', 'user: "${NAS_UID:-1000}:${NAS_GID:-1000}"',
+                 'read_only: true', 'cap_drop: [ALL]', 'security_opt: [no-new-privileges:true]',
+                 'mem_limit: ${NAS_VACUUM_MEMORY:-384m}', 'memswap_limit: ${NAS_VACUUM_MEMORY:-384m}',
+                 'cpuset: "${NAS_CPUSET:-0-1}"', 'cpu_shares: ${NAS_CPU_SHARES:-512}',
+                 'networks: [vacuum]', 'NAS_VACUUM_SOCKET: /ipc/vacuum.sock',
+                 '"${NAS_INDEX_PATH:-/volume1/app-data/nas-search/index}/vacuum-ipc:/ipc:rw"',
+                 'secrets: [dreame_password]',
+                 'DREAME_PASSWORD_FILE: /run/secrets/dreame_password']:
+        assert line in block, line
+    # The password arrives only as a mounted file, never as an environment value.
+    assert 'DREAME_PASSWORD:' not in COMPOSE.read_text()
+    # No published ports and no source folders: the vacuum service sees only its socket.
+    assert 'ports:' not in block and '/files' not in block and ':/data' not in block
+
+
+def test_main_service_gains_vacuum_switch_that_defaults_to_off():
+    block = COMPOSE.read_text().split('\n  nas-search:\n', 1)[1].split('\n  nas-', 1)[0]
+    assert 'NAS_VACUUM_ENABLED: "${NAS_VACUUM_ENABLED:-false}"' in block
+    assert 'NAS_VACUUM_SOCKET: /data/vacuum-ipc/vacuum.sock' in block
+    assert 'DREAME_' not in block
+
+
+@needs_docker
+def test_vacuum_service_exists_only_with_its_profile():
+    clean_env = {key: value for key, value in os.environ.items() if not key.startswith(('NAS_', 'DREAME_'))}
+    base = [DOCKER, 'compose', '-f', str(COMPOSE), '--env-file', os.devnull]
+    env = dict(clean_env, NAS_TOKEN='x' * 32)
+    off = json.loads(subprocess.run(base + ['config', '--format', 'json'], env=env, capture_output=True, text=True, check=True).stdout)['services']
+    assert 'nas-vacuum' not in off
+    on = json.loads(subprocess.run(base + ['--profile', 'vacuum', 'config', '--format', 'json'], env=env, capture_output=True, text=True, check=True).stdout)['services']
+    vacuum = on['nas-vacuum']
+    assert int(vacuum['mem_limit']) == 384 * 1024 * 1024
+    assert {v['target'] for v in vacuum['volumes']} == {'/ipc'}
+    assert list(vacuum['networks']) == ['vacuum'] and 'ports' not in vacuum
+    assert vacuum['secrets'] == [{'source': 'dreame_password', 'target': '/run/secrets/dreame_password'}]
+    assert 'DREAME_PASSWORD' not in vacuum['environment']
+
+
+def test_password_secret_is_a_file_in_the_install_folder():
+    text = COMPOSE.read_text()
+    top = text.split('\nsecrets:\n', 1)[1]
+    assert top.startswith('  dreame_password:\n    file: ./dreame_password\n')

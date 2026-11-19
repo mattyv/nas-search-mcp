@@ -6,6 +6,7 @@ fail() { printf '%s\n' "$*" >&2; exit 1; }
 image= install_dir= documents= photos= code= data= bind=127.0.0.1 documents_label=Documents dry=false upload_enabled=false upload_indexed=false upload_path=
 synology_path= synology_socket=
 memory_enabled=false memory_path=
+vacuum_enabled=false
 uid=${SUDO_UID:-$(id -u)}
 gid=${SUDO_GID:-$(id -g)}
 while [ "$#" -gt 0 ]; do
@@ -108,12 +109,22 @@ if [ -f "$install_dir/.env" ]; then
     synology_path=$(field NAS_SYNOLOGY_PHOTOS_HOST_PATH)
     synology_socket=$(field NAS_SYNOLOGY_PHOTOS_SOCKET)
     memory_enabled=$(field NAS_MEMORY_ENABLED)
-    memory_path=$(field NAS_MEMORY_PATH)
-    # Shared memory settings are read only when the feature is on. Absent keys use
-    # the compose defaults; a key that is present but empty is an error.
+    # Absent keys use the compose defaults; a key that is present but empty is an error.
     memory_setting() {
         if grep -q "^$1=" "$install_dir/.env"; then field "$1"; else printf '%s\n' "$2"; fi
     }
+    vacuum_enabled=$(field NAS_VACUUM_ENABLED)
+    if [ "$vacuum_enabled" = true ]; then
+        vacuum_username=$(field DREAME_USERNAME)
+        # The password lives in its own file; refuse an old-style copy in .env.
+        vacuum_password_in_env=false
+        ! grep -q '^DREAME_PASSWORD=' "$install_dir/.env" || vacuum_password_in_env=true
+        vacuum_account=$(memory_setting DREAME_ACCOUNT_TYPE dreame)
+        vacuum_country=$(memory_setting DREAME_COUNTRY eu)
+        vacuum_memory=$(memory_setting NAS_VACUUM_MEMORY 384m)
+    fi
+    memory_path=$(field NAS_MEMORY_PATH)
+    # Shared memory settings are read only when the feature is on.
     if [ "$memory_enabled" = true ]; then
         editor_owner=$(field NAS_EDITOR_OWNER)
         editor_origin=$(field NAS_EDITOR_ORIGIN)
@@ -135,6 +146,7 @@ queue=${queue:-$install_dir/upgrades}
 upload_enabled=${upload_enabled:-false}
 upload_indexed=${upload_indexed:-false}
 memory_enabled=${memory_enabled:-false}
+vacuum_enabled=${vacuum_enabled:-false}
 case "$upload_enabled" in true|false) :;; *) fail 'NAS_UPLOAD_ENABLED must be true or false';; esac
 case "$upload_indexed" in true|false) :;; *) fail 'NAS_UPLOAD_INDEXED_DESTINATIONS must be true or false';; esac
 [ "$upload_indexed" != true ] || [ "$upload_enabled" = true ] || fail 'Indexed upload destinations require uploads to be enabled'
@@ -205,6 +217,21 @@ if [ "$memory_enabled" = true ]; then
     done
     [ "$reject_at" -lt "$accept_at" ] && [ "$accept_at" -le 1000 ] || fail 'Memory thresholds need 0 <= NAS_MEMORY_REJECT_AT < NAS_MEMORY_ACCEPT_AT <= 1000'
     [ "$editor_port" -ge 1024 ] && [ "$editor_port" -le 65535 ] || fail 'NAS_EDITOR_PORT must be from 1024 to 65535'
+fi
+# Robot vacuum (optional). Credentials stay in .env; only their presence is checked.
+case "$vacuum_enabled" in true|false) :;; *) fail 'NAS_VACUUM_ENABLED must be true or false';; esac
+if [ "$vacuum_enabled" = true ]; then
+    [ "$vacuum_password_in_env" = false ] || fail 'Move DREAME_PASSWORD out of .env into a file named dreame_password in the install folder'
+    [ -n "$vacuum_username" ] || fail 'The robot vacuum needs DREAME_USERNAME in .env'
+    vacuum_secret=$install_dir/dreame_password
+    # Contents are checked for emptiness only and never printed.
+    [ -f "$vacuum_secret" ] && [ ! -L "$vacuum_secret" ] || fail 'The robot vacuum needs its password in a file named dreame_password in the install folder (not a symlink)'
+    [ -n "$(tr -d '\r\n' < "$vacuum_secret")" ] || fail 'The dreame_password file is empty'
+    case "$vacuum_account" in dreame|mova|mi) :;; *) fail 'DREAME_ACCOUNT_TYPE must be dreame, mova, or mi';; esac
+    printf '%s\n' "$vacuum_country" | LC_ALL=C grep -Eq '^[a-z]{2}$' || fail 'DREAME_COUNTRY must be a two-letter region code such as eu, us, or cn'
+    printf '%s\n' "$vacuum_memory" | LC_ALL=C grep -Eq '^[0-9]{3,4}m$' || fail 'NAS_VACUUM_MEMORY must look like 384m'
+    vacuum_mib=${vacuum_memory%m}
+    [ "$vacuum_mib" -ge 256 ] && [ "$vacuum_mib" -le 1024 ] || fail 'NAS_VACUUM_MEMORY must be from 256m to 1024m'
 fi
 [ "$(id -u)" = 0 ] || fail 'Run on the NAS with sudo/root Docker access'
 PATH=/usr/local/bin:$PATH
@@ -292,6 +319,19 @@ if [ "$memory_enabled" = true ]; then
         -c 'import tempfile; [tempfile.NamedTemporaryFile(dir=d).close() for d in ("/check-memory", "/check-memory-ipc")]' \
         || fail 'Container user cannot write the memory folder or IPC directory'
 fi
+if [ "$vacuum_enabled" = true ]; then
+    vacuum_ipc=$data/vacuum-ipc
+    [ ! -L "$vacuum_ipc" ] || fail 'Vacuum IPC directory must not be a symlink'
+    if [ ! -e "$vacuum_ipc" ]; then
+        mkdir -m 700 "$vacuum_ipc" || fail 'Cannot create vacuum IPC directory'
+        chown "$uid:$gid" "$vacuum_ipc" || fail 'Cannot assign vacuum IPC directory'
+    fi
+    [ -d "$vacuum_ipc" ] || fail 'Vacuum IPC path must be a directory'
+    python3 -c 'import os,stat,sys; sys.exit(0 if stat.S_IMODE(os.stat(sys.argv[1],follow_symlinks=False).st_mode)==0o700 else 1)' "$vacuum_ipc" || fail 'Vacuum IPC directory must have mode 700'
+    # Only the vacuum service user (and root) may read the password file.
+    chown "$uid:$gid" "$vacuum_secret" || fail 'Cannot assign the dreame_password file'
+    chmod 400 "$vacuum_secret" || fail 'Cannot restrict the dreame_password file'
+fi
 # The deployment copy is pull-only; upstream resource and security defaults remain.
 previous_compose=
 if [ -f "$install_dir/compose.yaml" ]; then
@@ -320,6 +360,7 @@ compose() (
     profiles=
     [ "$upload_indexed" != true ] || profiles="$profiles --profile indexed-upload"
     [ "$memory_enabled" != true ] || profiles="$profiles --profile memory"
+    [ "$vacuum_enabled" != true ] || profiles="$profiles --profile vacuum"
     # Unquoted on purpose: each --profile flag is its own word.
     docker compose $profiles --env-file "$install_dir/.env" --project-name nas-search --project-directory "$install_dir" -f "$install_dir/compose.yaml" "$@"
 )
@@ -367,6 +408,21 @@ else
     # Turning memory off must also stop a container started by an earlier release.
     old_memory=$(docker ps -q --filter 'name=^/nas-search-nas-memory-1$') || rollback
     [ -z "$old_memory" ] || docker stop "$old_memory" >/dev/null || rollback
+fi
+# The vacuum health check covers the service only; a vacuum that is offline or a
+# vendor sign-in that fails is reported by vacuum_status, not by rolling back.
+if [ "$vacuum_enabled" = true ]; then
+    vacuum_ready=false
+    vacuum_attempt=0
+    while [ "$vacuum_attempt" -lt 20 ]; do
+        if compose exec -T nas-vacuum /opt/vacuum-venv/bin/python -I /app/vacuum/broker.py health >/dev/null 2>&1; then vacuum_ready=true; break; fi
+        vacuum_attempt=$((vacuum_attempt + 1))
+        sleep 1
+    done
+    [ "$vacuum_ready" = true ] || rollback
+else
+    old_vacuum=$(docker ps -q --filter 'name=^/nas-search-nas-vacuum-1$') || rollback
+    [ -z "$old_vacuum" ] || docker stop "$old_vacuum" >/dev/null || rollback
 fi
 # Check authenticated MCP status inside the container, without exposing tokens in args.
 # A first start can open a large index or load models; allow about two minutes before rolling back.
