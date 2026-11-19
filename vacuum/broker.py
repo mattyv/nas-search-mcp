@@ -234,6 +234,19 @@ def select_device(devices, configured_id):
     raise ConfigError(f'several vacuums found; set DREAME_DEVICE_ID to one of: {names}')
 
 
+def read_password(env):
+    """Read the vendor password from its mounted secret file, never the environment."""
+    path = env.get('DREAME_PASSWORD_FILE', '/run/secrets/dreame_password')
+    try:
+        with open(path, encoding='utf-8') as stream:
+            password = stream.read(4096).rstrip('\r\n')
+    except OSError:
+        raise ConfigError('cannot read the dreame_password file; check it exists in the install folder') from None
+    if not password:
+        raise ConfigError('the dreame_password file is empty')
+    return password
+
+
 def connect_from_env(env):  # pragma: no cover - needs the vendor library and a real account
     """Log in to the vendor cloud and connect to the configured vacuum."""
     import base64
@@ -246,10 +259,11 @@ def connect_from_env(env):  # pragma: no cover - needs the vendor library and a 
     account = env.get('DREAME_ACCOUNT_TYPE', 'dreame')
     if account not in ('dreame', 'mova', 'mi'):
         raise ConfigError('DREAME_ACCOUNT_TYPE must be dreame, mova or mi')
-    username, password = env.get('DREAME_USERNAME', ''), env.get('DREAME_PASSWORD', '')
+    username = env.get('DREAME_USERNAME', '')
     country = env.get('DREAME_COUNTRY', 'eu')
-    if not username or not password:
-        raise ConfigError('set DREAME_USERNAME and DREAME_PASSWORD')
+    if not username:
+        raise ConfigError('set DREAME_USERNAME')
+    password = read_password(env)
 
     protocol = DreameVacuumProtocol(username=username, password=password, country=country,
                                     prefer_cloud=True, account_type=account)

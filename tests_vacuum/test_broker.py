@@ -211,3 +211,21 @@ def test_socket_limited_to_service_user_and_group(served):
     import os, stat
     path, _ = served
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o660
+
+
+def test_password_read_from_secret_file_without_trailing_newline(tmp_path):
+    secret = tmp_path / 'dreame_password'
+    secret.write_text('pa ss$word\n')
+    assert broker.read_password({'DREAME_PASSWORD_FILE': str(secret)}) == 'pa ss$word'
+
+
+def test_password_never_taken_from_environment(tmp_path):
+    with pytest.raises(broker.ConfigError, match='dreame_password'):
+        broker.read_password({'DREAME_PASSWORD_FILE': str(tmp_path / 'missing'), 'DREAME_PASSWORD': 'leaked'})
+
+
+def test_empty_password_file_rejected(tmp_path):
+    secret = tmp_path / 'dreame_password'
+    secret.write_text('\n')
+    with pytest.raises(broker.ConfigError):
+        broker.read_password({'DREAME_PASSWORD_FILE': str(secret)})

@@ -169,11 +169,13 @@ services:
     init: true
     networks: [vacuum]
     user: "${NAS_UID:-1000}:${NAS_GID:-1000}"
+    # The vendor password is a file in the install folder, mounted only here.
+    secrets: [dreame_password]
     environment:
       NAS_VACUUM_SOCKET: /ipc/vacuum.sock
       DREAME_ACCOUNT_TYPE: "${DREAME_ACCOUNT_TYPE:-dreame}"
       DREAME_USERNAME: "${DREAME_USERNAME:-}"
-      DREAME_PASSWORD: "${DREAME_PASSWORD:-}"
+      DREAME_PASSWORD_FILE: /run/secrets/dreame_password
       DREAME_COUNTRY: "${DREAME_COUNTRY:-eu}"
       DREAME_DEVICE_ID: "${DREAME_DEVICE_ID:-}"
       DREAME_LIBRARY: /opt/dreame
@@ -201,3 +203,7 @@ services:
 networks:
   memory: {}
   vacuum: {}
+
+secrets:
+  dreame_password:
+    file: ./dreame_password

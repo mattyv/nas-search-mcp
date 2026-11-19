@@ -178,8 +178,11 @@ def test_vacuum_service_is_bounded_isolated_and_opt_in():
                  'cpuset: "${NAS_CPUSET:-0-1}"', 'cpu_shares: ${NAS_CPU_SHARES:-512}',
                  'networks: [vacuum]', 'NAS_VACUUM_SOCKET: /ipc/vacuum.sock',
                  '"${NAS_INDEX_PATH:-/volume1/app-data/nas-search/index}/vacuum-ipc:/ipc:rw"',
-                 'DREAME_PASSWORD: "${DREAME_PASSWORD:-}"']:
+                 'secrets: [dreame_password]',
+                 'DREAME_PASSWORD_FILE: /run/secrets/dreame_password']:
         assert line in block, line
+    # The password arrives only as a mounted file, never as an environment value.
+    assert 'DREAME_PASSWORD:' not in COMPOSE.read_text()
     # No published ports and no source folders: the vacuum service sees only its socket.
     assert 'ports:' not in block and '/files' not in block and ':/data' not in block
 
@@ -203,3 +206,11 @@ def test_vacuum_service_exists_only_with_its_profile():
     assert int(vacuum['mem_limit']) == 384 * 1024 * 1024
     assert {v['target'] for v in vacuum['volumes']} == {'/ipc'}
     assert list(vacuum['networks']) == ['vacuum'] and 'ports' not in vacuum
+    assert vacuum['secrets'] == [{'source': 'dreame_password', 'target': '/run/secrets/dreame_password'}]
+    assert 'DREAME_PASSWORD' not in vacuum['environment']
+
+
+def test_password_secret_is_a_file_in_the_install_folder():
+    text = COMPOSE.read_text()
+    top = text.split('\nsecrets:\n', 1)[1]
+    assert top.startswith('  dreame_password:\n    file: ./dreame_password\n')

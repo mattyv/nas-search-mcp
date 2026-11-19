@@ -115,10 +115,10 @@ if [ -f "$install_dir/.env" ]; then
     }
     vacuum_enabled=$(field NAS_VACUUM_ENABLED)
     if [ "$vacuum_enabled" = true ]; then
-        # Presence only: the password is checked for emptiness, never printed.
         vacuum_username=$(field DREAME_USERNAME)
-        vacuum_password_set=false
-        [ -z "$(field DREAME_PASSWORD)" ] || vacuum_password_set=true
+        # The password lives in its own file; refuse an old-style copy in .env.
+        vacuum_password_in_env=false
+        ! grep -q '^DREAME_PASSWORD=' "$install_dir/.env" || vacuum_password_in_env=true
         vacuum_account=$(memory_setting DREAME_ACCOUNT_TYPE dreame)
         vacuum_country=$(memory_setting DREAME_COUNTRY eu)
         vacuum_memory=$(memory_setting NAS_VACUUM_MEMORY 384m)
@@ -221,7 +221,12 @@ fi
 # Robot vacuum (optional). Credentials stay in .env; only their presence is checked.
 case "$vacuum_enabled" in true|false) :;; *) fail 'NAS_VACUUM_ENABLED must be true or false';; esac
 if [ "$vacuum_enabled" = true ]; then
-    [ -n "$vacuum_username" ] && [ "$vacuum_password_set" = true ] || fail 'The robot vacuum needs DREAME_USERNAME and DREAME_PASSWORD in .env'
+    [ "$vacuum_password_in_env" = false ] || fail 'Move DREAME_PASSWORD out of .env into a file named dreame_password in the install folder'
+    [ -n "$vacuum_username" ] || fail 'The robot vacuum needs DREAME_USERNAME in .env'
+    vacuum_secret=$install_dir/dreame_password
+    # Contents are checked for emptiness only and never printed.
+    [ -f "$vacuum_secret" ] && [ ! -L "$vacuum_secret" ] || fail 'The robot vacuum needs its password in a file named dreame_password in the install folder (not a symlink)'
+    [ -n "$(tr -d '\r\n' < "$vacuum_secret")" ] || fail 'The dreame_password file is empty'
     case "$vacuum_account" in dreame|mova|mi) :;; *) fail 'DREAME_ACCOUNT_TYPE must be dreame, mova, or mi';; esac
     printf '%s\n' "$vacuum_country" | LC_ALL=C grep -Eq '^[a-z]{2}$' || fail 'DREAME_COUNTRY must be a two-letter region code such as eu, us, or cn'
     printf '%s\n' "$vacuum_memory" | LC_ALL=C grep -Eq '^[0-9]{3,4}m$' || fail 'NAS_VACUUM_MEMORY must look like 384m'
@@ -323,6 +328,9 @@ if [ "$vacuum_enabled" = true ]; then
     fi
     [ -d "$vacuum_ipc" ] || fail 'Vacuum IPC path must be a directory'
     python3 -c 'import os,stat,sys; sys.exit(0 if stat.S_IMODE(os.stat(sys.argv[1],follow_symlinks=False).st_mode)==0o700 else 1)' "$vacuum_ipc" || fail 'Vacuum IPC directory must have mode 700'
+    # Only the vacuum service user (and root) may read the password file.
+    chown "$uid:$gid" "$vacuum_secret" || fail 'Cannot assign the dreame_password file'
+    chmod 400 "$vacuum_secret" || fail 'Cannot restrict the dreame_password file'
 fi
 # The deployment copy is pull-only; upstream resource and security defaults remain.
 previous_compose=

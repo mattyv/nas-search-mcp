@@ -809,3 +809,13 @@ Outside the proof boundary: the broker's mapping onto the vendor library, choosi
 Consequences: vacuum control depends on the vendor cloud; Xiaomi accounts that require captcha or 2FA cannot sign in headlessly; vendor credentials live in the private `.env`; status can lag by about a minute; the image grows by the vacuum environment. No database schema changes.
 
 Evidence: Dafny tests for the new rules failed with unresolved identifiers before implementation and passed afterward (`scripts/build-core.sh`: 106 core declarations verified, executable tests pass). Go policy, client and MCP-tool tests, Python broker tests and installer tests were each written first and failed before implementation. A smoke run against the real library with invalid credentials found and fixed a missing-attribute crash on Dreamehome sign-in failure. Importing the library measured about 170 MiB peak RSS on a development machine; DS220+ memory use and real vacuum control remain unmeasured.
+
+## D056 — Keep the vacuum password in a mounted file
+
+**Date:** 2026-11-19 · **Status:** Accepted; supersedes D055's password handling
+
+D055 passed the vendor password from `.env` to the vacuum container as an environment variable, which also exposed it through `docker inspect` and the container's process environment. Store it instead in a `dreame_password` file in the install folder, mounted into the vacuum container alone as a Compose file secret at `/run/secrets/dreame_password`. The installer requires the file when the vacuum is on, rejects a symlink, an empty file, or a `DREAME_PASSWORD` left in `.env`, then makes the file owned by the service user with mode 400. The broker reads only the file.
+
+Alternatives: an external secrets manager would need another service or a cloud dependency on a 2 GB NAS and still a stored unlock key on the device; deferred. Storing the vendor refresh token instead of the password would avoid keeping the password at all, but the token rotates at every sign-in and its lifetime is unknown without a real account; deferred until the basic integration is validated.
+
+Consequences: the password is still a plaintext file readable by NAS root and the service user; recovery scripts that copy only `.env` leave it behind, and the installer then stops with a clear message. Evidence: broker, installer and Compose contract tests for the file were written first and failed before implementation.

@@ -926,14 +926,17 @@ VACUUM_PASSWORD = 'vacuum-test-password-value'
 VACUUM_SETTINGS = {
     'NAS_VACUUM_ENABLED': 'true',
     'DREAME_USERNAME': 'owner@example.com',
-    'DREAME_PASSWORD': VACUUM_PASSWORD,
 }
 
 
-def vacuum_config(tmp_path, **overrides):
-    """Install once, then append vacuum settings to the private .env."""
+def vacuum_config(tmp_path, password=VACUUM_PASSWORD + '\n', **overrides):
+    """Install once, then append vacuum settings and write the password file."""
     args, env, log = setup(tmp_path)
     assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    if password is not None:
+        secret_file = tmp_path / 'install' / 'dreame_password'
+        secret_file.write_text(password)
+        secret_file.chmod(0o600)
     settings = dict(VACUUM_SETTINGS)
     settings.update(overrides)
     secret = tmp_path / 'install' / '.env'
@@ -951,7 +954,11 @@ def test_vacuum_enabled_creates_private_socket_dir_and_waits_for_health(tmp_path
     assert result.returncode == 0, result.stderr
     ipc = tmp_path / 'index' / 'vacuum-ipc'
     assert ipc.is_dir() and ipc.stat().st_mode & 0o777 == 0o700
-    assert f'1234:1234 {ipc}' in (tmp_path / 'chown.log').read_text()
+    chowns = (tmp_path / 'chown.log').read_text()
+    assert f'1234:1234 {ipc}' in chowns
+    secret_file = tmp_path / 'install' / 'dreame_password'
+    assert f'1234:1234 {secret_file}' in chowns
+    assert secret_file.stat().st_mode & 0o777 == 0o400
     calls = log.read_text()
     up = [line for line in calls.splitlines() if 'up -d --no-build' in line][0]
     assert '--profile vacuum' in up
@@ -964,8 +971,10 @@ def test_vacuum_enabled_creates_private_socket_dir_and_waits_for_health(tmp_path
     {'NAS_VACUUM_ENABLED': 'yes'},
     {'DREAME_USERNAME': None},
     {'DREAME_USERNAME': ''},
-    {'DREAME_PASSWORD': None},
-    {'DREAME_PASSWORD': ''},
+    {'password': None},
+    {'password': ''},
+    {'password': '\n'},
+    {'DREAME_PASSWORD': VACUUM_PASSWORD},
     {'DREAME_ACCOUNT_TYPE': 'roborock'},
     {'DREAME_COUNTRY': 'europe'},
     {'NAS_VACUUM_MEMORY': '384'},
@@ -993,7 +1002,7 @@ def test_vacuum_accepts_supported_accounts(tmp_path, overrides):
 
 
 def test_vacuum_disabled_stops_old_container_and_ignores_settings(tmp_path):
-    args, env, log, secret = vacuum_config(tmp_path, NAS_VACUUM_ENABLED='false', DREAME_PASSWORD='')
+    args, env, log, secret = vacuum_config(tmp_path, password=None, NAS_VACUUM_ENABLED='false', DREAME_USERNAME='')
     env['OLD_VACUUM'] = 'project-vacuum-container'
     result = subprocess.run(args, env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
@@ -1010,3 +1019,20 @@ def test_unhealthy_vacuum_service_rolls_back(tmp_path):
     result = subprocess.run(args, env=env, capture_output=True, text=True)
     assert result.returncode != 0 and 'rolling back' in result.stderr
     assert (state / 'current-image').read_text().strip().endswith(':old')
+
+
+def test_vacuum_password_file_must_not_be_a_symlink(tmp_path):
+    args, env, log, secret = vacuum_config(tmp_path, password=None)
+    target = tmp_path / 'elsewhere'
+    target.write_text(VACUUM_PASSWORD)
+    (tmp_path / 'install' / 'dreame_password').symlink_to(target)
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode != 0 and 'pull ' not in log.read_text()
+    assert VACUUM_PASSWORD not in result.stdout + result.stderr
+
+
+def test_vacuum_password_in_env_names_the_fix(tmp_path):
+    args, env, log, secret = vacuum_config(tmp_path, DREAME_PASSWORD=VACUUM_PASSWORD)
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode != 0 and 'dreame_password' in result.stderr
+    assert VACUUM_PASSWORD not in result.stdout + result.stderr
