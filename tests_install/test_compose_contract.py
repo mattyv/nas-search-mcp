@@ -191,6 +191,7 @@ def test_main_service_gains_vacuum_switch_that_defaults_to_off():
     block = COMPOSE.read_text().split('\n  nas-search:\n', 1)[1].split('\n  nas-', 1)[0]
     assert 'NAS_VACUUM_ENABLED: "${NAS_VACUUM_ENABLED:-false}"' in block
     assert 'NAS_VACUUM_SOCKET: /data/vacuum-ipc/vacuum.sock' in block
+    assert 'NAS_VACUUM_CAMERA: "${NAS_VACUUM_CAMERA:-true}"' in block
     assert 'DREAME_' not in block
 
 

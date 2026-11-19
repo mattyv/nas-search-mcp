@@ -843,3 +843,15 @@ The first live deployment found three problems. The broker retried a rejected si
 The broker now distinguishes a rejected sign-in (the library's credential failure flag) from other sign-in failures. It stops retrying a rejected sign-in until the service restarts and reports that plainly; network failures still retry with backoff. The public listener gives `vacuum_` tool calls their own one-call lane, so indexing and searches cannot delay them and a slow vacuum cannot delay status or upgrade checks. The Go client gives read calls 20 seconds and acting calls or map pictures 40 seconds, then returns a "busy, try again" error.
 
 These are adapter scheduling and transport choices, not application rules; the verified core is unchanged. Evidence: broker, admission and client tests for each behaviour were written first and failed before implementation. Live evidence: the deployed broker's log showed "user password not match" with two attempts remaining, and two `vacuum_status` calls timed out while the NAS re-indexed after an upgrade.
+
+## D059 — Add driving and obstacle photos, as the original integration has
+
+**Date:** 2026-11-19 · **Status:** Accepted; live validation pending. Supersedes D057's exclusion of manual driving and the camera.
+
+The owner asked to wrap the whole integration, and D057 had left out manual driving and the camera on the implementer's judgment. The owner's goal is to check something at home remotely: drive the vacuum there and see what is there. Add `vacuum_control` `go_to` (drive to a map point without cleaning), `vacuum_drive` (one remote-control step), `vacuum_obstacles` and `vacuum_obstacle_photo` (the photos the vacuum takes of obstacles it avoids). Obstacle tools are on by default, as in the original, with `NAS_VACUUM_CAMERA=false` to hide them.
+
+Not possible with the pinned library: live video, and photos on request. The library defines a take-photo property but never uses it, and has no code to fetch such a photo; on-demand photos need trial on the owner's vacuum before they can be offered.
+
+Verified core rules: `ValidVacuumGoTo` keeps the point inside the saved map and carries no passes or suction; `VacuumTargetsMatch` now requires a point for `go_to`; `ValidVacuumMove` bounds a step to the vendor's limits (turn -360 to 360, speed -600 to 600) and refuses a step that does nothing; `ValidVacuumObstacle` fetches photos only for obstacles the vacuum reported with a photo. Lemmas prove go-to never leaves the map and unknown obstacles are refused. Photos are re-encoded so only pixels reach the assistant.
+
+Evidence: Dafny, Go and broker tests for each rule and tool were written first and failed before implementation. A check against the pinned library confirmed `go_to`, `remote_control_move_step`, `obstacle_image` and the obstacle fields. Not yet tried on the owner's vacuum.

@@ -36,7 +36,10 @@ class FakeDevice:
             state_name='charging', battery_level=87, docked=True, has_error=False,
             error_name='no_error', suction_level_name='standard', current_room=kitchen,
             current_segments={5: hall, 3: kitchen},
-            current_map=SimpleNamespace(dimensions=dimensions, empty_map=False),
+            current_map=SimpleNamespace(dimensions=dimensions, empty_map=False, obstacles={
+                '2': SimpleNamespace(type=SimpleNamespace(name='SOCK'), x=120.4, y=-40, possibility=87, file_name='abc.jpg', picture_status=SimpleNamespace(value=2)),
+                '4': SimpleNamespace(type=SimpleNamespace(name='WIRE'), x=0, y=0, possibility=60, file_name=None, picture_status=None),
+            }),
             main_brush_life=80, side_brush_life=None, filter_life=12, mop_life=55,
             clean_water_tank_status_name='installed', dirty_water_tank_status_name='installed',
             dust_bag_status_name=None, washing=False, drying=True, drying_left_time=95,
@@ -62,6 +65,12 @@ class FakeDevice:
 
     def clean_spot(self, points, cleaning_times, suction_level, water_volume):
         self.calls.append(('clean_spot', points, cleaning_times, suction_level, water_volume))
+
+    def go_to(self, x, y):
+        self.calls.append(('go_to', x, y))
+
+    def remote_control_move_step(self, rotation, velocity):
+        self.calls.append(('move', rotation, velocity))
 
     def get_property(self, key):
         return self.properties.get(key)
@@ -89,6 +98,12 @@ class FakeVendor:
 
     def set_child_lock(self, device, on):
         self.calls.append(('child_lock', on))
+
+    def obstacle_photo(self, device, index):
+        self.calls.append(('obstacle_photo', index))
+        picture = io.BytesIO()
+        Image.new('RGB', (2400, 1800), 'gray').save(picture, 'JPEG')
+        return picture.getvalue()
 
     def render_map(self, device):
         picture = io.BytesIO()
@@ -473,3 +488,56 @@ def test_network_trouble_keeps_retrying():
     with pytest.raises(StopLoop):
         broker.keep_connected(holder, {}, connect=connect, sleep=stop_after_first)
     assert holder.problem() == 'could not reach the Dreame cloud; retrying'
+
+
+def test_go_to_dispatch():
+    device = FakeDevice()
+    out = make(device).command(cmd('go_to', point=[1500, -200]))
+    assert device.calls == [('go_to', 1500, -200)] and 'Driving' in out['message']
+
+
+def test_move_step_dispatch_and_shape():
+    device = FakeDevice()
+    out = make(device).move({'rotation': -90, 'velocity': 0})
+    assert device.calls == [('move', -90, 0)] and out['accepted']
+    for body in [{'rotation': '1', 'velocity': 0}, {'rotation': 1}, []]:
+        with pytest.raises(broker.BadRequest):
+            make(device).move(body)
+
+
+def test_obstacles_listed_with_photo_flag():
+    assert make().obstacles() == {'obstacles': [
+        {'index': 2, 'type': 'sock', 'x': 120, 'y': -40, 'confidence': 87, 'has_photo': True},
+        {'index': 4, 'type': 'wire', 'x': 0, 'y': 0, 'confidence': 60, 'has_photo': False},
+    ]}
+
+
+def test_obstacles_empty_without_map():
+    device = FakeDevice()
+    device.status.current_map = None
+    assert make(device).obstacles() == {'obstacles': []}
+
+
+def test_obstacle_photo_is_scaled_jpeg():
+    vendor = FakeVendor()
+    out = make(vendor=vendor).obstacle_photo({'index': 2})
+    picture = Image.open(io.BytesIO(base64.b64decode(out['data'])))
+    assert out['mime_type'] == 'image/jpeg' and picture.format == 'JPEG' and max(picture.size) <= 1280
+    assert vendor.calls == [('obstacle_photo', 2)]
+
+
+def test_obstacle_photo_missing_is_refused():
+    vendor = FakeVendor()
+    vendor.obstacle_photo = lambda device, index: None
+    with pytest.raises(broker.Refused):
+        make(vendor=vendor).obstacle_photo({'index': 2})
+    with pytest.raises(broker.BadRequest):
+        make().obstacle_photo({'index': 'two'})
+
+
+def test_http_drive_and_obstacle_routes(served):
+    path, _ = served
+    assert request(path, 'POST', '/move', json.dumps({'rotation': 10, 'velocity': 100}).encode())[0] == 200
+    status, body = request(path, 'POST', '/obstacles')
+    assert status == 200 and len(body['obstacles']) == 2
+    assert request(path, 'POST', '/obstacle_photo', json.dumps({'index': 2}).encode())[0] == 200

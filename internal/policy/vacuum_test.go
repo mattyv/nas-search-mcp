@@ -47,3 +47,16 @@ func TestVacuumZoneSpotAndSettingPolicyBridgesCore(t *testing.T) {
 		t.Fatal("setting allowlist mismatch")
 	}
 }
+
+func TestVacuumDrivePolicyBridgesCore(t *testing.T) {
+	bounds := [4]int{-5000, -5000, 5000, 5000}
+	if !ValidVacuumGoTo(10, 10, bounds, 0, -1) || ValidVacuumGoTo(9000, 0, bounds, 0, -1) {
+		t.Fatal("go-to bounds mismatch")
+	}
+	if !ValidVacuumMove(0, 200) || ValidVacuumMove(0, 0) || ValidVacuumMove(400, 0) {
+		t.Fatal("move limits mismatch")
+	}
+	if !ValidVacuumObstacle(2, []int{2}) || ValidVacuumObstacle(3, []int{2}) {
+		t.Fatal("obstacle check mismatch")
+	}
+}

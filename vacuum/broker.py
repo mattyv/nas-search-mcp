@@ -202,6 +202,9 @@ class Broker:
         elif action == 'clean_zones':
             self._run(lambda: device.clean_zone(zones, repeats, level, None))
             message = f'Cleaning {len(zones)} zone' + ('s' if len(zones) > 1 else '')
+        elif action == 'go_to' and point is not None:
+            self._run(lambda: device.go_to(point[0], point[1]))
+            message = 'Driving to the point'
         elif action == 'clean_spot' and point is not None:
             self._run(lambda: device.clean_spot([point], repeats, level, None))
             message = 'Cleaning the spot'
@@ -318,6 +321,52 @@ class Broker:
             entries.append(entry)
         return {'entries': entries}
 
+    def move(self, body):
+        if not isinstance(body, dict) or set(body) != {'rotation', 'velocity'} \
+                or not _is_int(body['rotation']) or not _is_int(body['velocity']):
+            raise BadRequest('move needs rotation and velocity')
+        device = self._device()
+        self._run(lambda: device.remote_control_move_step(body['rotation'], body['velocity']))
+        return {'accepted': True, 'message': 'Moved one step'}
+
+    def _obstacles(self, device):
+        current = getattr(device.status, 'current_map', None)
+        return (getattr(current, 'obstacles', None) or {}) if current else {}
+
+    def obstacles(self):
+        out = []
+        for key, item in self._obstacles(self._device()).items():
+            try:
+                index = int(key)
+            except (TypeError, ValueError):
+                continue
+            if not 0 < index <= 100000:
+                continue
+            kind = getattr(getattr(item, 'type', None), 'name', 'unknown') or 'unknown'
+            status = getattr(item, 'picture_status', None)
+            # The library can fetch a photo only once the vacuum has uploaded it.
+            has_photo = bool(getattr(item, 'file_name', None)) and (status is None or getattr(status, 'value', None) == 2)
+            out.append({'index': index, 'type': _text(kind, 40).lower(), 'x': int(item.x), 'y': int(item.y),
+                        'confidence': _count(getattr(item, 'possibility', 0), 100), 'has_photo': has_photo})
+        return {'obstacles': sorted(out, key=lambda o: o['index'])[:200]}
+
+    def obstacle_photo(self, body):
+        import base64
+        import io
+        from PIL import Image
+        if not isinstance(body, dict) or not _is_int(body.get('index')):
+            raise BadRequest('obstacle_photo needs an index')
+        device = self._device()
+        with self.lock:
+            data = self.vendor.obstacle_photo(device, body['index'])
+        if not data:
+            raise Refused('the vacuum has no photo for that obstacle')
+        picture = Image.open(io.BytesIO(data)).convert('RGB')
+        picture.thumbnail((1280, 1280))
+        out = io.BytesIO()
+        picture.save(out, 'JPEG', quality=85)
+        return {'mime_type': 'image/jpeg', 'data': base64.b64encode(out.getvalue()).decode()}
+
     def map(self):
         import base64
         import io
@@ -365,7 +414,9 @@ def make_server(path, holder):
     routes = {'/status': lambda b, _: b.status(), '/rooms': lambda b, _: b.rooms(),
               '/command': lambda b, body: b.command(body), '/setting': lambda b, body: b.setting(body),
               '/details': lambda b, _: b.details(), '/history': lambda b, body: b.history(body),
-              '/map': lambda b, _: b.map()}
+              '/map': lambda b, _: b.map(), '/move': lambda b, body: b.move(body),
+              '/obstacles': lambda b, _: b.obstacles(),
+              '/obstacle_photo': lambda b, body: b.obstacle_photo(body)}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -475,6 +526,10 @@ class DreameVendor:
 
     def set_child_lock(self, device, on):
         device.set_property(self.prop.CHILD_LOCK, 1 if on else 0)
+
+    def obstacle_photo(self, device, index):
+        data, _obstacle = device.obstacle_image(index)
+        return data
 
     def render_map(self, device):
         if self.renderer is None:

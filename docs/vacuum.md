@@ -17,11 +17,20 @@ Looking (never moves the vacuum):
 Doing (only when you ask):
 
 - `vacuum_control`: start, pause, stop, dock, locate (play a sound); clean chosen rooms, up to five rectangles on the map, or one spot, each with 1-3 passes and an optional suction level; empty the dustbin; wash, dry, or stop drying the mops.
+- `vacuum_control` `go_to`: drive to a point on the map (for example the middle of a room) and stop there, without cleaning.
+- `vacuum_drive`: one small remote-control step (turn and roll), like the app's joystick. Each call is a short nudge, a few seconds apart, and the vacuum's own bump and cliff sensors still apply.
 - `vacuum_settings`: cleaning mode (vacuum, mop, both, or mop after vacuuming), suction, mop wetness (dry, moist, wet), volume, do-not-disturb on/off and hours, child lock, carpet avoidance and recognition; and per room: mode, suction, mop wetness, and passes.
 
-The assistant cannot drive the vacuum by hand, use its camera, edit the map, change schedules, or update firmware. Room, zone and spot cleaning only accept rooms the vacuum reported and areas inside its saved map. Settings only accept the listed values. A feature your model lacks is refused with the vacuum's own message.
+Camera (on by default; set `NAS_VACUUM_CAMERA=false` in `.env` to hide both):
 
-Try: "How worn are the vacuum's brushes?", "Show me the vacuum map", "Clean the area in front of the sofa", "Mop the kitchen only, wet", "Turn on do-not-disturb from 22:00 to 08:00".
+- `vacuum_obstacles`: things the vacuum recognised and avoided on its current map (socks, cables, shoes, pet mess), with where they are and whether it took a photo.
+- `vacuum_obstacle_photo`: shows one of those photos. View only; nothing is saved.
+
+The vacuum takes these photos automatically while cleaning. It cannot yet take a photo on request, and there is no live video: the library does not support either. So "go to the hallway and tell me what you see" works only as far as driving there.
+
+The assistant cannot edit the map, change schedules, or update firmware. Room, zone and spot cleaning only accept rooms the vacuum reported and areas inside its saved map. Settings only accept the listed values. A feature your model lacks is refused with the vacuum's own message.
+
+Try: "Drive the vacuum to the kitchen", "What did the vacuum avoid today? Show me", "How worn are the vacuum's brushes?", "Show me the vacuum map", "Clean the area in front of the sofa", "Mop the kitchen only, wet", "Turn on do-not-disturb from 22:00 to 08:00".
 
 ## Turn it on
 

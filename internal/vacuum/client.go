@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"net"
@@ -103,10 +105,10 @@ type settingRequest struct {
 }
 
 type CommandInput struct {
-	Action  string   `json:"action" jsonschema:"one of start, pause, stop, dock, locate, clean_rooms, clean_zones, clean_spot, empty_dustbin, wash_mops, dry_mops, stop_drying"`
+	Action  string   `json:"action" jsonschema:"one of start, pause, stop, dock, locate, clean_rooms, clean_zones, clean_spot, go_to, empty_dustbin, wash_mops, dry_mops, stop_drying"`
 	Rooms   []int    `json:"rooms,omitempty" jsonschema:"room IDs from vacuum_rooms; only for clean_rooms"`
 	Zones   [][4]int `json:"zones,omitempty" jsonschema:"up to 5 rectangles [x0, y0, x1, y1] inside the map bounds from vacuum_rooms; only for clean_zones"`
-	Point   *[2]int  `json:"point,omitempty" jsonschema:"[x, y] inside the map bounds from vacuum_rooms; only for clean_spot"`
+	Point   *[2]int  `json:"point,omitempty" jsonschema:"[x, y] inside the map bounds from vacuum_rooms; only for clean_spot and go_to"`
 	Repeats int      `json:"repeats,omitempty" jsonschema:"passes, 1-3; only for clean_rooms, clean_zones, clean_spot; default 1"`
 	Suction string   `json:"suction,omitempty" jsonschema:"quiet, standard, strong, or turbo; only for clean_rooms, clean_zones, clean_spot; default keeps the current setting"`
 }
@@ -114,6 +116,37 @@ type CommandInput struct {
 type CommandResult struct {
 	Accepted bool   `json:"accepted"`
 	Message  string `json:"message"`
+}
+
+type MoveInput struct {
+	Turn  int `json:"turn,omitempty" jsonschema:"degrees to turn in this step, -360 to 360; positive turns left"`
+	Speed int `json:"speed,omitempty" jsonschema:"forward speed for this step, -600 to 600; negative reverses; 200 is a gentle roll"`
+}
+
+type moveRequest struct {
+	Rotation int `json:"rotation"`
+	Velocity int `json:"velocity"`
+}
+
+type Obstacle struct {
+	Index      int    `json:"index"`
+	Type       string `json:"type"`
+	X          int    `json:"x"`
+	Y          int    `json:"y"`
+	Confidence int    `json:"confidence"`
+	HasPhoto   bool   `json:"has_photo"`
+}
+
+type ObstaclesResult struct {
+	Obstacles []Obstacle `json:"obstacles"`
+}
+
+type ObstaclePhotoInput struct {
+	Index int `json:"index" jsonschema:"obstacle index from vacuum_obstacles with has_photo true"`
+}
+
+type obstacleRequest struct {
+	Index int `json:"index"`
 }
 
 type commandRequest struct {
@@ -195,7 +228,7 @@ func (c *Client) Command(ctx context.Context, in CommandInput) (CommandResult, e
 	if request.Zones == nil {
 		request.Zones = [][4]int{}
 	}
-	aimed := policy.VacuumNeedsRooms(in.Action) || policy.VacuumNeedsMap(in.Action)
+	aimed := policy.VacuumNeedsRooms(in.Action) || (policy.VacuumNeedsMap(in.Action) && in.Action != "go_to")
 	if aimed && request.Repeats == 0 {
 		request.Repeats = 1
 	}
@@ -212,9 +245,12 @@ func (c *Client) Command(ctx context.Context, in CommandInput) (CommandResult, e
 			return CommandResult{}, ErrNoMap
 		}
 		valid := false
-		if in.Action == "clean_zones" {
+		switch in.Action {
+		case "clean_zones":
 			valid = policy.ValidVacuumZones(request.Zones, *rooms.Bounds, request.Repeats, request.Suction)
-		} else {
+		case "go_to":
+			valid = policy.ValidVacuumGoTo(request.Point[0], request.Point[1], *rooms.Bounds, request.Repeats, request.Suction)
+		default:
 			valid = policy.ValidVacuumSpot(request.Point[0], request.Point[1], *rooms.Bounds, request.Repeats, request.Suction)
 		}
 		if !valid {
@@ -396,6 +432,80 @@ func (c *Client) Map(ctx context.Context) (MapImage, error) {
 	return MapImage{MIMEType: "image/png", Data: clean.Bytes()}, nil
 }
 
+// Move sends one remote-control step after checking it in the verified core.
+func (c *Client) Move(ctx context.Context, in MoveInput) (CommandResult, error) {
+	if !policy.ValidVacuumMove(in.Turn, in.Speed) {
+		return CommandResult{}, ErrInput
+	}
+	return c.accepted(ctx, "/move", moveRequest{Rotation: in.Turn, Velocity: in.Speed})
+}
+
+var obstacleType = regexp.MustCompile(`^[a-z][a-z0-9_ ]{0,39}$`)
+
+func (c *Client) Obstacles(ctx context.Context) (ObstaclesResult, error) {
+	var out ObstaclesResult
+	if err := c.post(ctx, "/obstacles", struct{}{}, &out); err != nil {
+		return ObstaclesResult{}, err
+	}
+	if out.Obstacles == nil || len(out.Obstacles) > 200 {
+		return ObstaclesResult{}, errReply
+	}
+	for _, o := range out.Obstacles {
+		if o.Index < 1 || o.Index > 100000 || !obstacleType.MatchString(o.Type) || o.Confidence < 0 || o.Confidence > 100 ||
+			o.X < -1000000 || o.X > 1000000 || o.Y < -1000000 || o.Y > 1000000 {
+			return ObstaclesResult{}, errReply
+		}
+	}
+	return out, nil
+}
+
+const maxPhotoBytes = 2 * 1024 * 1024
+
+// ObstaclePhoto fetches a photo only for an obstacle the vacuum reported with
+// one, then re-encodes it so only pixels (no metadata) reach the assistant.
+func (c *Client) ObstaclePhoto(ctx context.Context, in ObstaclePhotoInput) (MapImage, error) {
+	list, err := c.Obstacles(ctx)
+	if err != nil {
+		return MapImage{}, err
+	}
+	var known []int
+	for _, o := range list.Obstacles {
+		if o.HasPhoto {
+			known = append(known, o.Index)
+		}
+	}
+	if !policy.ValidVacuumObstacle(in.Index, known) {
+		return MapImage{}, ErrInput
+	}
+	var reply struct {
+		MIMEType string `json:"mime_type"`
+		Data     string `json:"data"`
+	}
+	if err := c.post(ctx, "/obstacle_photo", obstacleRequest{Index: in.Index}, &reply); err != nil {
+		return MapImage{}, err
+	}
+	if reply.MIMEType != "image/jpeg" || len(reply.Data) > base64.StdEncoding.EncodedLen(maxPhotoBytes) {
+		return MapImage{}, errReply
+	}
+	data, err := base64.StdEncoding.Strict().DecodeString(reply.Data)
+	if err != nil {
+		return MapImage{}, errReply
+	}
+	config, err := jpeg.DecodeConfig(bytes.NewReader(data))
+	if err != nil || config.Width < 1 || config.Height < 1 || config.Width > 2048 || config.Height > 2048 {
+		return MapImage{}, errReply
+	}
+	var pixels image.Image
+	if pixels, err = jpeg.Decode(bytes.NewReader(data)); err != nil {
+		return MapImage{}, errReply
+	}
+	var clean bytes.Buffer
+	if err := jpeg.Encode(&clean, pixels, &jpeg.Options{Quality: 85}); err != nil || clean.Len() > maxPhotoBytes {
+		return MapImage{}, errReply
+	}
+	return MapImage{MIMEType: "image/jpeg", Data: clean.Bytes()}, nil
+}
+
 func validBox(box [4]int) bool {
 	const limit = 1000000
 	return box[0] < box[2] && box[1] < box[3] && box[0] > -limit && box[1] > -limit && box[2] < limit && box[3] < limit
@@ -422,7 +532,7 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 		return ErrInput
 	}
 	limit := c.quick
-	if path == "/map" || path == "/command" || path == "/setting" {
+	if path == "/map" || path == "/command" || path == "/setting" || path == "/move" || path == "/obstacle_photo" {
 		limit = c.slow
 	}
 	parent := ctx
