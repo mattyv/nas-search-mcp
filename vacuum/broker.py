@@ -772,8 +772,6 @@ def make_server(path, holder):
 
         def do_POST(self):
             route = routes.get(self.path)
-            if route is None:
-                return self._send(404, {'error': 'not found'})
             try:
                 length = int(self.headers.get('Content-Length', '0'))
             except ValueError:
@@ -783,8 +781,13 @@ def make_server(path, holder):
                 if 0 < length <= 16 * MAX_BODY:
                     self.rfile.read(length)  # drain so the client sees the reply, not a reset
                 return self._send(413, {'error': 'body too large'})
+            # Read the whole body before any reply, so the client never writes
+            # into a connection the server has already answered and closed.
+            raw = self.rfile.read(length)
+            if route is None:
+                return self._send(404, {'error': 'not found'})
             try:
-                body = json.loads(self.rfile.read(length) or b'{}')
+                body = json.loads(raw or b'{}')
             except ValueError:
                 return self._send(400, {'error': 'body must be JSON'})
             current = holder.get()
