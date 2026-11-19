@@ -256,6 +256,24 @@ module CoreTests {
     expect !KeepBackup(0, 0);
     expect ValidBackupRetention(1) && ValidBackupRetention(90);
     expect !ValidBackupRetention(0) && !ValidBackupRetention(91);
+    expect VacuumAction("start") && VacuumAction("dock") && VacuumAction("clean_rooms");
+    expect !VacuumAction("factory_reset") && !VacuumAction("");
+    expect VacuumNeedsRooms("clean_rooms") && !VacuumNeedsRooms("start");
+    expect ValidVacuumCommand("start", [], [3, 5], 0, -1);
+    expect ValidVacuumCommand("dock", [], [], 0, -1);
+    expect !ValidVacuumCommand("start", [3], [3, 5], 0, -1);
+    expect !ValidVacuumCommand("pause", [], [], 1, -1);
+    expect !ValidVacuumCommand("pause", [], [], 0, 2);
+    expect !ValidVacuumCommand("self_destruct", [], [], 0, -1);
+    expect ValidVacuumCommand("clean_rooms", [3], [3, 5], 1, -1);
+    expect ValidVacuumCommand("clean_rooms", [5, 3], [3, 5], 3, 3);
+    expect !ValidVacuumCommand("clean_rooms", [], [3, 5], 1, -1);
+    expect !ValidVacuumCommand("clean_rooms", [7], [3, 5], 1, -1);
+    expect !ValidVacuumCommand("clean_rooms", [3, 3], [3, 5], 1, -1);
+    expect !ValidVacuumCommand("clean_rooms", [3], [3, 5], 0, -1);
+    expect !ValidVacuumCommand("clean_rooms", [3], [3, 5], 4, -1);
+    expect !ValidVacuumCommand("clean_rooms", [3], [3, 5], 1, 4);
+    expect !ValidVacuumCommand("clean_rooms", [3], [3, 5], 1, -2);
     print "Dafny core executable tests passed\n";
   }
 }

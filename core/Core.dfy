@@ -838,4 +838,62 @@ module Core {
     ensures Remove(Remove(state, key), key) == Remove(state, key)
     ensures key !in Remove(state, key)
   {}
+
+  // Robot vacuum control. The adapter forwards only these commands to the
+  // vacuum broker; everything else the vendor library can do stays unreachable.
+  const VacuumActions: seq<string> := ["start", "pause", "stop", "dock", "locate", "clean_rooms"]
+  const MaxVacuumRooms: nat := 32
+
+  function VacuumAction(action: string): bool
+    ensures VacuumAction(action) <==> action in VacuumActions
+  {
+    action in VacuumActions
+  }
+
+  function VacuumNeedsRooms(action: string): bool
+    ensures VacuumNeedsRooms(action) <==> action == "clean_rooms"
+  {
+    action == "clean_rooms"
+  }
+
+  predicate DistinctInts(xs: seq<int>) {
+    forall i, j | 0 <= i < j < |xs| :: xs[i] != xs[j]
+  }
+
+  // Room cleaning names only rooms the vacuum reported, each once, with 1-3
+  // passes and suction -1 (keep current) or 0-3 (quiet..turbo). Other commands
+  // carry no room, pass, or suction arguments.
+  function ValidVacuumCommand(action: string, rooms: seq<int>, known: seq<int>, repeats: int, suction: int): bool
+    ensures ValidVacuumCommand(action, rooms, known, repeats, suction) ==> VacuumAction(action)
+    ensures ValidVacuumCommand(action, rooms, known, repeats, suction) && VacuumNeedsRooms(action) ==>
+      1 <= |rooms| <= MaxVacuumRooms && DistinctInts(rooms) && (forall r <- rooms :: r in known) &&
+      1 <= repeats <= 3 && -1 <= suction <= 3
+    ensures ValidVacuumCommand(action, rooms, known, repeats, suction) && !VacuumNeedsRooms(action) ==>
+      |rooms| == 0 && repeats == 0 && suction == -1
+  {
+    VacuumAction(action) &&
+    if VacuumNeedsRooms(action) then
+      1 <= |rooms| <= MaxVacuumRooms && DistinctInts(rooms) && (forall r <- rooms :: r in known) &&
+      1 <= repeats <= 3 && -1 <= suction <= 3
+    else
+      |rooms| == 0 && repeats == 0 && suction == -1
+  }
+
+  lemma VacuumNeverCleansUnknownRoom(action: string, rooms: seq<int>, known: seq<int>, repeats: int, suction: int, room: int)
+    requires room in rooms && room !in known
+    ensures !ValidVacuumCommand(action, rooms, known, repeats, suction)
+  {}
+
+  lemma VacuumUnknownActionRejected(action: string, rooms: seq<int>, known: seq<int>, repeats: int, suction: int)
+    requires action !in VacuumActions
+    ensures !ValidVacuumCommand(action, rooms, known, repeats, suction)
+  {}
+
+  lemma VacuumNoRoomsKnownNoRoomCleaning(rooms: seq<int>, repeats: int, suction: int)
+    ensures !ValidVacuumCommand("clean_rooms", rooms, [], repeats, suction)
+  {
+    if ValidVacuumCommand("clean_rooms", rooms, [], repeats, suction) {
+      assert rooms[0] in rooms;
+    }
+  }
 }

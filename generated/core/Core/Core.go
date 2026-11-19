@@ -531,11 +531,46 @@ func (_static *CompanionStruct_Default___) KeepBackup(rankNewestFirst _dafny.Int
 func (_static *CompanionStruct_Default___) EditorAllowed(login _dafny.Sequence, owner _dafny.Sequence) bool {
 	return (!_dafny.Companion_Sequence_.Equal(owner, _dafny.UnicodeSeqOfUtf8Bytes(""))) && (_dafny.Companion_Sequence_.Equal(login, owner))
 }
+func (_static *CompanionStruct_Default___) VacuumAction(action _dafny.Sequence) bool {
+	return _dafny.Companion_Sequence_.Contains(Companion_Default___.VacuumActions(), action)
+}
+func (_static *CompanionStruct_Default___) VacuumNeedsRooms(action _dafny.Sequence) bool {
+	return _dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("clean_rooms"))
+}
+func (_static *CompanionStruct_Default___) DistinctInts(xs _dafny.Sequence) bool {
+	return _dafny.Quantifier(_dafny.IntegerRange(_dafny.Zero, _dafny.IntOfUint32((xs).Cardinality())), true, func(_forall_var_0 _dafny.Int) bool {
+		var _0_i _dafny.Int
+		_0_i = interface{}(_forall_var_0).(_dafny.Int)
+		return _dafny.Quantifier(_dafny.IntegerRange((_0_i).Plus(_dafny.One), _dafny.IntOfUint32((xs).Cardinality())), true, func(_forall_var_1 _dafny.Int) bool {
+			var _1_j _dafny.Int
+			_1_j = interface{}(_forall_var_1).(_dafny.Int)
+			return !((((_0_i).Sign() != -1) && ((_0_i).Cmp(_1_j) < 0)) && ((_1_j).Cmp(_dafny.IntOfUint32((xs).Cardinality())) < 0)) || (((xs).Select((_0_i).Uint32()).(_dafny.Int)).Cmp((xs).Select((_1_j).Uint32()).(_dafny.Int)) != 0)
+		})
+	})
+}
+func (_static *CompanionStruct_Default___) ValidVacuumCommand(action _dafny.Sequence, rooms _dafny.Sequence, known _dafny.Sequence, repeats _dafny.Int, suction _dafny.Int) bool {
+	return (Companion_Default___.VacuumAction(action)) && ((func() bool {
+		if Companion_Default___.VacuumNeedsRooms(action) {
+			return ((((((_dafny.One).Cmp(_dafny.IntOfUint32((rooms).Cardinality())) <= 0) && ((_dafny.IntOfUint32((rooms).Cardinality())).Cmp(Companion_Default___.MaxVacuumRooms()) <= 0)) && (Companion_Default___.DistinctInts(rooms))) && (_dafny.Quantifier((rooms).UniqueElements(), true, func(_forall_var_0 _dafny.Int) bool {
+				var _0_r _dafny.Int
+				_0_r = interface{}(_forall_var_0).(_dafny.Int)
+				return !(_dafny.Companion_Sequence_.Contains(rooms, _0_r)) || (_dafny.Companion_Sequence_.Contains(known, _0_r))
+			}))) && (((_dafny.One).Cmp(repeats) <= 0) && ((repeats).Cmp(_dafny.IntOfInt64(3)) <= 0))) && (((_dafny.IntOfInt64(-1)).Cmp(suction) <= 0) && ((suction).Cmp(_dafny.IntOfInt64(3)) <= 0))
+		}
+		return (((_dafny.IntOfUint32((rooms).Cardinality())).Sign() == 0) && ((repeats).Sign() == 0)) && ((suction).Cmp(_dafny.IntOfInt64(-1)) == 0)
+	})())
+}
 func (_static *CompanionStruct_Default___) InlineTypes() _dafny.Set {
 	return _dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("application/pdf"), _dafny.UnicodeSeqOfUtf8Bytes("image/jpeg"), _dafny.UnicodeSeqOfUtf8Bytes("image/png"), _dafny.UnicodeSeqOfUtf8Bytes("image/gif"), _dafny.UnicodeSeqOfUtf8Bytes("image/webp"), _dafny.UnicodeSeqOfUtf8Bytes("text/plain"))
 }
 func (_static *CompanionStruct_Default___) ClipFlavour() _dafny.Sequence {
 	return _dafny.UnicodeSeqOfUtf8Bytes(";clip")
+}
+func (_static *CompanionStruct_Default___) VacuumActions() _dafny.Sequence {
+	return _dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("start"), _dafny.UnicodeSeqOfUtf8Bytes("pause"), _dafny.UnicodeSeqOfUtf8Bytes("stop"), _dafny.UnicodeSeqOfUtf8Bytes("dock"), _dafny.UnicodeSeqOfUtf8Bytes("locate"), _dafny.UnicodeSeqOfUtf8Bytes("clean_rooms"))
+}
+func (_static *CompanionStruct_Default___) MaxVacuumRooms() _dafny.Int {
+	return _dafny.IntOfInt64(32)
 }
 
 // End of class Default__

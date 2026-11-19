@@ -35,6 +35,9 @@ services:
       NAS_UPGRADE_DIR: "${NAS_UPGRADE_DIR:-}"
       # The installer adds a read-only socket-directory bind only when configured.
       NAS_SYNOLOGY_PHOTOS_SOCKET: "${NAS_SYNOLOGY_PHOTOS_SOCKET:-}"
+      # Optional robot vacuum (profile "vacuum"); the socket lives under /data.
+      NAS_VACUUM_ENABLED: "${NAS_VACUUM_ENABLED:-false}"
+      NAS_VACUUM_SOCKET: /data/vacuum-ipc/vacuum.sock
       NAS_ROOT: /files
       NAS_DATA: /data
       NAS_SEMANTIC: "true"
@@ -155,5 +158,46 @@ services:
       timeout: 5s
       retries: 3
 
+  # Optional robot vacuum (profile "vacuum"). It needs outbound internet for the
+  # vendor cloud, so it sits on its own network away from the search container,
+  # and talks to it only through a socket in the index folder. No ports are published.
+  nas-vacuum:
+    profiles: [vacuum]
+    image: nas-search-mcp:local
+    entrypoint: [/opt/vacuum-venv/bin/python, -I, /app/vacuum/broker.py]
+    restart: unless-stopped
+    init: true
+    networks: [vacuum]
+    user: "${NAS_UID:-1000}:${NAS_GID:-1000}"
+    environment:
+      NAS_VACUUM_SOCKET: /ipc/vacuum.sock
+      DREAME_ACCOUNT_TYPE: "${DREAME_ACCOUNT_TYPE:-dreame}"
+      DREAME_USERNAME: "${DREAME_USERNAME:-}"
+      DREAME_PASSWORD: "${DREAME_PASSWORD:-}"
+      DREAME_COUNTRY: "${DREAME_COUNTRY:-eu}"
+      DREAME_DEVICE_ID: "${DREAME_DEVICE_ID:-}"
+      DREAME_LIBRARY: /opt/dreame
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOME: /tmp
+    volumes:
+      - "${NAS_INDEX_PATH:-/volume1/app-data/nas-search/index}/vacuum-ipc:/ipc:rw"
+    # Importing the vendor library alone uses about 170 MiB; measure on the NAS.
+    mem_limit: ${NAS_VACUUM_MEMORY:-384m}
+    memswap_limit: ${NAS_VACUUM_MEMORY:-384m}
+    # Same CPU policy as nas-search; see the comment there.
+    cpuset: "${NAS_CPUSET:-0-1}"
+    cpu_shares: ${NAS_CPU_SHARES:-512}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    healthcheck:
+      test: [CMD, /opt/vacuum-venv/bin/python, -I, /app/vacuum/broker.py, health]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 networks:
   memory: {}
+  vacuum: {}

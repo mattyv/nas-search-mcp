@@ -17,6 +17,7 @@ case "$1" in
 info) echo 'Server ready';;
 inspect) [ -n "${ACTIVE_INSTALL:-}" ] || exit 1; printf '%s\\n' "$ACTIVE_INSTALL";;
 ps) case "$*" in *nas-memory*) [ -z "${OLD_MEMORY:-}" ] || printf '%s\\n' "$OLD_MEMORY";;
+    *nas-vacuum*) [ -z "${OLD_VACUUM:-}" ] || printf '%s\\n' "$OLD_VACUUM";;
     *) [ -z "${OLD_WRITER:-}" ] || printf '%s\\n' "$OLD_WRITER";; esac;;
 pull) [ "${FAIL_PULL:-0}" = 0 ];;
 run) [ "${FAIL_LIMITS:-0}" = 0 ];;
@@ -24,6 +25,7 @@ compose) if [ "${CHECK_NAS_ENV:-0}" = 1 ] && [ "${2:-}" != version ]; then
     [ -z "$(env | sed -n '/^NAS_[A-Za-z0-9_]*=/p')" ] || exit 91
 fi
 case "$*" in *"exec -T nas-memory"*) [ "${FAIL_MEMORY_HEALTH:-0}" = 0 ] || exit 1;; esac
+case "$*" in *"exec -T nas-vacuum"*) [ "${FAIL_VACUUM_HEALTH:-0}" = 0 ] || exit 1;; esac
 case "$*" in *"exec -T nas-search"*) [ "${FAIL_HEALTH:-0}" = 0 ] || exit 1
     if [ -n "${SLOW_START:-}" ]; then
         n=$(cat "$SLOW_START" 2>/dev/null || echo 0); echo $((n + 1)) > "$SLOW_START"
@@ -918,3 +920,93 @@ def test_memory_directory_with_wrong_mode_is_rejected(tmp_path):
     result = run_memory(args, env)
     assert result.returncode != 0 and 'mode 700' in result.stderr
     assert memory.stat().st_mode & 0o777 == 0o777
+
+
+VACUUM_PASSWORD = 'vacuum-test-password-value'
+VACUUM_SETTINGS = {
+    'NAS_VACUUM_ENABLED': 'true',
+    'DREAME_USERNAME': 'owner@example.com',
+    'DREAME_PASSWORD': VACUUM_PASSWORD,
+}
+
+
+def vacuum_config(tmp_path, **overrides):
+    """Install once, then append vacuum settings to the private .env."""
+    args, env, log = setup(tmp_path)
+    assert subprocess.run(args, env=env, capture_output=True).returncode == 0
+    settings = dict(VACUUM_SETTINGS)
+    settings.update(overrides)
+    secret = tmp_path / 'install' / '.env'
+    with secret.open('a') as stream:
+        for key, value in settings.items():
+            if value is not None:
+                stream.write(f'{key}={value}\n')
+    log.write_text('')
+    return args, env, log, secret
+
+
+def test_vacuum_enabled_creates_private_socket_dir_and_waits_for_health(tmp_path):
+    args, env, log, secret = vacuum_config(tmp_path)
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    ipc = tmp_path / 'index' / 'vacuum-ipc'
+    assert ipc.is_dir() and ipc.stat().st_mode & 0o777 == 0o700
+    assert f'1234:1234 {ipc}' in (tmp_path / 'chown.log').read_text()
+    calls = log.read_text()
+    up = [line for line in calls.splitlines() if 'up -d --no-build' in line][0]
+    assert '--profile vacuum' in up
+    assert calls.index('up -d --no-build') < calls.index('exec -T nas-vacuum') < calls.index('exec -T nas-search')
+    out = result.stdout + result.stderr + calls + (tmp_path / 'install' / 'compose.yaml').read_text()
+    assert VACUUM_PASSWORD not in out
+
+
+@pytest.mark.parametrize('overrides', [
+    {'NAS_VACUUM_ENABLED': 'yes'},
+    {'DREAME_USERNAME': None},
+    {'DREAME_USERNAME': ''},
+    {'DREAME_PASSWORD': None},
+    {'DREAME_PASSWORD': ''},
+    {'DREAME_ACCOUNT_TYPE': 'roborock'},
+    {'DREAME_COUNTRY': 'europe'},
+    {'NAS_VACUUM_MEMORY': '384'},
+    {'NAS_VACUUM_MEMORY': '64m'},
+    {'NAS_VACUUM_MEMORY': '2g'},
+])
+def test_vacuum_settings_are_validated_before_pull(tmp_path, overrides):
+    args, env, log, secret = vacuum_config(tmp_path, **overrides)
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert 'pull ' not in log.read_text() and 'up -d' not in log.read_text()
+    assert not (tmp_path / 'index' / 'vacuum-ipc').exists()
+    assert VACUUM_PASSWORD not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('overrides', [
+    {'DREAME_ACCOUNT_TYPE': 'mi', 'DREAME_COUNTRY': 'de'},
+    {'DREAME_ACCOUNT_TYPE': 'mova', 'NAS_VACUUM_MEMORY': '512m'},
+])
+def test_vacuum_accepts_supported_accounts(tmp_path, overrides):
+    args, env, log, secret = vacuum_config(tmp_path, **overrides)
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert '--profile vacuum' in log.read_text()
+
+
+def test_vacuum_disabled_stops_old_container_and_ignores_settings(tmp_path):
+    args, env, log, secret = vacuum_config(tmp_path, NAS_VACUUM_ENABLED='false', DREAME_PASSWORD='')
+    env['OLD_VACUUM'] = 'project-vacuum-container'
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text()
+    assert 'stop project-vacuum-container' in calls and '--profile vacuum' not in calls
+    assert not (tmp_path / 'index' / 'vacuum-ipc').exists()
+
+
+def test_unhealthy_vacuum_service_rolls_back(tmp_path):
+    args, env, log, secret = vacuum_config(tmp_path)
+    state = tmp_path / 'install'
+    (state / 'current-image').write_text('ghcr.io/mattyv/nas-search-mcp:old\n')
+    env['FAIL_VACUUM_HEALTH'] = '1'
+    result = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert result.returncode != 0 and 'rolling back' in result.stderr
+    assert (state / 'current-image').read_text().strip().endswith(':old')
