@@ -98,7 +98,7 @@ Ask your assistant for the vacuum status. When the vacuum is unavailable, the an
 
 ### Find your account's region
 
-Dreame keeps each account on one regional server, which is not always where you live. This tries each region with your saved details and prints which one signs in. It never shows the password. Each wrong region does not count as a wrong password, but a wrong password counts once per region, so fix the password first if every region fails.
+Dreame keeps each account on one regional server, which is not always where you live. This tries each region with your saved details and prints which one signs in. It never shows the password. Every try may count as a failed sign-in on that region's server, and Dreame locks an account after five, so run it once, and if every region fails, check the password in the app before running it again.
 
 ```sh
 cd /volume1/@nas-search-upgrader
