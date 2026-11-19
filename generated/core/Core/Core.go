@@ -834,15 +834,6 @@ func (_static *CompanionStruct_Default___) PrintableName(name _dafny.Sequence) b
 func (_static *CompanionStruct_Default___) ValidVacuumPlace(action _dafny.Sequence, name _dafny.Sequence, saved _dafny.Sequence, x _dafny.Int, y _dafny.Int, bounds _dafny.Tuple) bool {
 	return (Companion_Default___.PrintableName(name)) && (((((_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("save"))) && ((((*(bounds).IndexInt(0)).(_dafny.Int)).Cmp(x) <= 0) && ((x).Cmp((*(bounds).IndexInt(2)).(_dafny.Int)) <= 0))) && ((((*(bounds).IndexInt(1)).(_dafny.Int)).Cmp(y) <= 0) && ((y).Cmp((*(bounds).IndexInt(3)).(_dafny.Int)) <= 0))) && ((_dafny.Companion_Sequence_.Contains(saved, name)) || ((_dafny.IntOfUint32((saved).Cardinality())).Cmp(Companion_Default___.VacuumMaxPlaces()) < 0))) || ((_dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("forget"))) && (_dafny.Companion_Sequence_.Contains(saved, name))))
 }
-func (_static *CompanionStruct_Default___) VacuumPresenceAction(presence _dafny.Sequence, state _dafny.Sequence, docked bool, error_ _dafny.Sequence, battery _dafny.Int, startedToday bool) _dafny.Sequence {
-	if (((((_dafny.Companion_Sequence_.Equal(presence, _dafny.UnicodeSeqOfUtf8Bytes("away"))) && (docked)) && (_dafny.Companion_Sequence_.Equal(error_, _dafny.UnicodeSeqOfUtf8Bytes("")))) && ((battery).Cmp(Companion_Default___.VacuumAwayMinBattery()) >= 0)) && (_dafny.Companion_Sequence_.Contains(Companion_Default___.VacuumDoneStates(), state))) && (!(startedToday)) {
-		return _dafny.UnicodeSeqOfUtf8Bytes("start")
-	} else if ((_dafny.Companion_Sequence_.Equal(presence, _dafny.UnicodeSeqOfUtf8Bytes("home"))) && (startedToday)) && (_dafny.Companion_Sequence_.Contains(Companion_Default___.VacuumWorkingStates(), state)) {
-		return _dafny.UnicodeSeqOfUtf8Bytes("dock")
-	} else {
-		return _dafny.UnicodeSeqOfUtf8Bytes("none")
-	}
-}
 func (_static *CompanionStruct_Default___) InlineTypes() _dafny.Set {
 	return _dafny.SetOf(_dafny.UnicodeSeqOfUtf8Bytes("application/pdf"), _dafny.UnicodeSeqOfUtf8Bytes("image/jpeg"), _dafny.UnicodeSeqOfUtf8Bytes("image/png"), _dafny.UnicodeSeqOfUtf8Bytes("image/gif"), _dafny.UnicodeSeqOfUtf8Bytes("image/webp"), _dafny.UnicodeSeqOfUtf8Bytes("text/plain"))
 }
@@ -881,9 +872,6 @@ func (_static *CompanionStruct_Default___) VacuumDoneStates() _dafny.Sequence {
 }
 func (_static *CompanionStruct_Default___) VacuumMaxPlaces() _dafny.Int {
 	return _dafny.IntOfInt64(30)
-}
-func (_static *CompanionStruct_Default___) VacuumAwayMinBattery() _dafny.Int {
-	return _dafny.IntOfInt64(50)
 }
 
 // End of class Default__

@@ -378,16 +378,6 @@ module CoreTests {
     expect ValidVacuumPlace("forget", "Front door", ["Front door"], 0, 0, (0, 0, 0, 0));
     expect !ValidVacuumPlace("forget", "Kitchen", ["Front door"], 0, 0, (0, 0, 0, 0));
     expect !ValidVacuumPlace("drive", "Front door", ["Front door"], 1, 1, (0, 0, 9, 9));
-    expect VacuumPresenceAction("away", "charging_completed", true, "", 90, false) == "start";
-    expect VacuumPresenceAction("away", "charging_completed", true, "", 90, true) == "none";
-    expect VacuumPresenceAction("away", "charging", true, "", 40, false) == "none";
-    expect VacuumPresenceAction("away", "charging", true, "wheel_stuck", 90, false) == "none";
-    expect VacuumPresenceAction("away", "idle", false, "", 90, false) == "none";
-    expect VacuumPresenceAction("away", "sweeping", true, "", 90, false) == "none";
-    expect VacuumPresenceAction("home", "sweeping", false, "", 60, true) == "dock";
-    expect VacuumPresenceAction("home", "sweeping", false, "", 60, false) == "none";
-    expect VacuumPresenceAction("home", "charging", true, "", 60, true) == "none";
-    expect VacuumPresenceAction("lunch", "charging", true, "", 90, false) == "none";
     expect VacuumPartWorn(12, 9, 10) && !VacuumPartWorn(9, 8, 10) && !VacuumPartWorn(50, 40, 10);
     print "Dafny core executable tests passed\n";
   }
