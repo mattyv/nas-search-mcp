@@ -97,6 +97,9 @@ func admitPublicWithWait(next http.Handler, maxWait time.Duration) http.Handler 
 	callLimits := newPublicCallLimits()
 	workGate := make(chan struct{}, 1)
 	controlGate := make(chan struct{}, 1)
+	// Vacuum calls wait on the vendor cloud, not on local work, so they get their
+	// own lane: indexing cannot delay them and a slow vacuum cannot delay status.
+	vacuumGate := make(chan struct{}, 1)
 	queue := make(chan struct{}, 100)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -107,7 +110,7 @@ func admitPublicWithWait(next http.Handler, maxWait time.Duration) http.Handler 
 			if len(key) > 12 {
 				key = key[:12]
 			}
-			active := len(workGate) + len(controlGate)
+			active := len(workGate) + len(controlGate) + len(vacuumGate)
 			log.Printf("public rejection reason=queue_full key=%s method=unread active=%d queued=%d", key, active, len(queue)-active)
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "server busy", 429)
@@ -138,6 +141,8 @@ func admitPublicWithWait(next http.Handler, maxWait time.Duration) http.Handler 
 		gate := workGate
 		if control {
 			gate = controlGate
+		} else if r.URL.Path == "/mcp" && parsed && request.Method == "tools/call" && strings.HasPrefix(request.Params.Name, "vacuum_") {
+			gate = vacuumGate
 		}
 		wait := time.NewTimer(maxWait)
 		defer wait.Stop()
@@ -162,7 +167,7 @@ func admitPublicWithWait(next http.Handler, maxWait time.Duration) http.Handler 
 			if len(key) > 12 {
 				key = key[:12]
 			}
-			log.Printf("public rejection reason=work_busy key=%s method=unread active=%d", key, len(workGate)+len(controlGate))
+			log.Printf("public rejection reason=work_busy key=%s method=unread active=%d", key, len(workGate)+len(controlGate)+len(vacuumGate))
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "server busy", 429)
 		case <-r.Context().Done():

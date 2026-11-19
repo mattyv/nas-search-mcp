@@ -833,3 +833,13 @@ The verified core decides what is forwarded. New rules: base-station actions tak
 Outside the proof boundary: turning setting names into indexes, mapping indexes onto the library's per-model encodings (for example dry/moist/wet onto a 1-32 wetness scale), rendering the map, and the vacuum's own behaviour. The adapter re-encodes map pictures so only pixels reach the assistant.
 
 Evidence: Dafny tests for the zone, spot, setting and target rules, and Go client, tool and broker tests, were written first and failed before implementation; the history-limit rule's test was added with its implementation. A check against the pinned library confirmed every called method, status field and capability flag exists, and caught that room boxes must use the millimetre `x0..y1` fields rather than map-grid `coords`. The real renderer produced a PNG with peak RSS of about 106 MiB in isolation; memory with a real map on the NAS is unmeasured.
+
+## D058 — Protect the vendor account and keep vacuum calls responsive
+
+**Date:** 2026-11-19 · **Status:** Accepted
+
+The first live deployment found three problems. The broker retried a rejected sign-in every ten minutes, while Dreame locks an account after five wrong passwords. Vacuum tool calls shared the public listener's single search lane, so they waited behind slow searches and timed out in the assistant. And a slow broker held a call for up to 45 seconds, close to the assistant's own 60-second tool timeout.
+
+The broker now distinguishes a rejected sign-in (the library's credential failure flag) from other sign-in failures. It stops retrying a rejected sign-in until the service restarts and reports that plainly; network failures still retry with backoff. The public listener gives `vacuum_` tool calls their own one-call lane, so indexing and searches cannot delay them and a slow vacuum cannot delay status or upgrade checks. The Go client gives read calls 20 seconds and acting calls or map pictures 40 seconds, then returns a "busy, try again" error.
+
+These are adapter scheduling and transport choices, not application rules; the verified core is unchanged. Evidence: broker, admission and client tests for each behaviour were written first and failed before implementation. Live evidence: the deployed broker's log showed "user password not match" with two attempts remaining, and two `vacuum_status` calls timed out while the NAS re-indexed after an upgrade.

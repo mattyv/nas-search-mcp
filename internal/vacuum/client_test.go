@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func broker(t *testing.T, handler http.HandlerFunc) string {
@@ -394,5 +395,23 @@ func TestUnavailableExplainsWhy(t *testing.T) {
 	})
 	if _, err := newClient(t, silent).Status(context.Background()); err != ErrUnavailable {
 		t.Fatalf("unreadable reason not dropped: %v", err)
+	}
+}
+
+func TestSlowBrokerReportsBusyQuickly(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	socket := broker(t, func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+	client := newClient(t, socket)
+	client.quick = 100 * time.Millisecond
+	started := time.Now()
+	_, err := client.Status(context.Background())
+	if !errors.Is(err, ErrBusy) || time.Since(started) > 2*time.Second {
+		t.Fatalf("err=%v after %s", err, time.Since(started))
 	}
 }
