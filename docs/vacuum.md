@@ -92,6 +92,14 @@ If the account has several vacuums, the service log names each one with its ID. 
 
 Nothing extra to set up. The vacuum tools ride on the same authenticated MCP connection as search, so they work wherever your connector already does: on your LAN, over your personal Tailscale, or through the OAuth connector. The vacuum service publishes no ports and never sees your files; it talks to the main service only through a private socket on the NAS.
 
+## Saved places
+
+Name spots on the map once, then use the names: "go to the front door", "spot-clean under the couch".
+
+- Drive the vacuum to the spot, then say "save this spot as Front door". Or give a point from the map.
+- "What places have I saved?" lists them; "forget Couch" removes one.
+- Up to 30 places. They live on the NAS (in the index folder), not in the Dreame app, and stay put across upgrades. If you rebuild the map, re-save them, since old points may land somewhere else.
+
 ## Phone notifications
 
 Get a push on your phone when the vacuum finishes, gets stuck, or a part (filter, brush, mop pad) drops below 10% life.

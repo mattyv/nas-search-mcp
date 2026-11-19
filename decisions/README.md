@@ -885,3 +885,13 @@ The main service polls the vacuum broker every 30 seconds and pushes a notice to
 The topic name is the only secret, so the server refuses topics shorter than 16 characters. Notices go through the public ntfy.sh unless `NAS_VACUUM_NTFY_URL` points at a self-hosted server. Notifications are off unless a topic is set.
 
 Evidence: core expect-tests, Go tests for the notifier (sends exactly three notices across a scripted day, nothing when the vacuum is unreachable), the ntfy sender (title header, body, topic validation) and startup configuration were each red before implementation.
+
+## D063 — Keep named vacuum places on the NAS
+
+**Date:** 2026-11-19 · **Status:** Accepted; live validation pending
+
+The vacuum's own saved points have no names, so the NAS keeps named places (up to 30) in `vacuum-places.json` in the data folder: a small file, not a database table, so upgrades and rollbacks leave the index untouched. "Save this spot" uses the vacuum's reported map position, which the status now includes. `ValidVacuumPlace` in the verified core accepts a save only for a 1-40 character printable name, a point on the current map, and room under the limit (re-saving a name replaces it), and a forget only for a saved name; a lemma proves saving never exceeds the limit. `vacuum_control` go_to and clean_spot take a place name and resolve it to its point before the usual verified point checks run.
+
+Places are not tied to a particular map. After a map rebuild, the owner re-saves them.
+
+Evidence: core expect-tests, Go tests (save, replace, off-map refusal, limit, persistence and file mode, forget, resolve), broker position test and MCP tool tests were each red before implementation.

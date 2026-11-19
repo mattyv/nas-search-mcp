@@ -153,8 +153,8 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 
 	session, ctx := vacuumSession(t)
 	found := vacuumTools(t, session, ctx)
-	readOnly := []string{"vacuum_status", "vacuum_rooms", "vacuum_details", "vacuum_history", "vacuum_map", "vacuum_obstacles", "vacuum_shortcuts", "vacuum_options", "vacuum_buttons", "vacuum_maps", "vacuum_map_elements"}
-	acting := []string{"vacuum_control", "vacuum_settings", "vacuum_drive", "vacuum_shortcut", "vacuum_set_option", "vacuum_press", "vacuum_manage_map", "vacuum_manage_rooms", "vacuum_set_room_option", "vacuum_edit_map", "vacuum_patrol"}
+	readOnly := []string{"vacuum_status", "vacuum_rooms", "vacuum_details", "vacuum_history", "vacuum_map", "vacuum_obstacles", "vacuum_shortcuts", "vacuum_options", "vacuum_buttons", "vacuum_maps", "vacuum_map_elements", "vacuum_places"}
+	acting := []string{"vacuum_control", "vacuum_settings", "vacuum_drive", "vacuum_shortcut", "vacuum_set_option", "vacuum_press", "vacuum_manage_map", "vacuum_manage_rooms", "vacuum_set_room_option", "vacuum_edit_map", "vacuum_patrol", "vacuum_save_place", "vacuum_forget_place"}
 	if found["vacuum_room_options"] == nil || !found["vacuum_room_options"].Annotations.ReadOnlyHint {
 		t.Fatal("vacuum_room_options missing or not read-only")
 	}
@@ -237,6 +237,33 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 	opt, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_set_option", Arguments: map[string]any{"name": "carpet_boost", "value": "on"}})
 	if err != nil || opt.IsError || len(commands) != 5 || commands[4]["value"] != float64(1) {
 		t.Fatalf("opt=%#v commands=%v err=%v", opt, commands, err)
+	}
+	saved, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_save_place", Arguments: map[string]any{"name": "Front door", "point": []int{100, 200}}})
+	if err != nil || saved.IsError {
+		t.Fatalf("saved=%#v err=%v", saved, err)
+	}
+	listed, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_places", Arguments: map[string]any{}})
+	if err != nil || listed.IsError || !strings.Contains(listed.Content[0].(*mcp.TextContent).Text, "Front door") {
+		t.Fatalf("listed=%#v err=%v", listed, err)
+	}
+	went, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_control", Arguments: map[string]any{"action": "go_to", "place": "Front door"}})
+	if err != nil || went.IsError || len(commands) != 6 || commands[5]["action"] != "go_to" {
+		t.Fatalf("went=%#v commands=%v err=%v", went, commands, err)
+	}
+	if point, _ := commands[5]["point"].([]any); len(point) != 2 || point[0] != float64(100) || point[1] != float64(200) {
+		t.Fatalf("go_to place point = %v", commands[5]["point"])
+	}
+	both, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_control", Arguments: map[string]any{"action": "go_to", "place": "Front door", "point": []int{1, 1}}})
+	if err != nil || !both.IsError || len(commands) != 6 {
+		t.Fatalf("place and point together must be refused: %#v %v", both, err)
+	}
+	unknown, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_control", Arguments: map[string]any{"action": "go_to", "place": "Garage"}})
+	if err != nil || !unknown.IsError || len(commands) != 6 {
+		t.Fatalf("unknown place reached vacuum: %#v %v", unknown, err)
+	}
+	forgot, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_forget_place", Arguments: map[string]any{"name": "Front door"}})
+	if err != nil || forgot.IsError {
+		t.Fatalf("forgot=%#v err=%v", forgot, err)
 	}
 }
 

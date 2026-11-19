@@ -46,6 +46,8 @@ type Status struct {
 	CurrentRoom     string `json:"current_room"`
 	CleanedAreaM2   int    `json:"cleaned_area_m2"`
 	CleaningMinutes int    `json:"cleaning_minutes"`
+	// Position is the vacuum's last reported [x, y] on the map, when known.
+	Position *[2]int `json:"position,omitempty"`
 }
 
 type Room struct {
@@ -109,6 +111,7 @@ type CommandInput struct {
 	Rooms   []int    `json:"rooms,omitempty" jsonschema:"room IDs from vacuum_rooms; only for clean_rooms"`
 	Zones   [][4]int `json:"zones,omitempty" jsonschema:"up to 5 rectangles [x0, y0, x1, y1] inside the map bounds from vacuum_rooms; only for clean_zones"`
 	Point   *[2]int  `json:"point,omitempty" jsonschema:"[x, y] inside the map bounds from vacuum_rooms; only for clean_spot and go_to"`
+	Place   string   `json:"place,omitempty" jsonschema:"name of a saved place from vacuum_places, instead of point; only for clean_spot and go_to"`
 	Repeats int      `json:"repeats,omitempty" jsonschema:"passes, 1-3; only for clean_rooms, clean_zones, clean_spot; default 1"`
 	Suction string   `json:"suction,omitempty" jsonschema:"quiet, standard, strong, or turbo; only for clean_rooms, clean_zones, clean_spot; default keeps the current setting"`
 }
@@ -399,7 +402,7 @@ func (c *Client) Rooms(ctx context.Context) (RoomsResult, error) {
 // the vacuum's current rooms or map bounds, and only then forwards it.
 func (c *Client) Command(ctx context.Context, in CommandInput) (CommandResult, error) {
 	suction, ok := suctionLevels[in.Suction]
-	if !ok || !policy.VacuumAction(in.Action) {
+	if !ok || in.Place != "" || !policy.VacuumAction(in.Action) {
 		return CommandResult{}, ErrInput
 	}
 	request := commandRequest{Action: in.Action, Rooms: in.Rooms, Zones: in.Zones, Point: in.Point, Repeats: in.Repeats, Suction: suction}

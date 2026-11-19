@@ -364,7 +364,7 @@ func configuredPhotos() (*photos.Client, error) {
 
 func buildMCPServer(a *app.App, approval *upgradeApproval, uploads ...*uploadPage) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "nas-search", Version: "0.1.0"}, nil)
-	addVacuumTools(server)
+	addVacuumTools(server, a.Data)
 	if client, configErr := configuredPhotos(); client != nil || configErr != nil {
 		mcp.AddTool(server, &mcp.Tool{Name: "photos_people", Description: "Find named People albums in Synology Photos. query filters the existing labels; omit it to browse. This uses Synology's saved face groups and names, not new face recognition. Results contain person IDs for photos_for_person. offset defaults to 0 (maximum 100000); limit defaults to 20 (maximum 100). Follow next_offset for another page; truncated means more results may exist. Names and recognition can be incomplete or incorrect. Read-only metadata lookup; it does not rename, merge, share, or delete anything.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false), IdempotentHint: true}}, func(ctx context.Context, req *mcp.CallToolRequest, in PhotosPeopleInput) (*mcp.CallToolResult, photos.PeopleResult, error) {
 			if !a.SynologyPhotosAllowed() {
