@@ -129,3 +129,11 @@ func TestValidVacuumPlaceBridgesCore(t *testing.T) {
 		t.Fatal("name or limit")
 	}
 }
+
+func TestVacuumPresenceActionBridgesCore(t *testing.T) {
+	if VacuumPresenceAction("away", "charging", true, "", 90, false) != "start" ||
+		VacuumPresenceAction("home", "sweeping", false, "", 60, true) != "dock" ||
+		VacuumPresenceAction("home", "sweeping", false, "", 60, false) != "none" {
+		t.Fatal("presence bridge")
+	}
+}

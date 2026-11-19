@@ -187,3 +187,14 @@ func ValidVacuumPlace(action, name string, saved []string, x, y int, bounds [4]i
 	}
 	return core.Companion_Default___.ValidVacuumPlace(dafny.UnicodeSeqOfUtf8Bytes(action), dafny.UnicodeSeqOfUtf8Bytes(name), dafny.SeqOf(names...), dafny.IntOf(x), dafny.IntOf(y), box(bounds))
 }
+
+// VacuumPresenceAction decides what leaving ("away") or arriving ("home") does:
+// "start", "dock", or "none".
+func VacuumPresenceAction(presence, state string, docked bool, errorText string, battery int, startedToday bool) string {
+	return core.Companion_Default___.VacuumPresenceAction(dafny.UnicodeSeqOfUtf8Bytes(presence), dafny.UnicodeSeqOfUtf8Bytes(state), docked, dafny.UnicodeSeqOfUtf8Bytes(errorText), dafny.IntOf(battery), startedToday).VerbatimString(false)
+}
+
+// VacuumAwayMinBatteryValue is the battery the core needs before a leave-home clean.
+func VacuumAwayMinBatteryValue() int64 {
+	return core.Companion_Default___.VacuumAwayMinBattery().Int64()
+}

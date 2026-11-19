@@ -1273,4 +1273,32 @@ module Core {
     requires ValidVacuumPlace("save", name, saved, x, y, bounds)
     ensures name in saved || |saved| + 1 <= VacuumMaxPlaces
   {}
+
+  // Clean when you leave: what to do when the owner's phone reports leaving
+  // ("away") or arriving ("home"). Leaving starts at most one clean a day,
+  // only from the dock with no error and enough battery. Arriving sends the
+  // vacuum home only while a clean this feature started today is running.
+  const VacuumAwayMinBattery: int := 50
+
+  function VacuumPresenceAction(presence: string, state: string, docked: bool, error: string,
+                                battery: int, startedToday: bool): string
+    ensures VacuumPresenceAction(presence, state, docked, error, battery, startedToday) in ["start", "dock", "none"]
+    ensures VacuumPresenceAction(presence, state, docked, error, battery, startedToday) == "start" ==>
+      presence == "away" && docked && error == "" && battery >= VacuumAwayMinBattery &&
+      state in VacuumDoneStates && !startedToday
+    ensures VacuumPresenceAction(presence, state, docked, error, battery, startedToday) == "dock" ==>
+      presence == "home" && startedToday && state in VacuumWorkingStates
+  {
+    if presence == "away" && docked && error == "" && battery >= VacuumAwayMinBattery &&
+       state in VacuumDoneStates && !startedToday then "start"
+    else if presence == "home" && startedToday && state in VacuumWorkingStates then "dock"
+    else "none"
+  }
+
+  // Arriving home never starts a clean, and a second departure the same day never does either.
+  lemma VacuumPresenceNeverSurprises(state: string, docked: bool, error: string, battery: int, startedToday: bool)
+    ensures VacuumPresenceAction("home", state, docked, error, battery, startedToday) != "start"
+    ensures VacuumPresenceAction("away", state, docked, error, battery, true) != "start"
+    ensures VacuumPresenceAction("away", state, docked, error, battery, startedToday) != "dock"
+  {}
 }
