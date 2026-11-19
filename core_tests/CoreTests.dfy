@@ -329,6 +329,8 @@ module CoreTests {
     expect !ValidVacuumOption("mop_cleaning_remainder", 195, [("mop_cleaning_remainder", 0, 180, 15, [])]);
     expect !ValidVacuumOption("firmware", 1, [("carpet_boost", 0, 1, 1, [0, 1])]);
     expect !ValidVacuumOption("broken", 0, [("broken", 0, 10, 0, [])]);
+    expect ValidVacuumButton("reset_filter", ["reset_filter", "start_mapping"]);
+    expect !ValidVacuumButton("factory_reset", ["reset_filter", "start_mapping"]);
     print "Dafny core executable tests passed\n";
   }
 }

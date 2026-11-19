@@ -207,6 +207,23 @@ type optionRequest struct {
 	Value int    `json:"value"`
 }
 
+type Button struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+type ButtonsResult struct {
+	Buttons []Button `json:"buttons"`
+}
+
+type PressInput struct {
+	Name string `json:"name" jsonschema:"button name from vacuum_buttons"`
+}
+
+type pressRequest struct {
+	Name string `json:"name"`
+}
+
 type commandRequest struct {
 	Action  string   `json:"action"`
 	Rooms   []int    `json:"rooms"`
@@ -730,6 +747,38 @@ func (c *Client) SetOption(ctx context.Context, in SetOptionInput) (CommandResul
 	return c.accepted(ctx, "/set_option", optionRequest{Name: in.Name, Value: value})
 }
 
+func (c *Client) Buttons(ctx context.Context) (ButtonsResult, error) {
+	var out ButtonsResult
+	if err := c.post(ctx, "/buttons", struct{}{}, &out); err != nil {
+		return ButtonsResult{}, err
+	}
+	if out.Buttons == nil || len(out.Buttons) > 64 {
+		return ButtonsResult{}, errReply
+	}
+	for _, b := range out.Buttons {
+		if !optionName.MatchString(b.Name) || (b.Kind != "reset" && b.Kind != "action") {
+			return ButtonsResult{}, errReply
+		}
+	}
+	return out, nil
+}
+
+// Press presses one button the vacuum listed, after the verified core check.
+func (c *Client) Press(ctx context.Context, in PressInput) (CommandResult, error) {
+	list, err := c.Buttons(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	known := make([]string, 0, len(list.Buttons))
+	for _, b := range list.Buttons {
+		known = append(known, b.Name)
+	}
+	if !policy.ValidVacuumButton(in.Name, known) {
+		return CommandResult{}, ErrInput
+	}
+	return c.accepted(ctx, "/press", pressRequest{Name: in.Name})
+}
+
 func validBox(box [4]int) bool {
 	const limit = 1000000
 	return box[0] < box[2] && box[1] < box[3] && box[0] > -limit && box[1] > -limit && box[2] < limit && box[3] < limit
@@ -756,7 +805,7 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 		return ErrInput
 	}
 	limit := c.quick
-	if path == "/map" || path == "/command" || path == "/setting" || path == "/move" || path == "/obstacle_photo" || path == "/shortcut" || path == "/set_option" {
+	if path == "/map" || path == "/command" || path == "/setting" || path == "/move" || path == "/obstacle_photo" || path == "/shortcut" || path == "/set_option" || path == "/press" {
 		limit = c.slow
 	}
 	parent := ctx

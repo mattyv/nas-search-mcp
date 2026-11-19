@@ -633,3 +633,29 @@ func TestOptionsListedAndChangesChecked(t *testing.T) {
 		t.Fatalf("%d invalid changes reached the vacuum", sent-len(cases))
 	}
 }
+
+func TestButtonsListedAndPressChecked(t *testing.T) {
+	var got pressRequest
+	sent := 0
+	socket := broker(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/buttons":
+			w.Write([]byte(`{"buttons":[{"name":"reset_filter","kind":"reset"},{"name":"start_mapping","kind":"action"}]}`))
+		case "/press":
+			sent++
+			json.NewDecoder(r.Body).Decode(&got)
+			w.Write([]byte(`{"accepted":true,"message":"Pressed reset filter"}`))
+		}
+	})
+	client := newClient(t, socket)
+	list, err := client.Buttons(context.Background())
+	if err != nil || len(list.Buttons) != 2 {
+		t.Fatalf("list=%#v err=%v", list, err)
+	}
+	if _, err := client.Press(context.Background(), PressInput{Name: "reset_filter"}); err != nil || got.Name != "reset_filter" {
+		t.Fatalf("got=%#v err=%v", got, err)
+	}
+	if _, err := client.Press(context.Background(), PressInput{Name: "factory_reset"}); !errors.Is(err, ErrInput) || sent != 1 {
+		t.Fatalf("unknown button reached vacuum: err=%v sent=%d", err, sent)
+	}
+}

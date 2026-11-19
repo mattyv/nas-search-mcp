@@ -38,3 +38,12 @@ def test_records_literal_options_and_number_ranges():
 
 def test_missing_folder_gives_empty_catalogue(tmp_path):
     assert catalogue.load(tmp_path) == []
+
+
+def test_reads_buttons_with_their_library_call():
+    found = {b['name']: b for b in catalogue.load_buttons(FIXTURES)}
+    assert found['reset_main_brush'] == {'name': 'reset_main_brush', 'action': 'RESET_MAIN_BRUSH', 'call': None}
+    assert found['clear_warning'] == {'name': 'clear_warning', 'action': 'CLEAR_WARNING', 'call': ['clear_warning', []]}
+    assert found['start_mapping'] == {'name': 'start_mapping', 'action': None, 'call': ['start_mapping', []]}
+    assert found['empty_water_tank']['call'] == ['start_draining', [True]]
+    assert 'shortcut' not in found

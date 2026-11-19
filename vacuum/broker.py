@@ -122,8 +122,10 @@ def _clock(minutes):
 
 
 class Broker:
-    def __init__(self, device, area_key=None, time_key=None, refusal_types=(), vendor=None, catalogue=()):
+    def __init__(self, device, area_key=None, time_key=None, refusal_types=(), vendor=None, catalogue=(), buttons=()):
         self.device = device
+        # The original integration's buttons, by name.
+        self.button_table = {button['name']: button for button in buttons}
         # Vacuum-wide settings as the original integration describes them.
         self.catalogue = {entry['name']: entry for entry in catalogue}
         self.area_key = area_key
@@ -530,6 +532,39 @@ class Broker:
         self._run(call)
         return {'accepted': True, 'message': _text(f'{name.replace("_", " ").capitalize()} set to {body["value"] if entry["kind"] != "time" else value}', 512)}
 
+    # --- Buttons, mirroring the original integration's button entities ---
+
+    def _button_present(self, device, button):
+        name = button['name']
+        if not name.startswith('reset_'):
+            return name != 'reload_shortcuts'
+        part = name[len('reset_'):]
+        fields = [f'{part}_life', f'{part}_dirty_life'] + (['mop_life'] if part == 'mop_pad' else [])
+        return any(getattr(device.status, field, None) is not None for field in fields)
+
+    def buttons(self):
+        device = self._device()
+        out = []
+        for button in self.button_table.values():
+            if self._button_present(device, button):
+                kind = 'reset' if button['name'].startswith('reset_') else 'action'
+                out.append({'name': button['name'], 'kind': kind})
+        return {'buttons': out[:64]}
+
+    def press(self, body):
+        if not isinstance(body, dict) or set(body) != {'name'} or not isinstance(body['name'], str):
+            raise BadRequest('press needs a button name')
+        device = self._device()
+        button = self.button_table.get(body['name'])
+        if button is None or not self._button_present(device, button):
+            raise BadRequest('this vacuum has no such button')
+        if button['call']:
+            method, args = button['call']
+            self._run(lambda: getattr(device, method)(*args))
+        else:
+            self._run(lambda: self.vendor.call_action(device, button['action']))
+        return {'accepted': True, 'message': _text(f'Pressed {button["name"].replace("_", " ")}', 512)}
+
     def map(self):
         import base64
         import io
@@ -581,7 +616,8 @@ def make_server(path, holder):
               '/obstacles': lambda b, _: b.obstacles(),
               '/obstacle_photo': lambda b, body: b.obstacle_photo(body),
               '/shortcuts': lambda b, _: b.shortcuts(), '/shortcut': lambda b, body: b.shortcut(body),
-              '/options': lambda b, _: b.options(), '/set_option': lambda b, body: b.set_option(body)}
+              '/options': lambda b, _: b.options(), '/set_option': lambda b, body: b.set_option(body),
+              '/buttons': lambda b, _: b.buttons(), '/press': lambda b, body: b.press(body)}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -709,6 +745,9 @@ class DreameVendor:
             raise BadRequest('unknown setting')
         device.set_property(member, value)
 
+    def call_action(self, device, name):
+        device.call_action(self.action[name])
+
     def empty_dustbin(self, device):
         device.call_action(self.action.START_AUTO_EMPTY)
 
@@ -732,15 +771,16 @@ class DreameVendor:
                                         status.robot_status, status.station_status)
 
 
-def load_catalogue(env):
-    """The original integration's settings tables, shipped beside the library."""
+def load_catalogue(env, buttons=False):
+    """The original integration's settings (or button) tables, shipped beside the library."""
     import importlib.util
     here = os.path.dirname(os.path.abspath(__file__))
     spec = importlib.util.spec_from_file_location('vacuum_catalogue', os.path.join(here, 'catalogue.py'))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    entries = module.load(os.path.join(env.get('DREAME_LIBRARY', '/opt/dreame'), 'entities'))
-    LOG.info('loaded %d vacuum settings from the original integration', len(entries))
+    folder = os.path.join(env.get('DREAME_LIBRARY', '/opt/dreame'), 'entities')
+    entries = module.load_buttons(folder) if buttons else module.load(folder)
+    LOG.info('loaded %d vacuum %s from the original integration', len(entries), 'buttons' if buttons else 'settings')
     return entries
 
 
@@ -803,7 +843,7 @@ def connect_from_env(env):  # pragma: no cover - needs the vendor library and a 
                   vendor=DreameVendor(DreameVacuumAction, DreameVacuumProperty, DreameVacuumMapRenderer, families={
                       'property': (DreameVacuumProperty,), 'auto_switch': (DreameVacuumAutoSwitchProperty,),
                       'ai': (DreameVacuumAIProperty, DreameVacuumStrAIProperty)}),
-                  catalogue=load_catalogue(env))
+                  catalogue=load_catalogue(env), buttons=load_catalogue(env, buttons=True))
 
 
 def keep_connected(holder, env, connect=connect_from_env, sleep=time.sleep):

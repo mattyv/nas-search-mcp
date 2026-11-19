@@ -109,3 +109,12 @@ func ValidVacuumOption(name string, value int, options []VacuumOption) bool {
 	}
 	return core.Companion_Default___.ValidVacuumOption(dafny.UnicodeSeqOfUtf8Bytes(name), dafny.IntOf(value), dafny.SeqOf(values...))
 }
+
+// ValidVacuumButton checks that a button press names a button the vacuum listed.
+func ValidVacuumButton(name string, known []string) bool {
+	values := make([]interface{}, len(known))
+	for i, k := range known {
+		values[i] = dafny.UnicodeSeqOfUtf8Bytes(k)
+	}
+	return core.Companion_Default___.ValidVacuumButton(dafny.UnicodeSeqOfUtf8Bytes(name), dafny.SeqOf(values...))
+}

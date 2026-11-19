@@ -76,6 +76,14 @@ func addVacuumTools(server *mcp.Server) {
 		out, err := client.SetOption(ctx, in)
 		return nil, out, err
 	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_buttons", Description: "List the one-press actions this robot vacuum has, as the original integration exposes them: reset the wear counter of each part (kind reset, for example reset_filter after fitting a new filter), clear a warning, drain or empty the water tank, base station self-clean or self-repair, dust-bag drying, start mapping or fast mapping, re-clean missed areas, back up the saved map.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false), IdempotentHint: true, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in VacuumEmptyInput) (*mcp.CallToolResult, vacuum.ButtonsResult, error) {
+		out, err := client.Buttons(ctx)
+		return nil, out, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "vacuum_press", Description: "Press one button from vacuum_buttons. Wear-counter resets should only be pressed after the user says they replaced or cleaned that part. Only use when the user asks.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(false), IdempotentHint: false, OpenWorldHint: boolPointer(true)}}, func(ctx context.Context, req *mcp.CallToolRequest, in vacuum.PressInput) (*mcp.CallToolResult, vacuum.CommandResult, error) {
+		out, err := client.Press(ctx, in)
+		return nil, out, err
+	})
 	if !enabled("NAS_VACUUM_CAMERA", true) {
 		return
 	}

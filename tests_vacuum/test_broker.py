@@ -680,3 +680,41 @@ def test_camera_light_auto_reads_and_writes_brightness():
     assert found['camera_light_brightness_auto']['current'] == 'on'
     b.set_option({'name': 'camera_light_brightness_auto', 'value': 40})
     assert device.calls == [('set_camera_light_brightness', 40)]
+
+
+def button_broker():
+    device = OptionDevice()
+    device.clear_warning = lambda: device.calls.append(('clear_warning',))
+    device.start_draining = lambda clean=False: device.calls.append(('start_draining', clean))
+    device.status.sensor_dirty_life = 70
+    vendor = OptionVendor({})
+    vendor.call_action = lambda d, action: d.calls.append(('call_action', action))
+    return broker.Broker(device, vendor=vendor, buttons=catalogue.load_buttons(FIXTURES)), device
+
+
+def test_buttons_hide_resets_for_parts_this_model_lacks():
+    b, device = button_broker()
+    names = [x['name'] for x in b.buttons()['buttons']]
+    assert 'reset_main_brush' in names            # main_brush_life is 80
+    assert 'clear_warning' in names and 'start_mapping' in names and 'empty_water_tank' in names
+    device.status.main_brush_life = None
+    assert 'reset_main_brush' not in [x['name'] for x in b.buttons()['buttons']]
+
+
+@pytest.mark.parametrize('name,call', [
+    ('reset_main_brush', ('call_action', 'RESET_MAIN_BRUSH')),
+    ('clear_warning', ('clear_warning',)),
+    ('empty_water_tank', ('start_draining', True)),
+])
+def test_press_calls_the_library_like_the_original(name, call):
+    b, device = button_broker()
+    out = b.press({'name': name})
+    assert device.calls == [call] and out['accepted'] and out['message']
+
+
+@pytest.mark.parametrize('body', [{'name': 'factory_reset'}, {'name': 3}, []])
+def test_press_rejects_unknown(body):
+    b, device = button_broker()
+    with pytest.raises(broker.BadRequest):
+        b.press(body)
+    assert device.calls == []

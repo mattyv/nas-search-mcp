@@ -76,3 +76,9 @@ func TestVacuumOptionPolicyBridgesCore(t *testing.T) {
 		t.Fatal("range mismatch")
 	}
 }
+
+func TestVacuumButtonPolicyBridgesCore(t *testing.T) {
+	if !ValidVacuumButton("reset_filter", []string{"reset_filter"}) || ValidVacuumButton("x", []string{"reset_filter"}) {
+		t.Fatal("button rule mismatch")
+	}
+}

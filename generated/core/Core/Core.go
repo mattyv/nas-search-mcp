@@ -607,6 +607,9 @@ func (_static *CompanionStruct_Default___) ValidVacuumOption(name _dafny.Sequenc
 		return (_dafny.Companion_Sequence_.Contains(options, _0_o)) && ((_dafny.Companion_Sequence_.Equal((*(_0_o).IndexInt(0)).(_dafny.Sequence), name)) && (Companion_Default___.OptionAccepts(_0_o, value)))
 	})
 }
+func (_static *CompanionStruct_Default___) ValidVacuumButton(name _dafny.Sequence, known _dafny.Sequence) bool {
+	return _dafny.Companion_Sequence_.Contains(known, name)
+}
 func (_static *CompanionStruct_Default___) ValidVacuumShortcut(action _dafny.Sequence, id _dafny.Int, known _dafny.Sequence, nameLength _dafny.Int) bool {
 	return ((_dafny.Companion_Sequence_.Contains(_dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("start"), _dafny.UnicodeSeqOfUtf8Bytes("rename"), _dafny.UnicodeSeqOfUtf8Bytes("delete")), action)) && (_dafny.Companion_Sequence_.Contains(known, id))) && ((func() bool {
 		if _dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("rename")) {

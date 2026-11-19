@@ -88,3 +88,45 @@ def load(folder):
                     seen.add(entry['name'])
                     entries.append(entry)
     return entries
+
+
+def _device_call(node):
+    """`lambda device: device.method(literal, ...)` -> [method, [literals]]; anything else -> None."""
+    if not (isinstance(node, ast.Lambda) and isinstance(node.body, ast.Call)):
+        return None
+    func = node.body.func
+    if not (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == 'device'):
+        return None
+    try:
+        args = [ast.literal_eval(arg) for arg in node.body.args]
+    except (ValueError, SyntaxError):
+        return None
+    return [func.attr, args]
+
+
+def load_buttons(folder):
+    """Return the original's buttons: a library action, a device method call, or both."""
+    path = Path(folder) / 'button.py'
+    if not path.is_file():
+        return []
+    buttons, seen = [], set()
+    for node in ast.parse(path.read_text(encoding='utf-8')).body:
+        target = node.target if isinstance(node, ast.AnnAssign) else (
+            node.targets[0] if isinstance(node, ast.Assign) and len(node.targets) == 1 else None)
+        if getattr(target, 'id', None) != 'BUTTONS' or not isinstance(node.value, ast.Tuple):
+            continue
+        for call in node.value.elts:
+            if not isinstance(call, ast.Call):
+                continue
+            keywords = {k.arg: k.value for k in call.keywords}
+            action = keywords.get('action_key')
+            action = action.attr if isinstance(action, ast.Attribute) else None
+            device_call = _device_call(keywords['action_fn']) if 'action_fn' in keywords else None
+            key = keywords.get('key')
+            name = key.value if isinstance(key, ast.Constant) and isinstance(key.value, str) else (
+                action.lower() if action else None)
+            if not name or name in seen or (action is None and device_call is None):
+                continue
+            seen.add(name)
+            buttons.append({'name': name, 'action': action, 'call': device_call})
+    return buttons

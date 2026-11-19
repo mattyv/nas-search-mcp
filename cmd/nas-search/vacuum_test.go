@@ -114,6 +114,8 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 			body["path"] = r.URL.Path
 			commands = append(commands, body)
 			w.Write([]byte(`{"accepted":true,"message":"Carpet boost set to 1"}`))
+		case "/buttons":
+			w.Write([]byte(`{"buttons":[{"name":"reset_filter","kind":"reset"}]}`))
 		case "/move":
 			var body map[string]any
 			json.NewDecoder(r.Body).Decode(&body)
@@ -133,8 +135,8 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 
 	session, ctx := vacuumSession(t)
 	found := vacuumTools(t, session, ctx)
-	readOnly := []string{"vacuum_status", "vacuum_rooms", "vacuum_details", "vacuum_history", "vacuum_map", "vacuum_obstacles", "vacuum_shortcuts", "vacuum_options"}
-	acting := []string{"vacuum_control", "vacuum_settings", "vacuum_drive", "vacuum_shortcut", "vacuum_set_option"}
+	readOnly := []string{"vacuum_status", "vacuum_rooms", "vacuum_details", "vacuum_history", "vacuum_map", "vacuum_obstacles", "vacuum_shortcuts", "vacuum_options", "vacuum_buttons"}
+	acting := []string{"vacuum_control", "vacuum_settings", "vacuum_drive", "vacuum_shortcut", "vacuum_set_option", "vacuum_press"}
 	if len(found) != len(readOnly)+len(acting)+1 {
 		t.Fatalf("tools=%v", found)
 	}

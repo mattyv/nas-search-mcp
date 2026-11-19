@@ -986,6 +986,13 @@ module Core {
     ensures !ValidVacuumOption(name, value, options)
   {}
 
+  // Buttons: only one the vacuum service listed from the original's button table.
+  function ValidVacuumButton(name: string, known: seq<string>): bool
+    ensures ValidVacuumButton(name, known) <==> name in known
+  {
+    name in known
+  }
+
   // App shortcuts: start, rename, or delete only a shortcut the vacuum listed.
   // Renames carry a 1-32 character name; other actions carry none.
   function ValidVacuumShortcut(action: string, id: int, known: seq<int>, nameLength: int): bool
