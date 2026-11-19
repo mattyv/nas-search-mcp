@@ -60,3 +60,40 @@ func TestVacuumDrivePolicyBridgesCore(t *testing.T) {
 		t.Fatal("obstacle check mismatch")
 	}
 }
+
+func TestVacuumShortcutPolicyBridgesCore(t *testing.T) {
+	if !ValidVacuumShortcut("start", 32, []int{32}, 0) || ValidVacuumShortcut("start", 33, []int{32}, 0) || !ValidVacuumShortcut("rename", 32, []int{32}, 5) {
+		t.Fatal("shortcut rule mismatch")
+	}
+}
+
+func TestVacuumOptionPolicyBridgesCore(t *testing.T) {
+	options := []VacuumOption{{Name: "carpet_boost", Allowed: []int{0, 1}}, {Name: "drying", Lowest: 0, Highest: 180, Step: 15}}
+	if !ValidVacuumOption("carpet_boost", 1, options) || ValidVacuumOption("carpet_boost", 5, options) {
+		t.Fatal("allowed-list mismatch")
+	}
+	if !ValidVacuumOption("drying", 30, options) || ValidVacuumOption("drying", 31, options) || ValidVacuumOption("other", 0, options) {
+		t.Fatal("range mismatch")
+	}
+}
+
+func TestVacuumButtonPolicyBridgesCore(t *testing.T) {
+	if !ValidVacuumButton("reset_filter", []string{"reset_filter"}) || ValidVacuumButton("x", []string{"reset_filter"}) {
+		t.Fatal("button rule mismatch")
+	}
+}
+
+func TestVacuumMapAndRoomPolicyBridgesCore(t *testing.T) {
+	if !ValidVacuumMapAction("restore", 1, []int{1}, 0, 2, 3) || ValidVacuumMapAction("select", 9, []int{1}, 0, 0, 0) {
+		t.Fatal("map rule mismatch")
+	}
+	if !ValidVacuumRoomAction("merge", []int{3, 5}, []int{3, 5}, 0, 0, nil, false) || ValidVacuumRoomAction("merge", []int{3}, []int{3, 5}, 0, 0, nil, false) || ValidVacuumRoomAction("split", []int{3}, []int{3}, 0, 0, nil, false) {
+		t.Fatal("room rule mismatch")
+	}
+	if !ValidVacuumLine([4]int{0, 0, 10, 10}, [4]int{-50, -50, 50, 50}) || ValidVacuumLine([4]int{0, 0, 90, 0}, [4]int{-50, -50, 50, 50}) {
+		t.Fatal("line rule mismatch")
+	}
+	if !ValidVacuumRoomOption(3, []int{3}, "x", 1, []VacuumOption{{Name: "x", Allowed: []int{1}}}) || ValidVacuumRoomOption(4, []int{3}, "x", 1, []VacuumOption{{Name: "x", Allowed: []int{1}}}) {
+		t.Fatal("room option mismatch")
+	}
+}

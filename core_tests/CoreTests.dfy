@@ -315,6 +315,41 @@ module CoreTests {
     expect ValidVacuumGoTo(100, -200, (-5000, -5000, 5000, 5000), 0, -1);
     expect !ValidVacuumGoTo(9000, 0, (-5000, -5000, 5000, 5000), 0, -1);
     expect !ValidVacuumGoTo(0, 0, (-5000, -5000, 5000, 5000), 1, -1) && !ValidVacuumGoTo(0, 0, (-5000, -5000, 5000, 5000), 0, 2);
+    expect ValidVacuumShortcut("start", 32, [32, 40], 0) && ValidVacuumShortcut("delete", 40, [32, 40], 0);
+    expect ValidVacuumShortcut("rename", 32, [32], 12) && !ValidVacuumShortcut("rename", 32, [32], 0) && !ValidVacuumShortcut("rename", 32, [32], 33);
+    expect !ValidVacuumShortcut("start", 33, [32], 0) && !ValidVacuumShortcut("start", 32, [32], 5);
+    expect !ValidVacuumShortcut("edit", 32, [32], 0);
+    // (name, lowest, highest, step, allowed); allowed empty means any step in the range.
+    expect ValidVacuumOption("carpet_boost", 1, [("carpet_boost", 0, 1, 1, [0, 1])]);
+    expect !ValidVacuumOption("carpet_boost", 2, [("carpet_boost", 0, 1, 1, [0, 1])]);
+    expect ValidVacuumOption("stain_avoidance", 2, [("stain_avoidance", 1, 2, 1, [1, 2])]);
+    expect !ValidVacuumOption("stain_avoidance", 0, [("stain_avoidance", 1, 2, 1, [1, 2])]);
+    expect ValidVacuumOption("mop_cleaning_remainder", 45, [("mop_cleaning_remainder", 0, 180, 15, [])]);
+    expect !ValidVacuumOption("mop_cleaning_remainder", 40, [("mop_cleaning_remainder", 0, 180, 15, [])]);
+    expect !ValidVacuumOption("mop_cleaning_remainder", 195, [("mop_cleaning_remainder", 0, 180, 15, [])]);
+    expect !ValidVacuumOption("firmware", 1, [("carpet_boost", 0, 1, 1, [0, 1])]);
+    expect !ValidVacuumOption("broken", 0, [("broken", 0, 10, 0, [])]);
+    expect ValidVacuumButton("reset_filter", ["reset_filter", "start_mapping"]);
+    expect !ValidVacuumButton("factory_reset", ["reset_filter", "start_mapping"]);
+    expect ValidVacuumMapAction("select", 2, [1, 2], 0, 0, 0) && !ValidVacuumMapAction("select", 3, [1, 2], 0, 0, 0);
+    expect ValidVacuumMapAction("rename", 1, [1], 8, 0, 0) && !ValidVacuumMapAction("rename", 1, [1], 0, 0, 0);
+    expect ValidVacuumMapAction("restore", 1, [1], 0, 2, 3) && !ValidVacuumMapAction("restore", 1, [1], 0, 4, 3) && !ValidVacuumMapAction("restore", 1, [1], 0, 0, 3);
+    expect ValidVacuumMapAction("request", 0, [1], 0, 0, 0) && !ValidVacuumMapAction("request", 1, [1], 0, 0, 0);
+    expect ValidVacuumMapAction("save_temporary", 0, [], 0, 0, 0) && ValidVacuumMapAction("replace_temporary", 1, [1], 0, 0, 0);
+    expect !ValidVacuumMapAction("wipe", 1, [1], 0, 0, 0) && !ValidVacuumMapAction("delete", 1, [1], 3, 0, 0);
+    expect ValidVacuumRoomAction("rename", [3], [3, 5], 6, 0, [0, 1], false) && !ValidVacuumRoomAction("rename", [9], [3, 5], 6, 0, [0, 1], false);
+    expect ValidVacuumRoomAction("set_type", [3], [3], 0, 1, [0, 1], false) && !ValidVacuumRoomAction("set_type", [3], [3], 0, 7, [0, 1], false);
+    expect ValidVacuumRoomAction("merge", [3, 5], [3, 5], 0, 0, [], false) && !ValidVacuumRoomAction("merge", [3, 3], [3, 5], 0, 0, [], false);
+    expect ValidVacuumRoomAction("split", [3], [3, 5], 0, 0, [], true) && !ValidVacuumRoomAction("split", [3, 5], [3, 5], 0, 0, [], true);
+    expect ValidVacuumRoomAction("order", [5, 3], [3, 5], 0, 0, [], false) && ValidVacuumRoomAction("order", [], [3, 5], 0, 0, [], false);
+    expect !ValidVacuumRoomAction("order", [5], [3, 5], 0, 0, [], false) && !ValidVacuumRoomAction("order", [5, 5], [3, 5], 0, 0, [], false);
+    expect ValidVacuumRoomAction("hide", [5], [3, 5], 0, 0, [], false) && ValidVacuumRoomAction("hide", [], [3, 5], 0, 0, [], false);
+    expect !ValidVacuumRoomAction("hide", [7], [3, 5], 0, 0, [], false) && !ValidVacuumRoomAction("delete", [3], [3], 0, 0, [], false);
+    expect !ValidVacuumRoomAction("split", [3], [3, 5], 0, 0, [], false) && !ValidVacuumRoomAction("merge", [3, 5], [3, 5], 0, 0, [], true);
+    expect ValidVacuumLine((0, 0, 1000, 0), (-5000, -5000, 5000, 5000)) && !ValidVacuumLine((0, 0, 0, 0), (-5000, -5000, 5000, 5000));
+    expect !ValidVacuumLine((0, 0, 9000, 0), (-5000, -5000, 5000, 5000));
+    expect ValidVacuumRoomOption(3, [3], "mop_pressure", 2, [("mop_pressure", 0, 0, 0, [1, 2, 3])]);
+    expect !ValidVacuumRoomOption(4, [3], "mop_pressure", 2, [("mop_pressure", 0, 0, 0, [1, 2, 3])]);
     print "Dafny core executable tests passed\n";
   }
 }

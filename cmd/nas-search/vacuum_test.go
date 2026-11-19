@@ -98,6 +98,34 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 			var picture bytes.Buffer
 			jpeg.Encode(&picture, image.NewRGBA(image.Rect(0, 0, 3, 2)), nil)
 			w.Write([]byte(`{"mime_type":"image/jpeg","data":"` + base64.StdEncoding.EncodeToString(picture.Bytes()) + `"}`))
+		case "/shortcuts":
+			w.Write([]byte(`{"shortcuts":[{"id":32,"name":"After dinner","running":false,"rooms":["Kitchen"]}]}`))
+		case "/shortcut":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			body["path"] = r.URL.Path
+			commands = append(commands, body)
+			w.Write([]byte(`{"accepted":true,"message":"Started After dinner"}`))
+		case "/options":
+			w.Write([]byte(`{"options":[{"name":"carpet_boost","kind":"switch","current":"off","choices":[{"label":"off","value":0},{"label":"on","value":1}]}]}`))
+		case "/set_option":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			body["path"] = r.URL.Path
+			commands = append(commands, body)
+			w.Write([]byte(`{"accepted":true,"message":"Carpet boost set to 1"}`))
+		case "/maps":
+			w.Write([]byte(`{"maps":[{"id":1,"name":"Ground","selected":true,"backups":[]}],"temporary_map":false}`))
+		case "/room_options":
+			w.Write([]byte(`{"options":[],"types":[{"label":"Room","value":0}]}`))
+		case "/manage_map", "/manage_rooms", "/set_room_option":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			body["path"] = r.URL.Path
+			commands = append(commands, body)
+			w.Write([]byte(`{"accepted":true,"message":"Done"}`))
+		case "/buttons":
+			w.Write([]byte(`{"buttons":[{"name":"reset_filter","kind":"reset"}]}`))
 		case "/move":
 			var body map[string]any
 			json.NewDecoder(r.Body).Decode(&body)
@@ -117,9 +145,12 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 
 	session, ctx := vacuumSession(t)
 	found := vacuumTools(t, session, ctx)
-	readOnly := []string{"vacuum_status", "vacuum_rooms", "vacuum_details", "vacuum_history", "vacuum_map", "vacuum_obstacles"}
-	acting := []string{"vacuum_control", "vacuum_settings", "vacuum_drive"}
-	if len(found) != len(readOnly)+len(acting)+1 {
+	readOnly := []string{"vacuum_status", "vacuum_rooms", "vacuum_details", "vacuum_history", "vacuum_map", "vacuum_obstacles", "vacuum_shortcuts", "vacuum_options", "vacuum_buttons", "vacuum_maps"}
+	acting := []string{"vacuum_control", "vacuum_settings", "vacuum_drive", "vacuum_shortcut", "vacuum_set_option", "vacuum_press", "vacuum_manage_map", "vacuum_manage_rooms", "vacuum_set_room_option"}
+	if found["vacuum_room_options"] == nil || !found["vacuum_room_options"].Annotations.ReadOnlyHint {
+		t.Fatal("vacuum_room_options missing or not read-only")
+	}
+	if len(found) != len(readOnly)+len(acting)+2 {
 		t.Fatalf("tools=%v", found)
 	}
 	for _, name := range readOnly {
@@ -177,6 +208,19 @@ func TestVacuumToolsReachBroker(t *testing.T) {
 	moved, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_drive", Arguments: map[string]any{"turn": 90}})
 	if err != nil || moved.IsError || len(commands) != 3 || commands[2]["path"] != "/move" {
 		t.Fatalf("moved=%#v commands=%v err=%v", moved, commands, err)
+	}
+	ran, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_shortcut", Arguments: map[string]any{"action": "start", "id": 32}})
+	if err != nil || ran.IsError || len(commands) != 4 || commands[3]["path"] != "/shortcut" {
+		t.Fatalf("ran=%#v commands=%v err=%v", ran, commands, err)
+	}
+	renamed, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_manage_rooms", Arguments: map[string]any{"action": "rename", "rooms": []int{3}, "name": "Galley"}})
+	if err != nil || renamed.IsError {
+		t.Fatalf("renamed=%#v err=%v", renamed, err)
+	}
+	commands = commands[:len(commands)-1]
+	opt, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "vacuum_set_option", Arguments: map[string]any{"name": "carpet_boost", "value": "on"}})
+	if err != nil || opt.IsError || len(commands) != 5 || commands[4]["value"] != float64(1) {
+		t.Fatalf("opt=%#v commands=%v err=%v", opt, commands, err)
 	}
 }
 

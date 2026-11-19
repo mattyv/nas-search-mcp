@@ -1,5 +1,7 @@
 # Robot vacuum
 
+See [vacuum coverage](vacuum-coverage.md) for everything the original integration offers and what is available here.
+
 Ask Claude, Codex, or ChatGPT to check on or run your Dreame robot vacuum, from home or anywhere your NAS connector already works. "Is the vacuum charged?", "Clean the kitchen and hallway twice on turbo", and "Send it back to the dock" all work.
 
 This is off by default. It uses the open-source [Dreame vacuum library by Tasshack](https://github.com/Tasshack/dreame-vacuum) (MIT licence), pinned to a reviewed version. Home Assistant is not needed.
@@ -19,6 +21,7 @@ Doing (only when you ask):
 - `vacuum_control`: start, pause, stop, dock, locate (play a sound); clean chosen rooms, up to five rectangles on the map, or one spot, each with 1-3 passes and an optional suction level; empty the dustbin; wash, dry, or stop drying the mops.
 - `vacuum_control` `go_to`: drive to a point on the map (for example the middle of a room) and stop there, without cleaning.
 - `vacuum_drive`: one small remote-control step (turn and roll), like the app's joystick. Each call is a short nudge, a few seconds apart, and the vacuum's own bump and cliff sensors still apply.
+- `vacuum_shortcuts` and `vacuum_shortcut`: list, run, rename or delete the cleaning shortcuts saved in the Dreamehome app.
 - `vacuum_settings`: cleaning mode (vacuum, mop, both, or mop after vacuuming), suction, mop wetness (dry, moist, wet), volume, do-not-disturb on/off and hours, child lock, carpet avoidance and recognition; and per room: mode, suction, mop wetness, and passes.
 
 Camera (on by default; set `NAS_VACUUM_CAMERA=false` in `.env` to hide both):

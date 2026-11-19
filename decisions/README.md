@@ -855,3 +855,11 @@ Not possible with the pinned library: live video, and photos on request. The lib
 Verified core rules: `ValidVacuumGoTo` keeps the point inside the saved map and carries no passes or suction; `VacuumTargetsMatch` now requires a point for `go_to`; `ValidVacuumMove` bounds a step to the vendor's limits (turn -360 to 360, speed -600 to 600) and refuses a step that does nothing; `ValidVacuumObstacle` fetches photos only for obstacles the vacuum reported with a photo. Lemmas prove go-to never leaves the map and unknown obstacles are refused. Photos are re-encoded so only pixels reach the assistant.
 
 Evidence: Dafny, Go and broker tests for each rule and tool were written first and failed before implementation. A check against the pinned library confirmed `go_to`, `remote_control_move_step`, `obstacle_image` and the obstacle fields. Not yet tried on the owner's vacuum.
+
+## D060 — Track coverage of the original integration explicitly
+
+**Date:** 2026-11-19 · **Status:** Accepted
+
+The owner kept finding original features missing, because earlier batches were chosen piece by piece. Keep a full inventory of the original's 45 services and its settings and buttons in `docs/vacuum-coverage.md`, each marked available, planned (with its batch), or left out with a reason. This batch adds app shortcuts (list, start, rename, delete), checked by `ValidVacuumShortcut`: only a listed shortcut, and a 1-32 character name for renames only. Remaining batches: B, every setting and button generically from what the vacuum reports; C, map and room management; D, map editing and patrol paths. Left out: voice-pack install and restore-from-file (they need files on a host that does not exist here), and the raw property and action services (they bypass every check).
+
+Evidence: shortcut rule, client, tool and broker tests were written first and failed before implementation; the library's shortcut calls were checked against the pinned version.

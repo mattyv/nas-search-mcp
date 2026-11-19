@@ -46,6 +46,10 @@ class FakeDevice:
             cleaning_mode_name='sweeping_and_mopping', mop_pad_humidity_name='moist',
             volume=40, dnd=True, dnd_start='22:00', dnd_end='08:00',
             carpet_avoidance=False, carpet_recognition=True, wetness_level=None,
+            shortcuts={
+                32: SimpleNamespace(name='After dinner', running=False, tasks=[[SimpleNamespace(segment_id=3, order=1), SimpleNamespace(segment_id=5, order=2)]]),
+                40: SimpleNamespace(name='Bathroom mop', running=True, tasks=None),
+            },
             _cleaning_history=[
                 SimpleNamespace(date=datetime(2026, 11, 1, 9, 0, tzinfo=timezone.utc), cleaning_time=30, cleaned_area=40, completed=True, status=None),
                 SimpleNamespace(date=datetime(2026, 11, 3, 9, 0, tzinfo=timezone.utc), cleaning_time=45, cleaned_area=52, completed=False, status=None),
@@ -541,3 +545,278 @@ def test_http_drive_and_obstacle_routes(served):
     status, body = request(path, 'POST', '/obstacles')
     assert status == 200 and len(body['obstacles']) == 2
     assert request(path, 'POST', '/obstacle_photo', json.dumps({'index': 2}).encode())[0] == 200
+
+
+def test_shortcuts_listed_with_room_names():
+    assert make().shortcuts() == {'shortcuts': [
+        {'id': 32, 'name': 'After dinner', 'running': False, 'rooms': ['Kitchen', 'Hall']},
+        {'id': 40, 'name': 'Bathroom mop', 'running': True, 'rooms': []},
+    ]}
+
+
+@pytest.mark.parametrize('body,call', [
+    ({'action': 'start', 'id': 32, 'name': ''}, ('start_shortcut', 32)),
+    ({'action': 'rename', 'id': 32, 'name': 'Evening tidy'}, ('set_rename_shortcut',)),
+    ({'action': 'delete', 'id': 40, 'name': ''}, ('delete_shortcut', 40)),
+])
+def test_shortcut_dispatch(body, call):
+    device = FakeDevice()
+    device.rename_shortcut = lambda i, n: device.calls.append(('rename_shortcut', i, n))
+    device.delete_shortcut = lambda i: device.calls.append(('delete_shortcut', i))
+    out = make(device).shortcut(body)
+    expected = ('rename_shortcut', 32, 'Evening tidy') if call == ('set_rename_shortcut',) else call
+    assert device.calls == [expected] and out['accepted'] and out['message']
+
+
+@pytest.mark.parametrize('body', [
+    {'action': 'start', 'id': '32', 'name': ''},
+    {'action': 'start', 'id': 32},
+    {'action': 'launch', 'id': 32, 'name': ''},
+])
+def test_malformed_shortcut_rejected(body):
+    device = FakeDevice()
+    with pytest.raises(broker.BadRequest):
+        make(device).shortcut(body)
+    assert device.calls == []
+
+
+spec_cat = importlib.util.spec_from_file_location('vacuum_catalogue_b', ROOT / 'vacuum/catalogue.py')
+catalogue = importlib.util.module_from_spec(spec_cat)
+spec_cat.loader.exec_module(catalogue)
+FIXTURES = Path(__file__).resolve().parent / 'fixtures'
+
+
+class OptionVendor(FakeVendor):
+    """Stands in for the library's property tables."""
+
+    def __init__(self, values):
+        super().__init__()
+        self.values = values
+
+    def prop_present(self, device, family, prop):
+        return (family, prop) in self.values
+
+    def prop_value(self, device, family, prop):
+        return self.values.get((family, prop))
+
+    def set_prop(self, device, family, prop, value):
+        device.calls.append(('set_property', family, prop, value))
+
+
+class OptionDevice(FakeDevice):
+    def set_carpet_avoidance(self, value):
+        self.calls.append(('set_carpet_avoidance', value))
+
+    def set_off_peak_charging_start(self, value):
+        self.calls.append(('set_off_peak_charging_start', value))
+
+
+def option_broker():
+    device = OptionDevice()
+    device.status.mop_pressure_list = {'light': 1, 'medium': 2, 'strong': 3}
+    device.status.mop_pressure_name = 'medium'
+    device.status.mop_cleaning_remainder = 30
+    device.status.self_clean_time = 20
+    device.status.self_clean_time_min = 10
+    device.status.self_clean_time_max = 50
+    device.status.off_peak_charging_start = '22:00'
+    device.status.battery_charge_level = 90
+    vendor = OptionVendor({('property', 'CHILD_LOCK'): 0, ('auto_switch', 'STAIN_AVOIDANCE'): 2,
+                           ('property', 'MOP_PRESSURE'): 2, ('property', 'BATTERY_CHARGE_LEVEL'): 90,
+                           ('property', 'MOP_CLEANING_REMAINDER'): 30})
+    b = broker.Broker(device, vendor=vendor, catalogue=catalogue.load(FIXTURES))
+    return b, device
+
+
+def test_options_report_only_settings_this_vacuum_has():
+    b, _ = option_broker()
+    found = {o['name']: o for o in b.options()['options']}
+    assert 'ai_pet_detection' not in found
+    assert found['child_lock'] == {'name': 'child_lock', 'kind': 'switch', 'current': 'off',
+                                   'choices': [{'label': 'off', 'value': 0}, {'label': 'on', 'value': 1}]}
+    assert found['stain_avoidance']['current'] == 'on'
+    assert found['stain_avoidance']['choices'] == [{'label': 'off', 'value': 1}, {'label': 'on', 'value': 2}]
+    assert found['carpet_avoidance']['current'] == 'off'
+    assert found['mop_pressure']['current'] == 'medium'
+    assert [c['label'] for c in found['mop_pressure']['choices']] == ['light', 'medium', 'strong']
+    assert found['battery_charge_level']['choices'] == [{'label': '80%', 'value': 80}, {'label': '90%', 'value': 90},
+                                                       {'label': '100%', 'value': 100}]
+    assert found['mop_cleaning_remainder'] == {'name': 'mop_cleaning_remainder', 'kind': 'number', 'current': '30',
+                                               'min': 0, 'max': 180, 'step': 15}
+    assert (found['self_clean_time']['min'], found['self_clean_time']['max'], found['self_clean_time']['step']) == (10, 50, 5)
+    assert found['off_peak_charging_start'] == {'name': 'off_peak_charging_start', 'kind': 'time', 'current': '22:00'}
+
+
+@pytest.mark.parametrize('name,value,call', [
+    ('child_lock', 1, ('set_property', 'property', 'CHILD_LOCK', 1)),
+    ('stain_avoidance', 1, ('set_property', 'auto_switch', 'STAIN_AVOIDANCE', 1)),
+    ('carpet_avoidance', 1, ('set_carpet_avoidance', 1)),
+    ('mop_pressure', 3, ('set_property', 'property', 'MOP_PRESSURE', 3)),
+    ('mop_cleaning_remainder', 45, ('set_property', 'property', 'MOP_CLEANING_REMAINDER', 45)),
+    ('off_peak_charging_start', 1410, ('set_off_peak_charging_start', '23:30')),
+])
+def test_set_option_follows_the_original(name, value, call):
+    b, device = option_broker()
+    out = b.set_option({'name': name, 'value': value})
+    assert device.calls == [call] and out['accepted'] and out['message']
+
+
+@pytest.mark.parametrize('body', [{'name': 'ai_pet_detection', 'value': 1}, {'name': 'nope', 'value': 1},
+                                  {'name': 'child_lock', 'value': '1'}, {'name': 'child_lock'}])
+def test_set_option_rejects_unknown_or_malformed(body):
+    b, device = option_broker()
+    with pytest.raises(broker.BadRequest):
+        b.set_option(body)
+    assert device.calls == []
+
+
+def test_camera_light_auto_reads_and_writes_brightness():
+    b, device = option_broker()
+    b.catalogue['camera_light_brightness_auto'] = {'name': 'camera_light_brightness_auto', 'kind': 'switch',
+                                                    'family': None, 'prop': None}
+    device.status.camera_light_brightness = 101
+    device.set_camera_light_brightness = lambda v: device.calls.append(('set_camera_light_brightness', v))
+    found = {o['name']: o for o in b.options()['options']}
+    assert found['camera_light_brightness_auto']['current'] == 'on'
+    b.set_option({'name': 'camera_light_brightness_auto', 'value': 40})
+    assert device.calls == [('set_camera_light_brightness', 40)]
+
+
+def button_broker():
+    device = OptionDevice()
+    device.clear_warning = lambda: device.calls.append(('clear_warning',))
+    device.start_draining = lambda clean=False: device.calls.append(('start_draining', clean))
+    device.status.sensor_dirty_life = 70
+    vendor = OptionVendor({})
+    vendor.call_action = lambda d, action: d.calls.append(('call_action', action))
+    return broker.Broker(device, vendor=vendor, buttons=catalogue.load_buttons(FIXTURES)), device
+
+
+def test_buttons_hide_resets_for_parts_this_model_lacks():
+    b, device = button_broker()
+    names = [x['name'] for x in b.buttons()['buttons']]
+    assert 'reset_main_brush' in names            # main_brush_life is 80
+    assert 'clear_warning' in names and 'start_mapping' in names and 'empty_water_tank' in names
+    device.status.main_brush_life = None
+    assert 'reset_main_brush' not in [x['name'] for x in b.buttons()['buttons']]
+
+
+@pytest.mark.parametrize('name,call', [
+    ('reset_main_brush', ('call_action', 'RESET_MAIN_BRUSH')),
+    ('clear_warning', ('clear_warning',)),
+    ('empty_water_tank', ('start_draining', True)),
+])
+def test_press_calls_the_library_like_the_original(name, call):
+    b, device = button_broker()
+    out = b.press({'name': name})
+    assert device.calls == [call] and out['accepted'] and out['message']
+
+
+@pytest.mark.parametrize('body', [{'name': 'factory_reset'}, {'name': 3}, []])
+def test_press_rejects_unknown(body):
+    b, device = button_broker()
+    with pytest.raises(broker.BadRequest):
+        b.press(body)
+    assert device.calls == []
+
+
+class RoomDevice(OptionDevice):
+    def set_segment_mop_pressure(self, room, value):
+        self.calls.append(('set_segment_mop_pressure', room, value))
+
+    def set_segment_cleaning_times(self, room, value):
+        self.calls.append(('set_segment_cleaning_times', room, value))
+
+    def set_segment_mop_type(self, room, value):
+        self.calls.append(('set_segment_mop_type', room, value))
+
+    def set_segment_wetness_level(self, room, value):
+        self.calls.append(('set_segment_wetness_level', room, value))
+
+
+def room_broker():
+    device = RoomDevice()
+    kitchen = device.status.current_segments[3]
+    kitchen.mop_pressure, kitchen.cleaning_times, kitchen.mop_type, kitchen.wetness_level = 2, 1, 'B', 10
+    device.status.mop_pressure_list = {'light': 1, 'medium': 2}
+    ground = SimpleNamespace(map_id=1, custom_name='Ground', map_name=None, recovery_map_list=[
+        SimpleNamespace(date='2026-11-01 09:00'), SimpleNamespace(date='2026-11-10 09:00')])
+    upstairs = SimpleNamespace(map_id=2, custom_name=None, map_name='Map 2', recovery_map_list=None)
+    device.status.map_data_list = {1: ground, 2: upstairs}
+    device.status.selected_map = ground
+    device.status.has_temporary_map = False
+    vendor = OptionVendor({})
+    vendor.room_types = lambda: {0: 'Room', 4: 'Kitchen'}
+    b = broker.Broker(device, vendor=vendor, room_catalogue=catalogue.load(FIXTURES, rooms=True))
+    return b, device
+
+
+def test_maps_listed_with_backups():
+    b, _ = room_broker()
+    assert b.maps() == {'maps': [
+        {'id': 1, 'name': 'Ground', 'selected': True, 'backups': [{'index': 1, 'date': '2026-11-01 09:00'},
+                                                                   {'index': 2, 'date': '2026-11-10 09:00'}]},
+        {'id': 2, 'name': 'Map 2', 'selected': False, 'backups': []}], 'temporary_map': False}
+
+
+@pytest.mark.parametrize('body,call', [
+    ({'action': 'select', 'map_id': 2, 'name': '', 'backup': 0}, ('set_selected_map', 2)),
+    ({'action': 'rename', 'map_id': 1, 'name': 'Down', 'backup': 0}, ('rename_map', 1, 'Down')),
+    ({'action': 'delete', 'map_id': 2, 'name': '', 'backup': 0}, ('delete_map', 2)),
+    ({'action': 'backup', 'map_id': 1, 'name': '', 'backup': 0}, ('backup_map', 1)),
+    ({'action': 'restore', 'map_id': 1, 'name': '', 'backup': 2}, ('restore_map', 2, 1)),
+    ({'action': 'request', 'map_id': 0, 'name': '', 'backup': 0}, ('request_map',)),
+    ({'action': 'save_temporary', 'map_id': 0, 'name': '', 'backup': 0}, ('save_temporary_map',)),
+    ({'action': 'discard_temporary', 'map_id': 0, 'name': '', 'backup': 0}, ('discard_temporary_map',)),
+    ({'action': 'replace_temporary', 'map_id': 1, 'name': '', 'backup': 0}, ('replace_temporary_map', 1)),
+])
+def test_map_actions_dispatch(body, call):
+    b, device = room_broker()
+    for method in ('set_selected_map', 'rename_map', 'delete_map', 'backup_map', 'restore_map', 'request_map',
+                   'save_temporary_map', 'discard_temporary_map', 'replace_temporary_map'):
+        setattr(device, method, (lambda m: lambda *a: device.calls.append((m, *a)))(method))
+    assert b.manage_map(body)['accepted'] and device.calls == [call]
+
+
+@pytest.mark.parametrize('body,call', [
+    ({'action': 'rename', 'rooms': [3], 'name': 'Galley', 'type': 0, 'line': None}, ('set_segment_name', 3, 0, 'Galley')),
+    ({'action': 'set_type', 'rooms': [3], 'name': '', 'type': 4, 'line': None}, ('set_segment_name', 3, 4)),
+    ({'action': 'merge', 'rooms': [3, 5], 'name': '', 'type': 0, 'line': None}, ('merge_segments', None, [3, 5])),
+    ({'action': 'split', 'rooms': [3], 'name': '', 'type': 0, 'line': [0, 0, 10, 0]}, ('split_segments', None, 3, [0, 0, 10, 0])),
+    ({'action': 'order', 'rooms': [5, 3], 'name': '', 'type': 0, 'line': None}, ('set_cleaning_sequence', [5, 3])),
+    ({'action': 'hide', 'rooms': [5], 'name': '', 'type': 0, 'line': None}, ('set_hidden_segments', [5])),
+])
+def test_room_actions_dispatch(body, call):
+    b, device = room_broker()
+    for method in ('set_segment_name', 'merge_segments', 'split_segments', 'set_cleaning_sequence', 'set_hidden_segments'):
+        setattr(device, method, (lambda m: lambda *a: device.calls.append((m, *a)))(method))
+    assert b.manage_rooms(body)['accepted'] and device.calls == [call]
+
+
+def test_room_options_and_types():
+    b, _ = room_broker()
+    out = b.room_options({'room': 3})
+    found = {o['name']: o for o in out['options']}
+    assert set(found) == {'mop_pressure', 'cleaning_times', 'mop_type', 'wetness_level'}
+    assert found['mop_pressure']['current'] == 'medium'
+    assert found['cleaning_times']['choices'] == [{'label': '1x', 'value': 1}, {'label': '2x', 'value': 2}, {'label': '3x', 'value': 3}]
+    assert found['mop_type']['current'] == 'b' and found['mop_type']['choices'][1] == {'label': 'b', 'value': 2}
+    assert (found['wetness_level']['min'], found['wetness_level']['max']) == (1, 32)
+    assert out['types'] == [{'label': 'Room', 'value': 0}, {'label': 'Kitchen', 'value': 4}]
+
+
+@pytest.mark.parametrize('name,value,call', [
+    ('mop_pressure', 1, ('set_segment_mop_pressure', 3, 1)),
+    ('cleaning_times', 2, ('set_segment_cleaning_times', 3, 2)),
+    ('mop_type', 3, ('set_segment_mop_type', 3, 'C')),
+    ('wetness_level', 20, ('set_segment_wetness_level', 3, 20)),
+])
+def test_set_room_option_dispatch(name, value, call):
+    b, device = room_broker()
+    assert b.set_room_option({'room': 3, 'name': name, 'value': value})['accepted'] and device.calls == [call]
+
+
+def test_room_option_for_unknown_room_rejected():
+    b, device = room_broker()
+    with pytest.raises(broker.BadRequest):
+        b.set_room_option({'room': 9, 'name': 'mop_pressure', 'value': 1})

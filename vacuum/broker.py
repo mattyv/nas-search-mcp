@@ -85,6 +85,42 @@ WETNESS_NAMES = {0: 'dry', 1: 'moist', 2: 'wet'}
 COMMAND_KEYS = {'action', 'rooms', 'zones', 'point', 'repeats', 'suction'}
 
 
+# Switches whose on/off values differ from 1/0 in the original integration.
+SWITCH_VALUES = {'stain_avoidance': (1, 2), 'camera_light_brightness_auto': (40, 101)}
+
+# Choice settings whose options the original builds specially.
+SELECT_CHOICES = {
+    'auto_empty_frequency': lambda status: [(f'{i}x', i) for i in range(1, 4)],
+    'self_clean_frequency': lambda status: [(k, v) for k, v in (getattr(status, 'self_clean_frequency_list', None) or {}).items()
+                                            if k != 'by_room'],
+    'auto_recleaning': lambda status: list((getattr(status, 'second_cleaning_list', None) or {}).items()),
+    'auto_rewashing': lambda status: list((getattr(status, 'second_cleaning_list', None) or {}).items()),
+    'map_rotation': lambda status: [(str(d), d) for d in (0, 90, 180, 270)],
+}
+
+NUMBER_MAX = {'wetness_level': lambda device: 15 if getattr(device.capability, 'mop_clean_frequency', False) else 32}
+
+# Settings the original writes through a custom function.
+SPECIAL_SETTERS = {
+    'cleaning_sequence': lambda device, value: device.set_cleaning_sequence(
+        [] if not value else (device.status.previous_cleaning_sequence or sorted(device.status.current_segments.keys()))),
+    'self_clean_by_zone': lambda device, value: device.set_self_clean_value(
+        0 if value else (device.status.previous_self_clean_area or 20)),
+    'camera_light_brightness_auto': lambda device, value: device.set_camera_light_brightness(value),
+}
+
+# Per-room choices the original builds specially.
+ROOM_CHOICES = {
+    'cleaning_mode': lambda status: list((getattr(status, 'segment_cleaning_mode_list', None) or {}).items()),
+    'cleaning_route': lambda status: list((getattr(status, 'segment_cleaning_route_list', None) or {}).items()),
+    'cleaning_times': lambda status: [(f'{i}x', i) for i in range(1, 4)],
+    'mop_type': lambda status: [('a', 1), ('b', 2), ('c', 3)],
+}
+
+# Settings whose state the original reads from another status field.
+READ_FROM = {'camera_light_brightness_auto': 'camera_light_brightness'}
+
+
 def _on(value):
     return 'on' if value else 'off'
 
@@ -94,8 +130,15 @@ def _clock(minutes):
 
 
 class Broker:
-    def __init__(self, device, area_key=None, time_key=None, refusal_types=(), vendor=None):
+    def __init__(self, device, area_key=None, time_key=None, refusal_types=(), vendor=None, catalogue=(), buttons=(),
+                 room_catalogue=()):
         self.device = device
+        # Per-room settings; room order and room type have their own actions.
+        self.room_catalogue = [e for e in room_catalogue if e['name'] not in ('order', 'name')]
+        # The original integration's buttons, by name.
+        self.button_table = {button['name']: button for button in buttons}
+        # Vacuum-wide settings as the original integration describes them.
+        self.catalogue = {entry['name']: entry for entry in catalogue}
         self.area_key = area_key
         self.time_key = time_key
         self.refusal_types = tuple(refusal_types)
@@ -367,6 +410,293 @@ class Broker:
         picture.save(out, 'JPEG', quality=85)
         return {'mime_type': 'image/jpeg', 'data': base64.b64encode(out.getvalue()).decode()}
 
+    def shortcuts(self):
+        device = self._device()
+        found = getattr(device.status, 'shortcuts', None) or {}
+        names = {seg_id: getattr(seg, 'name', '') for seg_id, seg in self._segments(device).items()}
+        out = []
+        for shortcut_id, item in found.items():
+            if not _is_int(shortcut_id) or item is None:
+                continue
+            rooms = []
+            tasks = getattr(item, 'tasks', None) or []
+            if tasks and tasks[0]:
+                for task in sorted(tasks[0], key=lambda t: getattr(t, 'order', 0) or 0):
+                    seg_id = getattr(task, 'segment_id', None)
+                    if seg_id is not None:
+                        rooms.append(_text(names.get(seg_id) or f'Room {seg_id}', 64))
+            out.append({'id': shortcut_id, 'name': _text(getattr(item, 'name', '') or f'Shortcut {shortcut_id}', 64),
+                        'running': bool(getattr(item, 'running', False)), 'rooms': rooms[:64]})
+        return {'shortcuts': sorted(out, key=lambda s: s['id'])[:104]}
+
+    def shortcut(self, body):
+        if not isinstance(body, dict) or set(body) != {'action', 'id', 'name'} or not _is_int(body['id']) \
+                or not isinstance(body['name'], str) or body['action'] not in ('start', 'rename', 'delete'):
+            raise BadRequest('shortcut needs action, id and name')
+        device = self._device()
+        action, shortcut_id, name = body['action'], body['id'], body['name']
+        label = next((s['name'] for s in self.shortcuts()['shortcuts'] if s['id'] == shortcut_id), f'shortcut {shortcut_id}')
+        if action == 'start':
+            self._run(lambda: device.start_shortcut(shortcut_id))
+            message = f'Started {label}'
+        elif action == 'rename':
+            self._run(lambda: device.rename_shortcut(shortcut_id, name))
+            message = f'Renamed {label} to {name}'
+        else:
+            self._run(lambda: device.delete_shortcut(shortcut_id))
+            message = f'Deleted {label}'
+        return {'accepted': True, 'message': _text(message, 512)}
+
+    # --- Generic settings, mirroring the original integration's entities ---
+
+    def _present(self, device, entry):
+        if entry['family']:
+            return self.vendor.prop_present(device, entry['family'], entry['prop'])
+        return getattr(device.status, READ_FROM.get(entry['name'], entry['name']), None) is not None
+
+    def _choices(self, device, entry):
+        name, kind = entry['name'], entry['kind']
+        if kind == 'switch':
+            off, on = SWITCH_VALUES.get(name, (0, 1))
+            return [{'label': 'off', 'value': off}, {'label': 'on', 'value': on}]
+        if name in SELECT_CHOICES:
+            pairs = SELECT_CHOICES[name](device.status)
+        elif 'options' in entry:
+            pairs = [(label, int(''.join(ch for ch in label if ch.isdigit()) or 0)) for label in entry['options']]
+        else:
+            listed = getattr(device.status, f'{name}_list', None) or {}
+            pairs = list(listed.items()) if isinstance(listed, dict) else []
+        return [{'label': _text(label, 64), 'value': int(value)} for label, value in pairs
+                if isinstance(value, (int, float)) and not isinstance(value, bool)][:64]
+
+    def _current(self, device, entry):
+        status, name = device.status, entry['name']
+        if entry['kind'] == 'select':
+            value = getattr(status, f'{name}_name', None)
+            if value is None:
+                value = getattr(status, name, None)
+                for choice in self._choices(device, entry):
+                    if choice['value'] == value:
+                        return choice['label']
+            return _text(value, 64)
+        value = getattr(status, READ_FROM.get(name, name), None)
+        if value is None and entry['family']:
+            value = self.vendor.prop_value(device, entry['family'], entry['prop'])
+        if entry['kind'] == 'switch':
+            off, on = SWITCH_VALUES.get(name, (0, 1))
+            # The original treats any non-off value as on for plain 0/1 switches.
+            is_on = value == on or (on == 1 and value not in (off, None, False))
+            return 'on' if is_on else 'off'
+        return _text(value, 64)
+
+    def _option(self, device, entry):
+        out = {'name': entry['name'], 'kind': entry['kind'], 'current': self._current(device, entry)}
+        if entry['kind'] in ('switch', 'select'):
+            out['choices'] = self._choices(device, entry)
+            if not out['choices']:
+                return None
+        elif entry['kind'] == 'number':
+            low, high, step = entry.get('range') or [None, None, 1]
+            low = getattr(device.status, f'{entry["name"]}_min', None) if low is None else low
+            high = NUMBER_MAX.get(entry['name'], lambda d: getattr(d.status, f'{entry["name"]}_max', None))(device) \
+                if high is None else high
+            if not (_is_int(low) and _is_int(high) and _is_int(step) and step > 0 and low <= high):
+                return None
+            out.update({'min': low, 'max': high, 'step': step})
+        return out
+
+    def options(self):
+        device = self._device()
+        out = []
+        for entry in self.catalogue.values():
+            try:
+                if not self._present(device, entry):
+                    continue
+                option = self._option(device, entry)
+            except Exception:
+                continue
+            if option:
+                out.append(option)
+        return {'options': out[:400]}
+
+    def set_option(self, body):
+        if not isinstance(body, dict) or set(body) != {'name', 'value'} or not isinstance(body['name'], str) \
+                or not _is_int(body['value']):
+            raise BadRequest('set_option needs name and value')
+        device = self._device()
+        entry = self.catalogue.get(body['name'])
+        if entry is None or not self._present(device, entry):
+            raise BadRequest('this vacuum has no such setting')
+        name, value = entry['name'], body['value']
+        if entry['kind'] == 'time':
+            value = _clock(value)
+        special = SPECIAL_SETTERS.get(name)
+        setter = getattr(type(device), f'set_{name}', None)
+        if special:
+            call = lambda: special(device, value)
+        elif callable(setter):
+            call = lambda: setter(device, value)
+        elif entry['family']:
+            call = lambda: self.vendor.set_prop(device, entry['family'], entry['prop'], value)
+        else:
+            raise BadRequest('this setting cannot be changed')
+        self._run(call)
+        return {'accepted': True, 'message': _text(f'{name.replace("_", " ").capitalize()} set to {body["value"] if entry["kind"] != "time" else value}', 512)}
+
+    # --- Buttons, mirroring the original integration's button entities ---
+
+    def _button_present(self, device, button):
+        name = button['name']
+        if not name.startswith('reset_'):
+            return name != 'reload_shortcuts'
+        part = name[len('reset_'):]
+        fields = [f'{part}_life', f'{part}_dirty_life'] + (['mop_life'] if part == 'mop_pad' else [])
+        return any(getattr(device.status, field, None) is not None for field in fields)
+
+    def buttons(self):
+        device = self._device()
+        out = []
+        for button in self.button_table.values():
+            if self._button_present(device, button):
+                kind = 'reset' if button['name'].startswith('reset_') else 'action'
+                out.append({'name': button['name'], 'kind': kind})
+        return {'buttons': out[:64]}
+
+    def press(self, body):
+        if not isinstance(body, dict) or set(body) != {'name'} or not isinstance(body['name'], str):
+            raise BadRequest('press needs a button name')
+        device = self._device()
+        button = self.button_table.get(body['name'])
+        if button is None or not self._button_present(device, button):
+            raise BadRequest('this vacuum has no such button')
+        if button['call']:
+            method, args = button['call']
+            self._run(lambda: getattr(device, method)(*args))
+        else:
+            self._run(lambda: self.vendor.call_action(device, button['action']))
+        return {'accepted': True, 'message': _text(f'Pressed {button["name"].replace("_", " ")}', 512)}
+
+    # --- Maps and rooms ---
+
+    def maps(self):
+        status = self._device().status
+        selected = getattr(getattr(status, 'selected_map', None), 'map_id', None)
+        out = []
+        for map_id, item in (getattr(status, 'map_data_list', None) or {}).items():
+            if not _is_int(map_id):
+                continue
+            backups = [{'index': i + 1, 'date': _text(getattr(b, 'date', ''), 64)}
+                       for i, b in enumerate(getattr(item, 'recovery_map_list', None) or [])][:32]
+            name = getattr(item, 'custom_name', None) or getattr(item, 'map_name', None) or f'Map {map_id}'
+            out.append({'id': map_id, 'name': _text(name, 64), 'selected': map_id == selected, 'backups': backups})
+        return {'maps': sorted(out, key=lambda m: m['id'])[:16],
+                'temporary_map': bool(getattr(status, 'has_temporary_map', False))}
+
+    def manage_map(self, body):
+        if not isinstance(body, dict) or set(body) != {'action', 'map_id', 'name', 'backup'} \
+                or not _is_int(body['map_id']) or not _is_int(body['backup']) or not isinstance(body['name'], str):
+            raise BadRequest('map action needs action, map_id, name and backup')
+        device = self._device()
+        action, map_id, name, backup = body['action'], body['map_id'], body['name'], body['backup']
+        calls = {
+            'select': lambda: device.set_selected_map(map_id),
+            'rename': lambda: device.rename_map(map_id, name),
+            'delete': lambda: device.delete_map(map_id),
+            'backup': lambda: device.backup_map(map_id),
+            'restore': lambda: device.restore_map(backup, map_id),
+            'request': lambda: device.request_map(),
+            'save_temporary': lambda: device.save_temporary_map(),
+            'discard_temporary': lambda: device.discard_temporary_map(),
+            'replace_temporary': lambda: device.replace_temporary_map(map_id),
+        }
+        if action not in calls:
+            raise BadRequest('unsupported map action')
+        self._run(calls[action])
+        return {'accepted': True, 'message': _text(f'Map {action.replace("_", " ")} done', 512)}
+
+    def manage_rooms(self, body):
+        if not isinstance(body, dict) or set(body) != {'action', 'rooms', 'name', 'type', 'line'} \
+                or not isinstance(body['rooms'], list) or not all(_is_int(r) for r in body['rooms']) \
+                or not isinstance(body['name'], str) or not _is_int(body['type']) \
+                or not (body['line'] is None or (isinstance(body['line'], list) and len(body['line']) == 4
+                                                 and all(_is_int(c) for c in body['line']))):
+            raise BadRequest('room action needs action, rooms, name, type and line')
+        device = self._device()
+        action, rooms = body['action'], body['rooms']
+        calls = {
+            'rename': lambda: device.set_segment_name(rooms[0], 0, body['name']),
+            'set_type': lambda: device.set_segment_name(rooms[0], body['type']),
+            'merge': lambda: device.merge_segments(None, rooms),
+            'split': lambda: device.split_segments(None, rooms[0], body['line']),
+            'order': lambda: device.set_cleaning_sequence(rooms),
+            'hide': lambda: device.set_hidden_segments(rooms),
+        }
+        if action not in calls or (action in ('rename', 'set_type', 'merge', 'split') and not rooms):
+            raise BadRequest('unsupported room action')
+        self._run(calls[action])
+        return {'accepted': True, 'message': _text(f'Rooms {action.replace("_", " ")} done', 512)}
+
+    def _segment(self, device, room):
+        segment = self._segments(device).get(room) if _is_int(room) else None
+        if segment is None:
+            raise BadRequest('the vacuum has no such room')
+        return segment
+
+    def _room_choices(self, device, name):
+        status = device.status
+        if name in ROOM_CHOICES:
+            return ROOM_CHOICES[name](status)
+        listed = getattr(status, f'{name}_list', None) or {}
+        return list(listed.items()) if isinstance(listed, dict) else []
+
+    def _room_option(self, device, segment, entry):
+        name = entry['name']
+        setter = getattr(type(device), f'set_segment_{name}', None)
+        value = getattr(segment, name, None)
+        if not callable(setter) or value is None:
+            return None
+        if name == 'mop_type' and isinstance(value, str):
+            value = 'abc'.find(value.lower()) + 1
+        if entry['kind'] == 'number':
+            low = (entry.get('range') or [1])[0]
+            high = NUMBER_MAX.get(name, lambda d: None)(device)
+            if not (_is_int(low) and _is_int(high)):
+                return None
+            return {'name': name, 'kind': 'number', 'current': _text(value, 64), 'min': low, 'max': high, 'step': 1}
+        choices = [{'label': _text(label, 64), 'value': int(v)} for label, v in self._room_choices(device, name)
+                   if isinstance(v, (int, float)) and not isinstance(v, bool)][:64]
+        if not choices:
+            return None
+        current = next((c['label'] for c in choices if c['value'] == value), _text(value, 64))
+        return {'name': name, 'kind': 'select', 'current': current, 'choices': choices}
+
+    def room_options(self, body):
+        if not isinstance(body, dict) or not _is_int(body.get('room')):
+            raise BadRequest('room_options needs a room')
+        device = self._device()
+        segment = self._segment(device, body['room'])
+        options = [o for o in (self._room_option(device, segment, e) for e in self.room_catalogue) if o]
+        types = [{'label': _text(label, 64), 'value': code} for code, label in sorted(self.vendor.room_types().items())]
+        return {'options': options[:64], 'types': types[:64]}
+
+    def set_room_option(self, body):
+        if not isinstance(body, dict) or set(body) != {'room', 'name', 'value'} or not _is_int(body['room']) \
+                or not isinstance(body['name'], str) or not _is_int(body['value']):
+            raise BadRequest('set_room_option needs room, name and value')
+        device = self._device()
+        segment = self._segment(device, body['room'])
+        entry = next((e for e in self.room_catalogue if e['name'] == body['name']), None)
+        if entry is None or self._room_option(device, segment, entry) is None:
+            raise BadRequest('this room has no such setting')
+        value = body['value']
+        if entry['name'] == 'mop_type':
+            value = 'ABC'[value - 1] if 1 <= value <= 3 else None
+            if value is None:
+                raise BadRequest('mop type must be a, b or c')
+        setter = getattr(device, f'set_segment_{entry["name"]}')
+        self._run(lambda: setter(body['room'], value))
+        return {'accepted': True, 'message': _text(f'Room {entry["name"].replace("_", " ")} set', 512)}
+
     def map(self):
         import base64
         import io
@@ -416,7 +746,14 @@ def make_server(path, holder):
               '/details': lambda b, _: b.details(), '/history': lambda b, body: b.history(body),
               '/map': lambda b, _: b.map(), '/move': lambda b, body: b.move(body),
               '/obstacles': lambda b, _: b.obstacles(),
-              '/obstacle_photo': lambda b, body: b.obstacle_photo(body)}
+              '/obstacle_photo': lambda b, body: b.obstacle_photo(body),
+              '/shortcuts': lambda b, _: b.shortcuts(), '/shortcut': lambda b, body: b.shortcut(body),
+              '/options': lambda b, _: b.options(), '/set_option': lambda b, body: b.set_option(body),
+              '/buttons': lambda b, _: b.buttons(), '/press': lambda b, body: b.press(body),
+              '/maps': lambda b, _: b.maps(), '/manage_map': lambda b, body: b.manage_map(body),
+              '/manage_rooms': lambda b, body: b.manage_rooms(body),
+              '/room_options': lambda b, body: b.room_options(body),
+              '/set_room_option': lambda b, body: b.set_room_option(body)}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -435,8 +772,6 @@ def make_server(path, holder):
 
         def do_POST(self):
             route = routes.get(self.path)
-            if route is None:
-                return self._send(404, {'error': 'not found'})
             try:
                 length = int(self.headers.get('Content-Length', '0'))
             except ValueError:
@@ -446,8 +781,13 @@ def make_server(path, holder):
                 if 0 < length <= 16 * MAX_BODY:
                     self.rfile.read(length)  # drain so the client sees the reply, not a reset
                 return self._send(413, {'error': 'body too large'})
+            # Read the whole body before any reply, so the client never writes
+            # into a connection the server has already answered and closed.
+            raw = self.rfile.read(length)
+            if route is None:
+                return self._send(404, {'error': 'not found'})
             try:
-                body = json.loads(self.rfile.read(length) or b'{}')
+                body = json.loads(raw or b'{}')
             except ValueError:
                 return self._send(400, {'error': 'body must be JSON'})
             current = holder.get()
@@ -511,11 +851,45 @@ def read_password(env):
 class DreameVendor:
     """The few broker calls that need the vendor library's own enums or renderer."""
 
-    def __init__(self, action, prop, renderer_type):
+    def __init__(self, action, prop, renderer_type, families=None):
         self.action = action
         self.prop = prop
         self.renderer_type = renderer_type
         self.renderer = None
+        # Settings families: 'property', 'auto_switch' and 'ai' map to the library's enum classes.
+        self.families = families or {}
+
+    def _enum(self, family, name):
+        for cls in self.families.get(family, ()):
+            if name in cls.__members__:
+                return cls[name]
+        return None
+
+    def prop_present(self, device, family, name):
+        member = self._enum(family, name)
+        if member is None:
+            return False
+        if family == 'property':
+            return member.value in (device.data or {})
+        stored = device.auto_switch_data if family == 'auto_switch' else device.ai_data
+        return bool(stored) and name in stored
+
+    def prop_value(self, device, family, name):
+        member = self._enum(family, name)
+        return None if member is None else device.get_property(member)
+
+    def set_prop(self, device, family, name, value):
+        member = self._enum(family, name)
+        if member is None:
+            raise BadRequest('unknown setting')
+        device.set_property(member, value)
+
+    def room_types(self):
+        from dreame.types import SEGMENT_TYPE_CODE_TO_NAME
+        return dict(SEGMENT_TYPE_CODE_TO_NAME)
+
+    def call_action(self, device, name):
+        device.call_action(self.action[name])
 
     def empty_dustbin(self, device):
         device.call_action(self.action.START_AUTO_EMPTY)
@@ -540,6 +914,19 @@ class DreameVendor:
                                         status.robot_status, status.station_status)
 
 
+def load_catalogue(env, buttons=False, rooms=False):
+    """The original integration's settings (or button) tables, shipped beside the library."""
+    import importlib.util
+    here = os.path.dirname(os.path.abspath(__file__))
+    spec = importlib.util.spec_from_file_location('vacuum_catalogue', os.path.join(here, 'catalogue.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    folder = os.path.join(env.get('DREAME_LIBRARY', '/opt/dreame'), 'entities')
+    entries = module.load_buttons(folder) if buttons else module.load(folder, rooms=rooms)
+    LOG.info('loaded %d vacuum %s from the original integration', len(entries), 'buttons' if buttons else 'settings')
+    return entries
+
+
 def connect_from_env(env):  # pragma: no cover - needs the vendor library and a real account
     """Log in to the vendor cloud and connect to the configured vacuum."""
     import base64
@@ -547,6 +934,7 @@ def connect_from_env(env):  # pragma: no cover - needs the vendor library and a 
     sys.path.insert(0, env.get('DREAME_LIBRARY', '/opt/dreame'))
     import dreame
     from dreame import DreameVacuumDevice, DreameVacuumProtocol, DreameVacuumProperty, DreameVacuumAction, DEVICE_INFO
+    from dreame import DreameVacuumAutoSwitchProperty, DreameVacuumAIProperty, DreameVacuumStrAIProperty
     from dreame.exceptions import DeviceException
     from dreame.map import DreameVacuumMapRenderer
 
@@ -595,7 +983,11 @@ def connect_from_env(env):  # pragma: no cover - needs the vendor library and a 
     LOG.info('connected to vacuum (library %s)', dreame.VERSION)
     return Broker(device, area_key=DreameVacuumProperty.CLEANED_AREA,
                   time_key=DreameVacuumProperty.CLEANING_TIME, refusal_types=(DeviceException,),
-                  vendor=DreameVendor(DreameVacuumAction, DreameVacuumProperty, DreameVacuumMapRenderer))
+                  vendor=DreameVendor(DreameVacuumAction, DreameVacuumProperty, DreameVacuumMapRenderer, families={
+                      'property': (DreameVacuumProperty,), 'auto_switch': (DreameVacuumAutoSwitchProperty,),
+                      'ai': (DreameVacuumAIProperty, DreameVacuumStrAIProperty)}),
+                  catalogue=load_catalogue(env), buttons=load_catalogue(env, buttons=True),
+                  room_catalogue=load_catalogue(env, rooms=True))
 
 
 def keep_connected(holder, env, connect=connect_from_env, sleep=time.sleep):
