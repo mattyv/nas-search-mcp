@@ -875,3 +875,13 @@ Map editing replaces one kind of element at a time. The library clears any kind 
 Left out: furniture placement, structural walls and doors, carpet types and per-carpet cleaning (undocumented numeric codes whose misuse could corrupt the map), voice-pack install and restore-from-file (need files on a host that does not exist here), and the raw property/action services (bypass every check). Live video and photos on request are not in the original either.
 
 Evidence: every new rule, client method, tool and broker path had a failing test before implementation; a check against the pinned library confirmed every method, enum, status field, map field and capability flag used, and that all 118 settings and 31 buttons resolve.
+
+## D062 — Push vacuum notices through ntfy
+
+**Date:** 2026-11-19 · **Status:** Accepted; live validation pending
+
+The main service polls the vacuum broker every 30 seconds and pushes a notice to an ntfy topic when a cleaning job finishes, a new error appears, or a part's remaining life drops below 10%. ntfy needs no account, has free iPhone and Android apps, and works over the NAS's existing outbound internet; no inbound port opens. The decisions "did a job just finish", "is this a new error", and "did this part just cross the threshold" are pure rules in the verified core (`VacuumJobFinished`, `VacuumNewError`, `VacuumPartWorn`), with a proof that a steady reading never repeats a notice. The first reading after startup only sets a baseline, so restarts do not resend old events.
+
+The topic name is the only secret, so the server refuses topics shorter than 16 characters. Notices go through the public ntfy.sh unless `NAS_VACUUM_NTFY_URL` points at a self-hosted server. Notifications are off unless a topic is set.
+
+Evidence: core expect-tests, Go tests for the notifier (sends exactly three notices across a scripted day, nothing when the vacuum is unreachable), the ntfy sender (title header, body, topic validation) and startup configuration were each red before implementation.

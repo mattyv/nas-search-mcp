@@ -122,6 +122,8 @@ if [ -f "$install_dir/.env" ]; then
         vacuum_account=$(memory_setting DREAME_ACCOUNT_TYPE dreame)
         vacuum_country=$(memory_setting DREAME_COUNTRY eu)
         vacuum_memory=$(memory_setting NAS_VACUUM_MEMORY 384m)
+        vacuum_ntfy_topic=$(memory_setting NAS_VACUUM_NTFY_TOPIC '')
+        vacuum_ntfy_url=$(memory_setting NAS_VACUUM_NTFY_URL https://ntfy.sh)
     fi
     memory_path=$(field NAS_MEMORY_PATH)
     # Shared memory settings are read only when the feature is on.
@@ -232,6 +234,10 @@ if [ "$vacuum_enabled" = true ]; then
     printf '%s\n' "$vacuum_memory" | LC_ALL=C grep -Eq '^[0-9]{3,4}m$' || fail 'NAS_VACUUM_MEMORY must look like 384m'
     vacuum_mib=${vacuum_memory%m}
     [ "$vacuum_mib" -ge 256 ] && [ "$vacuum_mib" -le 1024 ] || fail 'NAS_VACUUM_MEMORY must be from 256m to 1024m'
+    if [ -n "$vacuum_ntfy_topic" ]; then
+        printf '%s\n' "$vacuum_ntfy_topic" | LC_ALL=C grep -Eq '^[A-Za-z0-9_-]{16,64}$' || fail 'NAS_VACUUM_NTFY_TOPIC must be 16-64 letters, digits, _ or - (it works like a password)'
+        printf '%s\n' "$vacuum_ntfy_url" | LC_ALL=C grep -Eq '^https?://[^/[:space:]]+/?$' || fail 'NAS_VACUUM_NTFY_URL must look like https://ntfy.sh'
+    fi
 fi
 [ "$(id -u)" = 0 ] || fail 'Run on the NAS with sudo/root Docker access'
 PATH=/usr/local/bin:$PATH

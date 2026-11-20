@@ -701,6 +701,15 @@ func (_static *CompanionStruct_Default___) ValidVacuumPath(points _dafny.Sequenc
 		return !(_dafny.Companion_Sequence_.Contains(points, _0_p)) || (((((*(bounds).IndexInt(0)).(_dafny.Int)).Cmp((*(_0_p).IndexInt(0)).(_dafny.Int)) <= 0) && (((*(_0_p).IndexInt(0)).(_dafny.Int)).Cmp((*(bounds).IndexInt(2)).(_dafny.Int)) <= 0)) && ((((*(bounds).IndexInt(1)).(_dafny.Int)).Cmp((*(_0_p).IndexInt(1)).(_dafny.Int)) <= 0) && (((*(_0_p).IndexInt(1)).(_dafny.Int)).Cmp((*(bounds).IndexInt(3)).(_dafny.Int)) <= 0)))
 	}))
 }
+func (_static *CompanionStruct_Default___) VacuumJobFinished(previous _dafny.Sequence, current _dafny.Sequence) bool {
+	return (_dafny.Companion_Sequence_.Contains(Companion_Default___.VacuumWorkingStates(), previous)) && (_dafny.Companion_Sequence_.Contains(Companion_Default___.VacuumDoneStates(), current))
+}
+func (_static *CompanionStruct_Default___) VacuumNewError(previous _dafny.Sequence, current _dafny.Sequence) bool {
+	return (_dafny.Companion_Sequence_.Equal(previous, _dafny.UnicodeSeqOfUtf8Bytes(""))) && (!_dafny.Companion_Sequence_.Equal(current, _dafny.UnicodeSeqOfUtf8Bytes("")))
+}
+func (_static *CompanionStruct_Default___) VacuumPartWorn(previous _dafny.Int, current _dafny.Int, threshold _dafny.Int) bool {
+	return ((previous).Cmp(threshold) >= 0) && ((current).Cmp(threshold) < 0)
+}
 func (_static *CompanionStruct_Default___) ValidVacuumShortcut(action _dafny.Sequence, id _dafny.Int, known _dafny.Sequence, nameLength _dafny.Int) bool {
 	return ((_dafny.Companion_Sequence_.Contains(_dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("start"), _dafny.UnicodeSeqOfUtf8Bytes("rename"), _dafny.UnicodeSeqOfUtf8Bytes("delete")), action)) && (_dafny.Companion_Sequence_.Contains(known, id))) && ((func() bool {
 		if _dafny.Companion_Sequence_.Equal(action, _dafny.UnicodeSeqOfUtf8Bytes("rename")) {
@@ -844,6 +853,12 @@ func (_static *CompanionStruct_Default___) MapLineElements() _dafny.Sequence {
 }
 func (_static *CompanionStruct_Default___) MapPointElements() _dafny.Sequence {
 	return _dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("predefined_points"), _dafny.UnicodeSeqOfUtf8Bytes("router_position"))
+}
+func (_static *CompanionStruct_Default___) VacuumWorkingStates() _dafny.Sequence {
+	return _dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("sweeping"), _dafny.UnicodeSeqOfUtf8Bytes("mopping"), _dafny.UnicodeSeqOfUtf8Bytes("sweeping_and_mopping"), _dafny.UnicodeSeqOfUtf8Bytes("returning"), _dafny.UnicodeSeqOfUtf8Bytes("washing"), _dafny.UnicodeSeqOfUtf8Bytes("returning_to_wash"), _dafny.UnicodeSeqOfUtf8Bytes("second_cleaning"), _dafny.UnicodeSeqOfUtf8Bytes("spot_cleaning"), _dafny.UnicodeSeqOfUtf8Bytes("extra_cleaning"), _dafny.UnicodeSeqOfUtf8Bytes("heading_to_extra_cleaning"), _dafny.UnicodeSeqOfUtf8Bytes("shortcut"), _dafny.UnicodeSeqOfUtf8Bytes("initial_deep_cleaning"))
+}
+func (_static *CompanionStruct_Default___) VacuumDoneStates() _dafny.Sequence {
+	return _dafny.SeqOf(_dafny.UnicodeSeqOfUtf8Bytes("charging"), _dafny.UnicodeSeqOfUtf8Bytes("charging_completed"), _dafny.UnicodeSeqOfUtf8Bytes("idle"), _dafny.UnicodeSeqOfUtf8Bytes("drying"), _dafny.UnicodeSeqOfUtf8Bytes("sleeping"))
 }
 
 // End of class Default__

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 
 	"github.com/mattyv/nas-search-mcp/internal/vacuum"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,6 +17,21 @@ func configuredVacuum() (*vacuum.Client, error) {
 		return nil, nil
 	}
 	return vacuum.New(env("NAS_VACUUM_SOCKET", "/data/vacuum-ipc/vacuum.sock"))
+}
+
+// configuredVacuumNotifier returns a notifier only when the vacuum is enabled
+// and NAS_VACUUM_NTFY_TOPIC is set. The topic acts as a password.
+func configuredVacuumNotifier() (*vacuum.Notifier, error) {
+	topic := os.Getenv("NAS_VACUUM_NTFY_TOPIC")
+	client, err := configuredVacuum()
+	if client == nil || err != nil || topic == "" {
+		return nil, err
+	}
+	send, err := vacuum.NewNtfySender(env("NAS_VACUUM_NTFY_URL", "https://ntfy.sh"), topic)
+	if err != nil {
+		return nil, err
+	}
+	return vacuum.NewNotifier(client, send), nil
 }
 
 // addVacuumTools registers the robot-vacuum tools only when the vacuum broker

@@ -363,6 +363,12 @@ module CoreTests {
     expect !ValidVacuumMapEdit("furniture", [(0, 0, 10, 10)], (-5000, -5000, 5000, 5000));
     expect ValidVacuumPath([(0, 0), (100, 100)], (-5000, -5000, 5000, 5000));
     expect !ValidVacuumPath([], (-5000, -5000, 5000, 5000)) && !ValidVacuumPath([(0, 9000)], (-5000, -5000, 5000, 5000));
+    expect VacuumJobFinished("sweeping", "charging") && VacuumJobFinished("washing", "drying");
+    expect VacuumJobFinished("returning", "charging_completed") && VacuumJobFinished("sweeping_and_mopping", "idle");
+    expect !VacuumJobFinished("washing", "mopping") && !VacuumJobFinished("charging", "charging");
+    expect !VacuumJobFinished("idle", "charging") && !VacuumJobFinished("sweeping", "returning_to_wash");
+    expect VacuumNewError("", "wheel_stuck") && !VacuumNewError("wheel_stuck", "wheel_stuck") && !VacuumNewError("x", "");
+    expect VacuumPartWorn(12, 9, 10) && !VacuumPartWorn(9, 8, 10) && !VacuumPartWorn(50, 40, 10);
     print "Dafny core executable tests passed\n";
   }
 }
